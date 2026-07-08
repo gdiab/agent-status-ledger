@@ -1,0 +1,7 @@
+{"type":"mode","mode":"normal","sessionId":"cc-fix-1"}
+{"type":"user","timestamp":"2026-07-07T09:00:00.000Z","cwd":"/work/demo","sessionId":"cc-fix-1","message":{"role":"user","content":"fix the login bug"}}
+{"type":"ai-title","title":"Fix login bug","sessionId":"cc-fix-1"}
+{"type":"assistant","timestamp":"2026-07-07T09:01:00.000Z","cwd":"/work/demo","sessionId":"cc-fix-1","message":{"role":"assistant","content":[{"type":"text","text":"On it."}]}}
+{"type":"file-history-snapshot","sessionId":"cc-fix-1","snapshot":{"trackedFileBackups":{"/work/demo/src/login.ts":{"backupId":"b1"}}}}
+{"type":"assistant","timestamp":"2026-07-07T09:30:00.000Z","cwd":"/work/demo","sessionId":"cc-fix-1","message":{"role":"assistant","content":[{"type":"text","text":"Fixed and tested."}]}}
+{"type":"unknown-future-type","whatever":true}

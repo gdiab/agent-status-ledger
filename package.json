@@ -1,0 +1,9 @@
+{
+  "name": "agent-status-ledger",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": { "asl": "src/cli.ts" },
+  "scripts": { "test": "bun test", "report": "bun run src/cli.ts report" },
+  "dependencies": { "smol-toml": "^1.3.1" },
+  "devDependencies": { "@types/bun": "latest", "typescript": "^5.5.0" }
+}

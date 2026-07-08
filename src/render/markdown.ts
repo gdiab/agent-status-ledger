@@ -1,0 +1,54 @@
+import type { AgentReport, Report } from "../types";
+
+function agentSection(a: AgentReport): string {
+  const lines = [
+    `### ${a.displayName}`,
+    "",
+    `- Status: **${a.status}** (${a.severity})`,
+    `- Evidence: ${a.evidence}`,
+    `- Workdir: \`${a.workdir}\``,
+    `- Sessions: ${a.facts.sessionCount} (${a.facts.firstActivity} → ${a.facts.lastActivity})`,
+    "",
+    `**Worked on:** ${a.narrative.workedOn}`,
+    `**Completed:** ${a.narrative.completed}`,
+    `**In progress:** ${a.narrative.inProgress}`,
+    `**Blocked:** ${a.narrative.blocked}`,
+    `**Recommended action:** ${a.narrative.recommendation}`,
+  ];
+  if (a.commits.some((c) => c.attributed)) {
+    lines.push("", "**Commits:**");
+    for (const c of a.commits.filter((c) => c.attributed)) lines.push(`- \`${c.sha.slice(0, 7)}\` ${c.subject}`);
+  }
+  if (a.facts.filesTouched.length) {
+    lines.push("", "**Files touched:**");
+    for (const f of a.facts.filesTouched) lines.push(`- \`${f}\``);
+  }
+  if (a.facts.errors.length) {
+    lines.push("", "**Errors:**");
+    for (const e of a.facts.errors) lines.push(`- ${e}`);
+  }
+  return lines.join("\n");
+}
+
+export function renderMarkdown(report: Report): string {
+  const day = report.windowEnd.slice(0, 10);
+  const parts = [
+    `# Agent Standup — ${day}`,
+    "",
+    `Window: ${report.windowStart} → ${report.windowEnd}`,
+    "",
+    "## Exceptions",
+    "",
+  ];
+  if (report.exceptions.length === 0) {
+    parts.push("No exceptions — nothing needs you.");
+  } else {
+    for (const a of report.exceptions) {
+      parts.push(`- **${a.displayName}** — ${a.status} (${a.severity}): ${a.narrative.recommendation}`);
+    }
+  }
+  parts.push("", "## Agents", "");
+  parts.push(report.agents.map(agentSection).join("\n\n---\n\n"));
+  parts.push("", `_Generated ${report.generatedAt}. Narratives: ${report.agents.every((a) => a.narrativeSource === "template") ? "template" : "llm+template"}._`, "");
+  return parts.join("\n");
+}
