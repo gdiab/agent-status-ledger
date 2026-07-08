@@ -8,6 +8,7 @@ import { renderMarkdown } from "./render/markdown";
 import { renderJson } from "./render/json";
 import { renderHtml } from "./render/html";
 import { redact } from "./redact";
+import { resolveApiKey, macKeychainLookup } from "./apikey";
 
 const USAGE = "usage: asl report [--since 24h] [--open] [--no-llm] [--out DIR]";
 
@@ -45,10 +46,15 @@ async function main() {
     console.error(USAGE);
     process.exit(2);
   }
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const resolved = values["no-llm"] ? null : resolveApiKey(process.env, macKeychainLookup);
+  const apiKey = resolved?.key;
   const useLlm = !values["no-llm"] && !!apiKey;
-  if (!values["no-llm"] && !apiKey) {
-    console.error("note: ANTHROPIC_API_KEY not set — using template narratives");
+  if (!values["no-llm"]) {
+    if (resolved) {
+      console.error(`using API key from ${resolved.source}`);
+    } else {
+      console.error("note: no Anthropic API key found (env or keychain) — using template narratives");
+    }
   }
 
   const report = await buildReport({ since, now, config, useLlm, apiKey });
