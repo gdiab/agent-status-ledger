@@ -24,6 +24,12 @@ describe("redact", () => {
     expect(redact(pem)).toBe("[REDACTED]");
   });
 
+  test("redacted JSON stays parseable", () => {
+    const out = redact('{"blocked":"login failed, password=hunter2secret"}');
+    expect(() => JSON.parse(out)).not.toThrow();
+    expect(out).toContain("[REDACTED]");
+  });
+
   test("extra user patterns apply", () => {
     expect(redact("internal-code-XJ99", ["internal-code-\\w+"])).toBe("[REDACTED]");
   });
