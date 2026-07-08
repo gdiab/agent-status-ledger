@@ -69,14 +69,14 @@ describe("generateNarrative", () => {
   });
 
   test("falls back on API error", async () => {
-    const fetchFn = (async () => new Response("overloaded", { status: 529 })) as typeof fetch;
+    const fetchFn = (async () => new Response("overloaded", { status: 529 })) as unknown as typeof fetch;
     const r = await generateNarrative(facts, "completed", { model: "m", apiKey: "k", fetchFn });
     expect(r.source).toBe("template");
   });
 
   test("falls back on malformed LLM output", async () => {
     const fetchFn = (async () =>
-      new Response(JSON.stringify({ content: [{ type: "text", text: "not json at all" }] }), { status: 200 })) as typeof fetch;
+      new Response(JSON.stringify({ content: [{ type: "text", text: "not json at all" }] }), { status: 200 })) as unknown as typeof fetch;
     const r = await generateNarrative(facts, "completed", { model: "m", apiKey: "k", fetchFn });
     expect(r.source).toBe("template");
   });

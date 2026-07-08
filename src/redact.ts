@@ -9,6 +9,7 @@ const BUILTIN: RegExp[] = [
   /\bAKIA[0-9A-Z]{16}\b/g,                                        // AWS access key id
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\b/g, // JWT
   /\b(api[_-]?key|token|secret|password|passwd)\b\s*[:=]\s*["']?[^\s"']{8,}/gi,
+  /\bBearer\s+[A-Za-z0-9._~+/-]{16,}=*/g,                         // Bearer tokens
 ];
 
 export function redact(text: string, extraPatterns: string[] = []): string {

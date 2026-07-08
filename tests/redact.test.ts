@@ -10,6 +10,7 @@ describe("redact", () => {
       "aws AKIAIOSFODNN7EXAMPLE region",
       "jwt eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c ok",
       "api_key = \"supersecretvalue123\"",
+      "auth Authorization: Bearer abcdefghijklmnop.qrstuvwx-yz123456 end",
     ];
     for (const c of cases) {
       const r = redact(c);
