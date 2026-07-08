@@ -5,13 +5,11 @@
     "": {
       "name": "agent-status-ledger",
       "dependencies": {
-        "smol-toml": "^1.7.0",
+        "smol-toml": "^1.3.1",
       },
       "devDependencies": {
         "@types/bun": "latest",
-      },
-      "peerDependencies": {
-        "typescript": "^5",
+        "typescript": "^5.5.0",
       },
     },
   },
