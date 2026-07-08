@@ -35,7 +35,14 @@ async function main() {
   const config = loadConfig();
   if (values.out) config.reportsDir = values.out;
   const now = new Date();
-  const since = parseSince(values.since!, now);
+  let since: Date;
+  try {
+    since = parseSince(values.since!, now);
+  } catch (e) {
+    console.error(`error: ${e instanceof Error ? e.message : e}`);
+    console.error("usage: asl report [--since 24h] [--open] [--no-llm] [--out DIR]");
+    process.exit(2);
+  }
   const apiKey = process.env.ANTHROPIC_API_KEY;
   const useLlm = !values["no-llm"] && !!apiKey;
   if (!values["no-llm"] && !apiKey) {
@@ -48,9 +55,11 @@ async function main() {
   const day = now.toISOString().slice(0, 10);
   const base = join(config.reportsDir, day);
   const md = redact(renderMarkdown(report), config.redactPatterns);
+  const json = redact(renderJson(report), config.redactPatterns);
+  const html = redact(renderHtml(report), config.redactPatterns);
   await Bun.write(`${base}.md`, md);
-  await Bun.write(`${base}.json`, renderJson(report));
-  await Bun.write(`${base}.html`, renderHtml(report));
+  await Bun.write(`${base}.json`, json);
+  await Bun.write(`${base}.html`, html);
 
   console.log(`agents: ${report.agents.length}, exceptions: ${report.exceptions.length}`);
   for (const a of report.exceptions) console.log(`  ! ${a.displayName} — ${a.status}`);
