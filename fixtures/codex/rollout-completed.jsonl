@@ -1,0 +1,5 @@
+{"timestamp":"2026-07-07T11:00:00.000Z","type":"session_meta","payload":{"id":"cx-blog-1","cwd":"/work/blog","originator":"Codex CLI","source":"cli"}}
+{"timestamp":"2026-07-07T11:05:00.000Z","type":"event_msg","payload":{"type":"task_started"}}
+{"timestamp":"2026-07-07T11:10:00.000Z","type":"event_msg","payload":{"type":"agent_message","message":"Drafting the post"}}
+{"timestamp":"2026-07-07T11:40:00.000Z","type":"event_msg","payload":{"type":"task_complete","last_agent_message":"Draft written to posts/draft.md"}}
+{"timestamp":"2026-07-07T11:40:01.000Z","type":"future_type","payload":{"type":"mystery"}}

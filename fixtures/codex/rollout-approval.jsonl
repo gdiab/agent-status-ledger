@@ -1,0 +1,3 @@
+{"timestamp":"2026-07-07T12:00:00.000Z","type":"session_meta","payload":{"id":"cx-deploy-1","cwd":"/work/infra","originator":"Codex CLI","source":"cli"}}
+{"timestamp":"2026-07-07T12:01:00.000Z","type":"event_msg","payload":{"type":"agent_message","message":"Need to run terraform apply"}}
+{"timestamp":"2026-07-07T12:02:00.000Z","type":"event_msg","payload":{"type":"exec_approval_request","command":"terraform apply"}}
