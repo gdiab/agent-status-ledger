@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseClaudeSession, scanClaudeCode } from "../src/connectors/claude-code";
@@ -48,6 +48,8 @@ describe("scanClaudeCode", () => {
     const proj = join(root, "-work-demo");
     mkdirSync(proj);
     writeFileSync(join(proj, "a.jsonl"), completed);
+    const d = new Date("2026-07-07T12:00:00.000Z");
+    utimesSync(join(proj, "a.jsonl"), d, d);
     writeFileSync(join(proj, "skip.txt"), "ignore me");
     const now = new Date("2026-07-08T09:00:00.000Z");
     const sessions = await scanClaudeCode({ since: new Date(now.getTime() - 86_400_000), now, rootDir: root });

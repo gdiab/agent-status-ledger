@@ -113,7 +113,11 @@ export async function scanClaudeCode(opts: ScanOptions): Promise<RawSession[]> {
         const stat = statSync(path);
         if (stat.mtime < opts.since || stat.mtime > opts.now) continue;
         const session = parseClaudeSession(readFileSync(path, "utf8"), decodeProjectDir(dir));
-        if (session) out.push(session);
+        if (session) {
+          out.push(session);
+        } else {
+          console.error(`warning: no parseable session in ${path}`);
+        }
       } catch (e) {
         console.error(`warning: skipping ${path}: ${e}`);
       }
