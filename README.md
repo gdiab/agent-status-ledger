@@ -8,7 +8,18 @@ The full product spec is in [PRD.md](PRD.md) (draft v2, 2026-06-27). Nothing is 
 
 ## Current state
 
-- [PRD.md](PRD.md) — the working spec. Data model (profiles / runs / events), status + evidence rules, connector strategy, MVP scope and acceptance criteria, 4-week build plan.
+Working v0 CLI. Run the morning report:
+
+    bun install
+    bun run src/cli.ts report --open          # LLM narratives if ANTHROPIC_API_KEY is set
+    bun run src/cli.ts report --no-llm        # fully local, template narratives
+
+Writes `reports/YYYY-MM-DD.{md,json,html}`. Sources scanned: Claude Code
+(`~/.claude/projects`) and Codex (`~/.codex/sessions`), plus git commit
+correlation per workdir. Config: `~/.config/asl/config.toml` (all optional).
+
+- [PRD.md](PRD.md) — product spec (amended by docs/adr/)
+- [docs/superpowers/specs/2026-07-07-asl-v0-design.md](docs/superpowers/specs/2026-07-07-asl-v0-design.md) — v0 design
 
 ## Origin
 

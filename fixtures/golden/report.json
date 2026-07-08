@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-08T07:00:00.000Z",
+  "windowStart": "2026-07-07T07:00:00.000Z",
+  "windowEnd": "2026-07-08T07:00:00.000Z",
+  "exceptions": [
+    {
+      "profileId": "claude-code:/work/silent",
+      "displayName": "silent (claude-code)",
+      "platform": "claude-code",
+      "workdir": "/work/silent",
+      "status": "silent",
+      "severity": "urgent",
+      "evidence": "claimed_only",
+      "facts": {
+        "titles": [],
+        "filesTouched": [],
+        "errors": [],
+        "commits": [],
+        "sessionCount": 1,
+        "firstActivity": "2026-07-07T12:00:00.000Z",
+        "lastActivity": "2026-07-07T12:00:00.000Z"
+      },
+      "narrative": {
+        "workedOn": "1 session: untitled work.",
+        "completed": "No durable artifacts detected.",
+        "inProgress": "Nothing in progress.",
+        "blocked": "No blockers detected.",
+        "recommendation": "Check whether this agent is stuck."
+      },
+      "narrativeSource": "template",
+      "commits": []
+    },
+    {
+      "profileId": "codex:/work/infra",
+      "displayName": "infra (codex)",
+      "platform": "codex",
+      "workdir": "/work/infra",
+      "status": "needs_human",
+      "severity": "warning",
+      "evidence": "claimed_only",
+      "facts": {
+        "titles": [
+          "Terraform deploy"
+        ],
+        "filesTouched": [],
+        "errors": [],
+        "commits": [],
+        "sessionCount": 1,
+        "firstActivity": "2026-07-07T12:00:00.000Z",
+        "lastActivity": "2026-07-07T12:02:00.000Z"
+      },
+      "narrative": {
+        "workedOn": "1 session: Terraform deploy.",
+        "completed": "No durable artifacts detected.",
+        "inProgress": "Nothing in progress.",
+        "blocked": "No blockers detected.",
+        "recommendation": "An approval or decision is waiting on you."
+      },
+      "narrativeSource": "template",
+      "commits": []
+    }
+  ],
+  "agents": [
+    {
+      "profileId": "claude-code:/work/silent",
+      "displayName": "silent (claude-code)",
+      "platform": "claude-code",
+      "workdir": "/work/silent",
+      "status": "silent",
+      "severity": "urgent",
+      "evidence": "claimed_only",
+      "facts": {
+        "titles": [],
+        "filesTouched": [],
+        "errors": [],
+        "commits": [],
+        "sessionCount": 1,
+        "firstActivity": "2026-07-07T12:00:00.000Z",
+        "lastActivity": "2026-07-07T12:00:00.000Z"
+      },
+      "narrative": {
+        "workedOn": "1 session: untitled work.",
+        "completed": "No durable artifacts detected.",
+        "inProgress": "Nothing in progress.",
+        "blocked": "No blockers detected.",
+        "recommendation": "Check whether this agent is stuck."
+      },
+      "narrativeSource": "template",
+      "commits": []
+    },
+    {
+      "profileId": "codex:/work/infra",
+      "displayName": "infra (codex)",
+      "platform": "codex",
+      "workdir": "/work/infra",
+      "status": "needs_human",
+      "severity": "warning",
+      "evidence": "claimed_only",
+      "facts": {
+        "titles": [
+          "Terraform deploy"
+        ],
+        "filesTouched": [],
+        "errors": [],
+        "commits": [],
+        "sessionCount": 1,
+        "firstActivity": "2026-07-07T12:00:00.000Z",
+        "lastActivity": "2026-07-07T12:02:00.000Z"
+      },
+      "narrative": {
+        "workedOn": "1 session: Terraform deploy.",
+        "completed": "No durable artifacts detected.",
+        "inProgress": "Nothing in progress.",
+        "blocked": "No blockers detected.",
+        "recommendation": "An approval or decision is waiting on you."
+      },
+      "narrativeSource": "template",
+      "commits": []
+    },
+    {
+      "profileId": "claude-code:<REPO>",
+      "displayName": "repo (claude-code)",
+      "platform": "claude-code",
+      "workdir": "<REPO>",
+      "status": "completed",
+      "severity": "info",
+      "evidence": "proven",
+      "facts": {
+        "titles": [
+          "Fix login bug"
+        ],
+        "filesTouched": [
+          "<REPO>/src/login.ts"
+        ],
+        "errors": [],
+        "commits": [
+          "8db6c7f fix login redirect"
+        ],
+        "sessionCount": 1,
+        "firstActivity": "2026-07-07T09:00:00.000Z",
+        "lastActivity": "2026-07-07T09:30:00.000Z"
+      },
+      "narrative": {
+        "workedOn": "1 session: Fix login bug.",
+        "completed": "Commits: 8db6c7f fix login redirect.",
+        "inProgress": "Nothing in progress.",
+        "blocked": "No blockers detected.",
+        "recommendation": "Review the commits."
+      },
+      "narrativeSource": "template",
+      "commits": [
+        {
+          "sha": "c09c5061b54c070cc2902ee2f86ebdc84d2f4d16",
+          "authorDate": "2026-07-07T15:00:00Z",
+          "subject": "human hotfix, not agent work",
+          "attributed": false
+        },
+        {
+          "sha": "8db6c7f69b3a8f2240ea14fc409231c334181771",
+          "authorDate": "2026-07-07T09:20:00Z",
+          "subject": "fix login redirect",
+          "attributed": true
+        }
+      ]
+    }
+  ]
+}
