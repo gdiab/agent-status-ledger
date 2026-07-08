@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { AgentEvent, RawSession, ScanOptions } from "../types";
 import { firstLine, jsonlEntries, scanSessionFile } from "./jsonl";
 
-export function parseCodexSession(text: string, titles: Map<string, string>): RawSession | null {
+export function parseCodexSession(text: string, titles: Map<string, string>, path?: string): RawSession | null {
   let cwd = "";
   let sessionId = "";
   let startedAt: string | undefined;
@@ -11,7 +11,7 @@ export function parseCodexSession(text: string, titles: Map<string, string>): Ra
   const events: AgentEvent[] = [];
   const errors: string[] = [];
 
-  for (const entry of jsonlEntries(text)) {
+  for (const entry of jsonlEntries(text, path)) {
     const ts = typeof entry.timestamp === "string" ? entry.timestamp : undefined;
     if (ts) {
       if (!startedAt || ts < startedAt) startedAt = ts;
@@ -68,7 +68,7 @@ export function loadCodexTitles(rootDir: string): Map<string, string> {
   const titles = new Map<string, string>();
   const indexPath = join(rootDir, "session_index.jsonl");
   if (!existsSync(indexPath)) return titles;
-  for (const e of jsonlEntries(readFileSync(indexPath, "utf8"))) {
+  for (const e of jsonlEntries(readFileSync(indexPath, "utf8"), indexPath)) {
     if (typeof e.id === "string" && typeof e.thread_name === "string") titles.set(e.id, e.thread_name);
   }
   return titles;
@@ -95,7 +95,7 @@ export async function scanCodex(opts: ScanOptions): Promise<RawSession[]> {
     for (const file of readdirSync(dir)) {
       if (!file.endsWith(".jsonl")) continue;
       const path = join(dir, file);
-      const session = scanSessionFile(path, opts, (text) => parseCodexSession(text, titles));
+      const session = scanSessionFile(path, opts, (text) => parseCodexSession(text, titles, path));
       if (session) out.push(session);
     }
   }

@@ -25,10 +25,27 @@ export function inferStatus(
   const attributed = commits.filter((c) => c.attributed);
   const hasArtifact = events.some((e) => e.type === "artifact_created") || attributed.length > 0;
 
+  // A completed/artifact event anywhere in the profile's history must not mask a
+  // *newer* session that has since gone silent. Find the newest session (by
+  // startedAt); if it has no terminal event of its own and no attributed commit
+  // landed inside its window, and it's been quiet long enough, report silent —
+  // regardless of what an older session in the same profile achieved.
+  const TERMINAL_EVENT_TYPES = new Set(["completed", "failed", "blocked", "approval_requested"]);
+  const newestSession = profile.sessions.reduce<(typeof profile.sessions)[number] | undefined>(
+    (newest, s) => (!newest || s.startedAt > newest.startedAt ? s : newest),
+    undefined,
+  );
+  const newestSessionWentSilent =
+    newestSession !== undefined &&
+    !newestSession.events.some((e) => TERMINAL_EVENT_TYPES.has(e.type)) &&
+    !attributed.some((c) => Date.parse(c.authorDate) >= Date.parse(newestSession.startedAt)) &&
+    now.getTime() - Date.parse(newestSession.lastEventAt) >= t.silentThresholdHours * HOUR_MS;
+
   let status: Status;
   if (after(approval, completed)) status = "needs_human";
   else if (after(failed, completed)) status = "failed";
   else if (after(blocked, completed) && after(blocked, failed)) status = "blocked";
+  else if (newestSessionWentSilent) status = "silent";
   else if (completed || hasArtifact) status = "completed";
   else {
     const idleMs = now.getTime() - Date.parse(lastEventAt);

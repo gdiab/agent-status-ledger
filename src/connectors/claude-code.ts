@@ -9,7 +9,7 @@ export function decodeProjectDir(name: string): string {
   return name.replace(/-/g, "/");
 }
 
-export function parseClaudeSession(text: string, fallbackCwd: string): RawSession | null {
+export function parseClaudeSession(text: string, fallbackCwd: string, path?: string): RawSession | null {
   let cwd = fallbackCwd;
   let sessionId = "";
   let title: string | undefined;
@@ -21,7 +21,7 @@ export function parseClaudeSession(text: string, fallbackCwd: string): RawSessio
   const filesTouched = new Set<string>();
   const errors: string[] = [];
 
-  for (const entry of jsonlEntries(text)) {
+  for (const entry of jsonlEntries(text, path)) {
     if (typeof entry.sessionId === "string") sessionId = entry.sessionId;
     if (typeof entry.cwd === "string") cwd = entry.cwd;
     const ts = typeof entry.timestamp === "string" ? entry.timestamp : undefined;
@@ -99,7 +99,7 @@ export async function scanClaudeCode(opts: ScanOptions): Promise<RawSession[]> {
     for (const file of entries) {
       if (!file.endsWith(".jsonl")) continue;
       const path = join(projDir, file);
-      const session = scanSessionFile(path, opts, (text) => parseClaudeSession(text, decodeProjectDir(dir)));
+      const session = scanSessionFile(path, opts, (text) => parseClaudeSession(text, decodeProjectDir(dir), path));
       if (session) out.push(session);
     }
   }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentEvent, AgentProfile, CommitEvidence, EventType } from "../src/types";
+import type { AgentEvent, AgentProfile, CommitEvidence, EventType, RawSession } from "../src/types";
 import { inferStatus } from "../src/status";
 
 const T = { activeWindowHours: 2, silentThresholdHours: 6 };
@@ -17,8 +17,26 @@ function profileWith(events: Array<[string, EventType]>, filesTouched: string[] 
   };
 }
 
-const commit = (attributed: boolean): CommitEvidence =>
-  ({ sha: "a".repeat(40), authorDate: "2026-07-07T10:00:00.000Z", subject: "x", attributed });
+function twoSessionProfile(
+  older: Array<[string, EventType]>,
+  newer: Array<[string, EventType]>,
+): AgentProfile {
+  const mkSession = (id: string, events: Array<[string, EventType]>): RawSession => {
+    const evs: AgentEvent[] = events.map(([timestamp, type]) => ({ timestamp, type, summary: type }));
+    return {
+      platform: "claude-code", sessionId: id, cwd: "/w",
+      startedAt: evs[0]!.timestamp, lastEventAt: evs.at(-1)!.timestamp,
+      events: evs, filesTouched: [], errors: [],
+    };
+  };
+  return {
+    profileId: "claude-code:/w", platform: "claude-code", workdir: "/w", displayName: "w (claude-code)",
+    sessions: [mkSession("s1", older), mkSession("s2", newer)],
+  };
+}
+
+const commit = (attributed: boolean, authorDate = "2026-07-07T10:00:00.000Z"): CommitEvidence =>
+  ({ sha: "a".repeat(40), authorDate, subject: "x", attributed });
 
 describe("inferStatus", () => {
   test("approval with no later completion → needs_human / warning", () => {
@@ -73,5 +91,24 @@ describe("inferStatus", () => {
   test("files touched without artifact → partially_proven", () => {
     const r = inferStatus(profileWith([["2026-07-07T19:30:00.000Z", "run_progressed"]], ["/w/a.ts"]), [], NOW, T);
     expect(r.evidence).toBe("partially_proven");
+  });
+
+  test("stale completion in an older session does not mask a newer silent session → silent / urgent", () => {
+    const profile = twoSessionProfile(
+      [["2026-07-07T09:00:00.000Z", "completed"]],
+      [["2026-07-07T13:00:00.000Z", "run_started"]],
+    );
+    const r = inferStatus(profile, [commit(true, "2026-07-07T09:20:00.000Z")], NOW, T);
+    expect(r.status).toBe("silent");
+    expect(r.severity).toBe("urgent");
+  });
+
+  test("single-session profile with attributed commit inside window stays completed even 7+ hours later (no regression)", () => {
+    const r = inferStatus(
+      profileWith([["2026-07-07T10:00:00.000Z", "run_progressed"]]),
+      [commit(true, "2026-07-07T10:30:00.000Z")],
+      NOW, T,
+    );
+    expect(r.status).toBe("completed");
   });
 });

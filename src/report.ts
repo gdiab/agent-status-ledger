@@ -6,7 +6,7 @@ import { resolveProfiles } from "./resolver";
 import { attributeCommits, listCommits } from "./git";
 import { inferStatus } from "./status";
 import { buildFactSheet, generateNarrative, templateNarrative } from "./narrative";
-import { redactFacts } from "./redact";
+import { redact, redactFacts } from "./redact";
 
 export interface BuildReportOptions {
   since: Date;
@@ -34,8 +34,12 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
 
   const agents: AgentReport[] = [];
   for (const profile of profiles) {
-    const commits = attributeCommits(await listCommits(profile.workdir, since), profile.sessions);
-    const { status, severity, evidence } = inferStatus(profile, commits, now, config.thresholds);
+    const rawCommits = attributeCommits(await listCommits(profile.workdir, since), profile.sessions);
+    // Defense in depth: redact commit subjects here at the model layer too, so any
+    // future consumer of buildReport() (not just the CLI's own render pass) gets a
+    // report object with secrets already scrubbed.
+    const commits = rawCommits.map((c) => ({ ...c, subject: redact(c.subject, config.redactPatterns) }));
+    const { status, severity, evidence } = inferStatus(profile, rawCommits, now, config.thresholds);
     const facts = redactFacts(buildFactSheet(profile, commits), config.redactPatterns);
     const { narrative, source } = opts.useLlm
       ? await generateNarrative(facts, status, { model: config.model, apiKey: opts.apiKey, fetchFn: opts.fetchFn })

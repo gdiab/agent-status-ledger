@@ -5,13 +5,14 @@ export function firstLine(s: string): string {
   return s.split("\n", 1)[0]!.slice(0, 200);
 }
 
-export function* jsonlEntries(text: string): Generator<any> {
+export function* jsonlEntries(text: string, path?: string): Generator<any> {
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     try {
       yield JSON.parse(line);
     } catch {
-      continue; // unknown/broken lines ignored by design
+      console.error(`warning: malformed jsonl line skipped in ${path ?? "input"}`);
+      continue; // unknown/broken lines skipped, but never silently
     }
   }
 }
