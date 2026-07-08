@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { attributeCommits, isGitRepo, listCommits } from "../src/git";
+import { attributeCommits, listCommits } from "../src/git";
 import type { Commit } from "../src/types";
 
 async function run(cwd: string, cmd: string[], env: Record<string, string> = {}) {
@@ -36,9 +36,8 @@ describe("git correlator", () => {
     expect(commits[0]!.sha).toMatch(/^[0-9a-f]{40}$/);
   });
 
-  test("non-repo directory returns empty and isGitRepo is false", async () => {
+  test("non-repo directory returns empty", async () => {
     const dir = mkdtempSync(join(tmpdir(), "asl-notrepo-"));
-    expect(await isGitRepo(dir)).toBe(false);
     expect(await listCommits(dir, new Date(0))).toEqual([]);
   });
 

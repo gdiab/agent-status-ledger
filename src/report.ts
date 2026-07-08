@@ -3,7 +3,7 @@ import type { AgentReport, Report } from "./types";
 import { scanClaudeCode } from "./connectors/claude-code";
 import { scanCodex } from "./connectors/codex";
 import { resolveProfiles } from "./resolver";
-import { attributeCommits, isGitRepo, listCommits } from "./git";
+import { attributeCommits, listCommits } from "./git";
 import { inferStatus } from "./status";
 import { buildFactSheet, generateNarrative, templateNarrative } from "./narrative";
 import { redactFacts } from "./redact";
@@ -34,9 +34,7 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
 
   const agents: AgentReport[] = [];
   for (const profile of profiles) {
-    const commits = (await isGitRepo(profile.workdir))
-      ? attributeCommits(await listCommits(profile.workdir, since), profile.sessions)
-      : [];
+    const commits = attributeCommits(await listCommits(profile.workdir, since), profile.sessions);
     const { status, severity, evidence } = inferStatus(profile, commits, now, config.thresholds);
     const facts = redactFacts(buildFactSheet(profile, commits), config.redactPatterns);
     const { narrative, source } = opts.useLlm

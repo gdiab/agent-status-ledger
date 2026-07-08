@@ -78,7 +78,16 @@ export async function generateNarrative(
     for (const k of fields) {
       if (typeof parsed[k] !== "string") throw new Error(`missing field ${k}`);
     }
-    return { narrative: Object.fromEntries(fields.map((k) => [k, parsed[k]])) as unknown as Narrative, source: "llm" };
+    return {
+      narrative: {
+        workedOn: parsed.workedOn,
+        completed: parsed.completed,
+        inProgress: parsed.inProgress,
+        blocked: parsed.blocked,
+        recommendation: parsed.recommendation,
+      },
+      source: "llm",
+    };
   } catch (e) {
     console.error(`warning: narrative fallback (${e})`);
     return fallback;

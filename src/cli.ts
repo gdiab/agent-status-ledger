@@ -9,6 +9,8 @@ import { renderJson } from "./render/json";
 import { renderHtml } from "./render/html";
 import { redact } from "./redact";
 
+const USAGE = "usage: asl report [--since 24h] [--open] [--no-llm] [--out DIR]";
+
 function parseSince(s: string, now: Date): Date {
   const m = /^(\d+)([hd])$/.exec(s);
   if (!m) throw new Error(`--since must look like "24h" or "3d", got "${s}"`);
@@ -28,7 +30,7 @@ async function main() {
     },
   });
   if (positionals[0] !== "report") {
-    console.error("usage: asl report [--since 24h] [--open] [--no-llm] [--out DIR]");
+    console.error(USAGE);
     process.exit(2);
   }
 
@@ -40,7 +42,7 @@ async function main() {
     since = parseSince(values.since!, now);
   } catch (e) {
     console.error(`error: ${e instanceof Error ? e.message : e}`);
-    console.error("usage: asl report [--since 24h] [--open] [--no-llm] [--out DIR]");
+    console.error(USAGE);
     process.exit(2);
   }
   const apiKey = process.env.ANTHROPIC_API_KEY;

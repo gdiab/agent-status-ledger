@@ -1,10 +1,7 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentEvent, RawSession, ScanOptions } from "../types";
-
-function firstLine(s: string): string {
-  return s.split("\n", 1)[0]!.slice(0, 200);
-}
+import { firstLine, jsonlEntries, scanSessionFile } from "./jsonl";
 
 export function parseCodexSession(text: string, titles: Map<string, string>): RawSession | null {
   let cwd = "";
@@ -14,14 +11,7 @@ export function parseCodexSession(text: string, titles: Map<string, string>): Ra
   const events: AgentEvent[] = [];
   const errors: string[] = [];
 
-  for (const line of text.split("\n")) {
-    if (!line.trim()) continue;
-    let entry: any;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
+  for (const entry of jsonlEntries(text)) {
     const ts = typeof entry.timestamp === "string" ? entry.timestamp : undefined;
     if (ts) {
       if (!startedAt || ts < startedAt) startedAt = ts;
@@ -78,14 +68,8 @@ export function loadCodexTitles(rootDir: string): Map<string, string> {
   const titles = new Map<string, string>();
   const indexPath = join(rootDir, "session_index.jsonl");
   if (!existsSync(indexPath)) return titles;
-  for (const line of readFileSync(indexPath, "utf8").split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const e = JSON.parse(line);
-      if (typeof e.id === "string" && typeof e.thread_name === "string") titles.set(e.id, e.thread_name);
-    } catch {
-      continue;
-    }
+  for (const e of jsonlEntries(readFileSync(indexPath, "utf8"))) {
+    if (typeof e.id === "string" && typeof e.thread_name === "string") titles.set(e.id, e.thread_name);
   }
   return titles;
 }
@@ -111,18 +95,8 @@ export async function scanCodex(opts: ScanOptions): Promise<RawSession[]> {
     for (const file of readdirSync(dir)) {
       if (!file.endsWith(".jsonl")) continue;
       const path = join(dir, file);
-      try {
-        const stat = statSync(path);
-        if (stat.mtime < opts.since || stat.mtime > opts.now) continue;
-        const session = parseCodexSession(readFileSync(path, "utf8"), titles);
-        if (session) {
-          out.push(session);
-        } else {
-          console.error(`warning: no parseable session in ${path}`);
-        }
-      } catch (e) {
-        console.error(`warning: skipping ${path}: ${e}`);
-      }
+      const session = scanSessionFile(path, opts, (text) => parseCodexSession(text, titles));
+      if (session) out.push(session);
     }
   }
   return out;

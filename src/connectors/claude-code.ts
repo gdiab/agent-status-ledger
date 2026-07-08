@@ -1,15 +1,12 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentEvent, RawSession, ScanOptions } from "../types";
+import { firstLine, jsonlEntries, scanSessionFile } from "./jsonl";
 
 export function decodeProjectDir(name: string): string {
   // "-work-demo" → "/work/demo". Lossy for path segments containing dashes;
   // cwd fields inside entries take precedence when present.
   return name.replace(/-/g, "/");
-}
-
-function firstLine(s: string): string {
-  return s.split("\n", 1)[0]!.slice(0, 200);
 }
 
 export function parseClaudeSession(text: string, fallbackCwd: string): RawSession | null {
@@ -24,14 +21,7 @@ export function parseClaudeSession(text: string, fallbackCwd: string): RawSessio
   const filesTouched = new Set<string>();
   const errors: string[] = [];
 
-  for (const line of text.split("\n")) {
-    if (!line.trim()) continue;
-    let entry: any;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue; // unknown/broken lines ignored by design
-    }
+  for (const entry of jsonlEntries(text)) {
     if (typeof entry.sessionId === "string") sessionId = entry.sessionId;
     if (typeof entry.cwd === "string") cwd = entry.cwd;
     const ts = typeof entry.timestamp === "string" ? entry.timestamp : undefined;
@@ -109,18 +99,8 @@ export async function scanClaudeCode(opts: ScanOptions): Promise<RawSession[]> {
     for (const file of entries) {
       if (!file.endsWith(".jsonl")) continue;
       const path = join(projDir, file);
-      try {
-        const stat = statSync(path);
-        if (stat.mtime < opts.since || stat.mtime > opts.now) continue;
-        const session = parseClaudeSession(readFileSync(path, "utf8"), decodeProjectDir(dir));
-        if (session) {
-          out.push(session);
-        } else {
-          console.error(`warning: no parseable session in ${path}`);
-        }
-      } catch (e) {
-        console.error(`warning: skipping ${path}: ${e}`);
-      }
+      const session = scanSessionFile(path, opts, (text) => parseClaudeSession(text, decodeProjectDir(dir)));
+      if (session) out.push(session);
     }
   }
   return out;

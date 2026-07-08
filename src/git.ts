@@ -1,14 +1,5 @@
 import type { Commit, CommitEvidence } from "./types";
 
-export async function isGitRepo(dir: string): Promise<boolean> {
-  try {
-    const proc = Bun.spawn(["git", "-C", dir, "rev-parse", "--is-inside-work-tree"], { stdout: "pipe", stderr: "pipe" });
-    return (await proc.exited) === 0;
-  } catch {
-    return false;
-  }
-}
-
 export async function listCommits(repoDir: string, since: Date): Promise<Commit[]> {
   try {
     const proc = Bun.spawn(
