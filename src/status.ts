@@ -25,27 +25,35 @@ export function inferStatus(
   const attributed = commits.filter((c) => c.attributed);
   const hasArtifact = events.some((e) => e.type === "artifact_created") || attributed.length > 0;
 
-  // A completed/artifact event anywhere in the profile's history must not mask a
-  // *newer* session that has since gone silent. Find the newest session (by
-  // startedAt); if it has no terminal event of its own and no attributed commit
-  // landed inside its window, and it's been quiet long enough, report silent —
-  // regardless of what an older session in the same profile achieved.
+  // A completed/artifact event anywhere in the profile's history must not mask the
+  // *newest* session's own state. Find the newest session (by startedAt); if it is
+  // still open (no terminal event of its own) and has produced no artifact of its
+  // own (no attributed commit since it started, no artifact_created event), report
+  // it on its own timeline: recent events → active, long quiet → silent. In the
+  // in-between (idle-ish) range we fall through to the historical chain, where an
+  // older completion still reads as completed.
   const TERMINAL_EVENT_TYPES = new Set(["completed", "failed", "blocked", "approval_requested"]);
-  const newestSession = profile.sessions.reduce<(typeof profile.sessions)[number] | undefined>(
-    (newest, s) => (!newest || s.startedAt > newest.startedAt ? s : newest),
+  const newest = profile.sessions.reduce<(typeof profile.sessions)[number] | undefined>(
+    (max, s) => (!max || s.startedAt > max.startedAt ? s : max),
     undefined,
   );
-  const newestSessionWentSilent =
-    newestSession !== undefined &&
-    !newestSession.events.some((e) => TERMINAL_EVENT_TYPES.has(e.type)) &&
-    !attributed.some((c) => Date.parse(c.authorDate) >= Date.parse(newestSession.startedAt)) &&
-    now.getTime() - Date.parse(newestSession.lastEventAt) >= t.silentThresholdHours * HOUR_MS;
+  const open = newest !== undefined && !newest.events.some((e) => TERMINAL_EVENT_TYPES.has(e.type));
+  const hasCurrentArtifact =
+    newest !== undefined &&
+    (attributed.some((c) => Date.parse(c.authorDate) >= Date.parse(newest.startedAt)) ||
+      newest.events.some((e) => e.type === "artifact_created"));
+  let newestOpenStatus: Status | undefined;
+  if (newest !== undefined && open && !hasCurrentArtifact) {
+    const idleMs = now.getTime() - Date.parse(newest.lastEventAt);
+    if (idleMs <= t.activeWindowHours * HOUR_MS) newestOpenStatus = "active";
+    else if (idleMs >= t.silentThresholdHours * HOUR_MS) newestOpenStatus = "silent";
+  }
 
   let status: Status;
   if (after(approval, completed)) status = "needs_human";
   else if (after(failed, completed)) status = "failed";
   else if (after(blocked, completed) && after(blocked, failed)) status = "blocked";
-  else if (newestSessionWentSilent) status = "silent";
+  else if (newestOpenStatus !== undefined) status = newestOpenStatus;
   else if (completed || hasArtifact) status = "completed";
   else {
     const idleMs = now.getTime() - Date.parse(lastEventAt);

@@ -103,6 +103,16 @@ describe("inferStatus", () => {
     expect(r.severity).toBe("urgent");
   });
 
+  test("stale completion in an older session does not mask a newer actively progressing session → active / info", () => {
+    const profile = twoSessionProfile(
+      [["2026-07-07T09:00:00.000Z", "completed"]],
+      [["2026-07-07T19:30:00.000Z", "run_started"], ["2026-07-07T19:35:00.000Z", "run_progressed"]],
+    );
+    const r = inferStatus(profile, [commit(true, "2026-07-07T09:20:00.000Z")], NOW, T);
+    expect(r.status).toBe("active");
+    expect(r.severity).toBe("info");
+  });
+
   test("single-session profile with attributed commit inside window stays completed even 7+ hours later (no regression)", () => {
     const r = inferStatus(
       profileWith([["2026-07-07T10:00:00.000Z", "run_progressed"]]),

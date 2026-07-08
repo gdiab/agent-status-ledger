@@ -11,8 +11,12 @@ export function* jsonlEntries(text: string, path?: string): Generator<any> {
     try {
       yield JSON.parse(line);
     } catch {
+      // Deliberate: a truncated line usually means the file is mid-write by a live
+      // agent, so we warn and continue rather than drop the whole session (dropping
+      // would hide an active agent). File-level read errors still skip the file
+      // (see scanSessionFile below).
       console.error(`warning: malformed jsonl line skipped in ${path ?? "input"}`);
-      continue; // unknown/broken lines skipped, but never silently
+      continue;
     }
   }
 }
