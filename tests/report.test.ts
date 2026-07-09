@@ -71,11 +71,24 @@ describe("buildReport", () => {
 
     let inflight = 0;
     let maxInflight = 0;
+    // Barrier, not sleeps: the first two calls hold until both have arrived,
+    // so maxInflight >= 2 is guaranteed rather than won by a timing race.
+    let released = false;
+    const waiters: Array<() => void> = [];
+    const gate = () =>
+      new Promise<void>((resolve) => {
+        if (released) return resolve();
+        waiters.push(resolve);
+        if (waiters.length >= 2) {
+          released = true;
+          for (const w of waiters) w();
+        }
+      });
     const canned = JSON.stringify({ workedOn: "w", completed: "c", inProgress: "i", blocked: "b", recommendation: "r" });
     const fetchFn = (async () => {
       inflight++;
       maxInflight = Math.max(maxInflight, inflight);
-      await new Promise((r) => setTimeout(r, 25));
+      await gate();
       inflight--;
       return new Response(JSON.stringify({ content: [{ type: "text", text: canned }] }), { status: 200 });
     }) as unknown as typeof fetch;
