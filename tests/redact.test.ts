@@ -77,6 +77,18 @@ describe("redact", () => {
     expect(r).not.toContain("AbCdEf0123456789XYZsecrettoken");
   });
 
+  test("lowercase and mixed-case bearer tokens are masked", () => {
+    for (const c of [
+      "token = bearer AbCdEf0123456789XYZsecrettoken",
+      "Authorization: bearer AbCdEf0123456789XYZsecrettoken",
+      "auth BEARER AbCdEf0123456789XYZsecrettoken end",
+    ]) {
+      const r = redact(c);
+      expect(r).toContain("[REDACTED]");
+      expect(r).not.toContain("AbCdEf0123456789XYZsecrettoken");
+    }
+  });
+
   test("unclosed quoted values are still masked", () => {
     const r = redact('password: "abc123456789');
     expect(r).toContain("[REDACTED]");

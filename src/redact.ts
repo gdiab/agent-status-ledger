@@ -18,7 +18,7 @@ const BUILTIN: Rule[] = [
   // Bearer must run before the keyword rules: "token = Bearer xyz" would
   // otherwise have "Bearer" consumed as the keyword rule's value, leaving the
   // real token behind.
-  { re: /\bBearer\s+[A-Za-z0-9._~+/-]{16,}=*/g, sub: "[REDACTED]" }, // Bearer tokens
+  { re: /\bBearer\s+[A-Za-z0-9._~+/-]{16,}=*/gi, sub: "[REDACTED]" }, // Bearer tokens (any case)
   // Quoted values next (may span lines, may contain escaped quotes); keeps
   // key + quotes so JSON/YAML stay parseable. One rule per quote type because
   // a backreference can't appear inside the escape-aware character class.
