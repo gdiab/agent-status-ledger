@@ -94,6 +94,30 @@ describe("renderers", () => {
     expect(md).toContain("1 agent: 1 completed — 1 commit, 1 file touched");
   });
 
+  test("markdown: rollup counts unique files across agents", () => {
+    const md = renderMarkdown({ ...report, agents: [agent({}), agent({ profileId: "codex:/w" })] });
+    expect(md).toContain("1 file touched");
+  });
+
+  test("markdown: empty report gets a plain rollup, not a dangling colon", () => {
+    const md = renderMarkdown({ ...report, exceptions: [], agents: [] });
+    expect(md).toContain("No agent activity in this window.");
+    expect(md).not.toContain("0 agents:");
+  });
+
+  test("markdown: unattributed commit list is capped at 5", () => {
+    const many = Array.from({ length: 7 }, (_, i) => ({
+      sha: `${i}bc1234abcdefghijklmnopqrstuvwxyz123456`,
+      authorDate: "2026-07-07T15:00:00.000Z",
+      subject: `hotfix ${i}`,
+      attributed: false,
+    }));
+    const md = renderMarkdown({ ...report, agents: [agent({ commits: many })] });
+    expect(md).toContain("hotfix 4");
+    expect(md).not.toContain("hotfix 5");
+    expect(md).toContain("…and 2 more");
+  });
+
   test("html: rollup appears before exceptions", () => {
     const html = renderHtml(report);
     expect(html).toContain("2 agents: 1 needs_human, 1 completed");

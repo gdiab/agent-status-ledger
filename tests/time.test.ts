@@ -13,6 +13,11 @@ describe("toUtcIso", () => {
     expect(toUtcIso("2026-07-08T07:00:00.000Z")).toBe("2026-07-08T07:00:00.000Z");
   });
 
+  test("treats zone-less timestamps as UTC, independent of host timezone", () => {
+    expect(toUtcIso("2026-07-08T09:00:00")).toBe("2026-07-08T09:00:00.000Z");
+    expect(toUtcIso("2026-07-08T09:00:00.500")).toBe("2026-07-08T09:00:00.500Z");
+  });
+
   test("returns undefined for unparseable input", () => {
     expect(toUtcIso("not a date")).toBeUndefined();
     expect(toUtcIso("")).toBeUndefined();

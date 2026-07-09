@@ -14,6 +14,9 @@ export async function listCommits(repoDir: string, since: Date): Promise<Commit[
       .filter(Boolean)
       .map((line) => {
         const [sha, authorDate, ...rest] = line.split("\t");
+        // %aI is always parseable in practice; if it ever isn't, keeping the
+        // raw string (degrading to attributed:false downstream) beats silently
+        // dropping the commit from the report.
         return { sha: sha!, authorDate: toUtcIso(authorDate!) ?? authorDate!, subject: rest.join("\t") };
       });
   } catch {

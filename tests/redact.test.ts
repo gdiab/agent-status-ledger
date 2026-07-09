@@ -62,6 +62,27 @@ describe("redact", () => {
     expect(out).toContain('"next":"ok"');
   });
 
+  test("escaped quotes inside quoted values do not leak the tail", () => {
+    const out = redact('{"password":"abc\\"def","next":"ok"}');
+    expect(() => JSON.parse(out)).not.toThrow();
+    expect(out).not.toContain("abc");
+    expect(out).not.toContain("def");
+    expect(out).toContain('"next":"ok"');
+    expect(redact("secret: 'ab\\'cd'")).toBe("secret: '[REDACTED]'");
+  });
+
+  test("Bearer token after a keyword assignment is still masked", () => {
+    const r = redact("token = Bearer AbCdEf0123456789XYZsecrettoken");
+    expect(r).toContain("[REDACTED]");
+    expect(r).not.toContain("AbCdEf0123456789XYZsecrettoken");
+  });
+
+  test("unclosed quoted values are still masked", () => {
+    const r = redact('password: "abc123456789');
+    expect(r).toContain("[REDACTED]");
+    expect(r).not.toContain("abc123456789");
+  });
+
   test("extra user patterns apply", () => {
     expect(redact("internal-code-XJ99", ["internal-code-\\w+"])).toBe("[REDACTED]");
   });
