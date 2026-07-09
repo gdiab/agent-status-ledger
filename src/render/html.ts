@@ -9,6 +9,8 @@ const SEVERITY_COLOR: Record<string, string> = { urgent: "#c0392b", warning: "#b
 function card(a: AgentReport): string {
   const commits = a.commits.filter((c) => c.attributed)
     .map((c) => `<li><code>${esc(c.sha.slice(0, 7))}</code> ${esc(c.subject)}</li>`).join("");
+  const unattributed = a.commits.filter((c) => !c.attributed)
+    .map((c) => `<li><code>${esc(c.sha.slice(0, 7))}</code> ${esc(c.subject)}</li>`).join("");
   const files = a.facts.filesTouched.map((f) => `<li><code>${esc(f)}</code></li>`).join("");
   const errors = a.facts.errors.map((e) => `<li>${esc(e)}</li>`).join("");
   return `<article class="card">
@@ -25,6 +27,7 @@ function card(a: AgentReport): string {
     <dt>Next</dt><dd>${esc(a.narrative.recommendation)}</dd>
   </dl>
   ${commits ? `<h4>Commits</h4><ul>${commits}</ul>` : ""}
+  ${unattributed ? `<details><summary>Other repo commits (not attributed to this agent)</summary><ul>${unattributed}</ul></details>` : ""}
   ${files ? `<details><summary>Files touched (${a.facts.filesTouched.length})</summary><ul>${files}</ul></details>` : ""}
   ${errors ? `<h4>Errors</h4><ul class="errors">${errors}</ul>` : ""}
 </article>`;

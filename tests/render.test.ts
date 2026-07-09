@@ -41,6 +41,36 @@ describe("renderers", () => {
     expect(md).toContain("Evidence: proven");
   });
 
+  test("markdown: unattributed commits shown as labeled repo context", () => {
+    const a = agent({
+      commits: [
+        { sha: "abc1234abcdefghijklmnopqrstuvwxyz123456", authorDate: "2026-07-07T09:20:00.000Z", subject: "fix login redirect", attributed: true },
+        { sha: "def5678abcdefghijklmnopqrstuvwxyz123456", authorDate: "2026-07-07T15:00:00.000Z", subject: "human hotfix, not agent work", attributed: false },
+      ],
+    });
+    const md = renderMarkdown({ ...report, agents: [a] });
+    expect(md).toContain("Other repo commits (not attributed to this agent):");
+    expect(md).toContain("`def5678` human hotfix, not agent work");
+    // attributed list must not absorb the unattributed commit
+    const attributedBlock = md.slice(md.indexOf("**Commits:**"), md.indexOf("Other repo commits"));
+    expect(attributedBlock).not.toContain("def5678");
+  });
+
+  test("markdown: no unattributed section when all commits attributed", () => {
+    expect(renderMarkdown(report)).not.toContain("Other repo commits");
+  });
+
+  test("html: unattributed commits shown, escaped, labeled", () => {
+    const a = agent({
+      commits: [{ sha: "def5678abcdefghijklmnopqrstuvwxyz123456", authorDate: "2026-07-07T15:00:00.000Z", subject: "hotfix <b>bold</b>", attributed: false }],
+    });
+    const html = renderHtml({ ...report, agents: [a] });
+    expect(html).toContain("Other repo commits");
+    expect(html).toContain("def5678");
+    expect(html).toContain("hotfix &lt;b&gt;bold&lt;/b&gt;");
+    expect(html).not.toContain("<b>bold</b>");
+  });
+
   test("markdown: empty exceptions section says all clear", () => {
     const md = renderMarkdown({ ...report, exceptions: [] });
     expect(md).toContain("No exceptions");

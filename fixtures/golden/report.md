@@ -55,6 +55,9 @@ Window: 2026-07-07T07:00:00.000Z → 2026-07-08T07:00:00.000Z
 **Commits:**
 - `8db6c7f` fix login redirect
 
+**Other repo commits (not attributed to this agent):**
+- `c09c506` human hotfix, not agent work
+
 **Files touched:**
 - `<REPO>/src/login.ts`
 

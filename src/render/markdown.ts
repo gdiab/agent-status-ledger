@@ -19,6 +19,11 @@ function agentSection(a: AgentReport): string {
     lines.push("", "**Commits:**");
     for (const c of a.commits.filter((c) => c.attributed)) lines.push(`- \`${c.sha.slice(0, 7)}\` ${c.subject}`);
   }
+  const unattributed = a.commits.filter((c) => !c.attributed);
+  if (unattributed.length) {
+    lines.push("", "**Other repo commits (not attributed to this agent):**");
+    for (const c of unattributed) lines.push(`- \`${c.sha.slice(0, 7)}\` ${c.subject}`);
+  }
   if (a.facts.filesTouched.length) {
     lines.push("", "**Files touched:**");
     for (const f of a.facts.filesTouched) lines.push(`- \`${f}\``);
