@@ -1,4 +1,5 @@
 import type { Commit, CommitEvidence } from "./types";
+import { toUtcIso } from "./time";
 
 export async function listCommits(repoDir: string, since: Date): Promise<Commit[]> {
   try {
@@ -13,7 +14,7 @@ export async function listCommits(repoDir: string, since: Date): Promise<Commit[
       .filter(Boolean)
       .map((line) => {
         const [sha, authorDate, ...rest] = line.split("\t");
-        return { sha: sha!, authorDate: authorDate!, subject: rest.join("\t") };
+        return { sha: sha!, authorDate: toUtcIso(authorDate!) ?? authorDate!, subject: rest.join("\t") };
       });
   } catch {
     return [];

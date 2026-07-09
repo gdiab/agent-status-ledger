@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentEvent, RawSession, ScanOptions } from "../types";
 import { firstLine, jsonlEntries, scanSessionFile } from "./jsonl";
+import { toUtcIso } from "../time";
 
 export function parseCodexSession(text: string, titles: Map<string, string>, path?: string): RawSession | null {
   let cwd = "";
@@ -12,7 +13,7 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
   const errors: string[] = [];
 
   for (const entry of jsonlEntries(text, path)) {
-    const ts = typeof entry.timestamp === "string" ? entry.timestamp : undefined;
+    const ts = typeof entry.timestamp === "string" ? toUtcIso(entry.timestamp) : undefined;
     if (ts) {
       if (!startedAt || ts < startedAt) startedAt = ts;
       if (!lastEventAt || ts > lastEventAt) lastEventAt = ts;

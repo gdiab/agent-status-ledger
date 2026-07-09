@@ -2,6 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentEvent, RawSession, ScanOptions } from "../types";
 import { firstLine, jsonlEntries, scanSessionFile } from "./jsonl";
+import { toUtcIso } from "../time";
 
 export function decodeProjectDir(name: string): string {
   // "-work-demo" → "/work/demo". Lossy for path segments containing dashes;
@@ -24,7 +25,7 @@ export function parseClaudeSession(text: string, fallbackCwd: string, path?: str
   for (const entry of jsonlEntries(text, path)) {
     if (typeof entry.sessionId === "string") sessionId = entry.sessionId;
     if (typeof entry.cwd === "string") cwd = entry.cwd;
-    const ts = typeof entry.timestamp === "string" ? entry.timestamp : undefined;
+    const ts = typeof entry.timestamp === "string" ? toUtcIso(entry.timestamp) : undefined;
     if (ts) {
       if (!startedAt || ts < startedAt) startedAt = ts;
       if (!lastEventAt || ts > lastEventAt) lastEventAt = ts;
