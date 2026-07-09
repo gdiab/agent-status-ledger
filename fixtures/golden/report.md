@@ -2,6 +2,8 @@
 
 Window: 2026-07-07T07:00:00.000Z → 2026-07-08T07:00:00.000Z
 
+3 agents: 1 silent, 1 needs_human, 1 completed — 1 commit, 1 file touched
+
 ## Exceptions
 
 - **silent (claude-code)** — silent (urgent): Check whether this agent is stuck.
@@ -54,6 +56,9 @@ Window: 2026-07-07T07:00:00.000Z → 2026-07-08T07:00:00.000Z
 
 **Commits:**
 - `8db6c7f` fix login redirect
+
+**Other repo commits (not attributed to this agent):**
+- `c09c506` human hotfix, not agent work
 
 **Files touched:**
 - `<REPO>/src/login.ts`

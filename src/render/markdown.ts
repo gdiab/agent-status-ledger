@@ -1,4 +1,5 @@
 import type { AgentReport, Report } from "../types";
+import { rollupLine } from "./rollup";
 
 function agentSection(a: AgentReport): string {
   const lines = [
@@ -19,6 +20,13 @@ function agentSection(a: AgentReport): string {
     lines.push("", "**Commits:**");
     for (const c of a.commits.filter((c) => c.attributed)) lines.push(`- \`${c.sha.slice(0, 7)}\` ${c.subject}`);
   }
+  // Capped: in a busy shared repo this list is context, not the headline.
+  const unattributed = a.commits.filter((c) => !c.attributed);
+  if (unattributed.length) {
+    lines.push("", "**Other repo commits (not attributed to this agent):**");
+    for (const c of unattributed.slice(0, 5)) lines.push(`- \`${c.sha.slice(0, 7)}\` ${c.subject}`);
+    if (unattributed.length > 5) lines.push(`- …and ${unattributed.length - 5} more`);
+  }
   if (a.facts.filesTouched.length) {
     lines.push("", "**Files touched:**");
     for (const f of a.facts.filesTouched) lines.push(`- \`${f}\``);
@@ -36,6 +44,8 @@ export function renderMarkdown(report: Report): string {
     `# Agent Standup — ${day}`,
     "",
     `Window: ${report.windowStart} → ${report.windowEnd}`,
+    "",
+    rollupLine(report),
     "",
     "## Exceptions",
     "",

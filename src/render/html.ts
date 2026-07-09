@@ -1,4 +1,5 @@
 import type { AgentReport, Report } from "../types";
+import { rollupLine } from "./rollup";
 
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -8,6 +9,8 @@ const SEVERITY_COLOR: Record<string, string> = { urgent: "#c0392b", warning: "#b
 
 function card(a: AgentReport): string {
   const commits = a.commits.filter((c) => c.attributed)
+    .map((c) => `<li><code>${esc(c.sha.slice(0, 7))}</code> ${esc(c.subject)}</li>`).join("");
+  const unattributed = a.commits.filter((c) => !c.attributed)
     .map((c) => `<li><code>${esc(c.sha.slice(0, 7))}</code> ${esc(c.subject)}</li>`).join("");
   const files = a.facts.filesTouched.map((f) => `<li><code>${esc(f)}</code></li>`).join("");
   const errors = a.facts.errors.map((e) => `<li>${esc(e)}</li>`).join("");
@@ -25,6 +28,7 @@ function card(a: AgentReport): string {
     <dt>Next</dt><dd>${esc(a.narrative.recommendation)}</dd>
   </dl>
   ${commits ? `<h4>Commits</h4><ul>${commits}</ul>` : ""}
+  ${unattributed ? `<details><summary>Other repo commits (not attributed to this agent)</summary><ul>${unattributed}</ul></details>` : ""}
   ${files ? `<details><summary>Files touched (${a.facts.filesTouched.length})</summary><ul>${files}</ul></details>` : ""}
   ${errors ? `<h4>Errors</h4><ul class="errors">${errors}</ul>` : ""}
 </article>`;
@@ -61,6 +65,7 @@ code { font-size: .85em; }
 <body>
 <h1>Agent Standup — ${esc(day)}</h1>
 <p class="window">${esc(report.windowStart)} → ${esc(report.windowEnd)}</p>
+<p class="rollup">${esc(rollupLine(report))}</p>
 <section class="exceptions"><h2>Exceptions</h2><ul>${exceptions}</ul></section>
 <section><h2>All agents</h2>${report.agents.map(card).join("\n")}</section>
 <footer class="window">Generated ${esc(report.generatedAt)} · schema v${report.schemaVersion}</footer>

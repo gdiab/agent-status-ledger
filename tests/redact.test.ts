@@ -31,6 +31,70 @@ describe("redact", () => {
     expect(out).toContain("[REDACTED]");
   });
 
+  test("masks uppercase key prefixes", () => {
+    const cases = [
+      "key SK-ANT-API03-ABCDEFGHIJKLMNOP1234 here",
+      "token GHP_ABCDEFGHIJKLMNOPQRST123456 done",
+      "slack XOXB-123456789012-ABCDEFGHIJKLM end",
+    ];
+    for (const c of cases) {
+      const r = redact(c);
+      expect(r).toContain("[REDACTED]");
+      expect(r).not.toMatch(/ABCDEFGHIJKLM/);
+    }
+  });
+
+  test("masks short generic values", () => {
+    const r = redact("login failed, password=hunter2");
+    expect(r).toContain("[REDACTED]");
+    expect(r).not.toContain("hunter2");
+  });
+
+  test("masks quoted multiline values, preserving key and quotes", () => {
+    expect(redact('api_key = "line one\nline two extra"')).toBe('api_key = "[REDACTED]"');
+    expect(redact("secret: 'abc\ndef'")).toBe("secret: '[REDACTED]'");
+  });
+
+  test("quoted single-line values keep surrounding JSON parseable", () => {
+    const out = redact('{"password":"hunter2secret","next":"ok"}');
+    expect(() => JSON.parse(out)).not.toThrow();
+    expect(out).not.toContain("hunter2secret");
+    expect(out).toContain('"next":"ok"');
+  });
+
+  test("escaped quotes inside quoted values do not leak the tail", () => {
+    const out = redact('{"password":"abc\\"def","next":"ok"}');
+    expect(() => JSON.parse(out)).not.toThrow();
+    expect(out).not.toContain("abc");
+    expect(out).not.toContain("def");
+    expect(out).toContain('"next":"ok"');
+    expect(redact("secret: 'ab\\'cd'")).toBe("secret: '[REDACTED]'");
+  });
+
+  test("Bearer token after a keyword assignment is still masked", () => {
+    const r = redact("token = Bearer AbCdEf0123456789XYZsecrettoken");
+    expect(r).toContain("[REDACTED]");
+    expect(r).not.toContain("AbCdEf0123456789XYZsecrettoken");
+  });
+
+  test("lowercase and mixed-case bearer tokens are masked", () => {
+    for (const c of [
+      "token = bearer AbCdEf0123456789XYZsecrettoken",
+      "Authorization: bearer AbCdEf0123456789XYZsecrettoken",
+      "auth BEARER AbCdEf0123456789XYZsecrettoken end",
+    ]) {
+      const r = redact(c);
+      expect(r).toContain("[REDACTED]");
+      expect(r).not.toContain("AbCdEf0123456789XYZsecrettoken");
+    }
+  });
+
+  test("unclosed quoted values are still masked", () => {
+    const r = redact('password: "abc123456789');
+    expect(r).toContain("[REDACTED]");
+    expect(r).not.toContain("abc123456789");
+  });
+
   test("extra user patterns apply", () => {
     expect(redact("internal-code-XJ99", ["internal-code-\\w+"])).toBe("[REDACTED]");
   });

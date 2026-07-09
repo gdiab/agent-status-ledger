@@ -41,9 +41,87 @@ describe("renderers", () => {
     expect(md).toContain("Evidence: proven");
   });
 
+  test("markdown: unattributed commits shown as labeled repo context", () => {
+    const a = agent({
+      commits: [
+        { sha: "abc1234abcdefghijklmnopqrstuvwxyz123456", authorDate: "2026-07-07T09:20:00.000Z", subject: "fix login redirect", attributed: true },
+        { sha: "def5678abcdefghijklmnopqrstuvwxyz123456", authorDate: "2026-07-07T15:00:00.000Z", subject: "human hotfix, not agent work", attributed: false },
+      ],
+    });
+    const md = renderMarkdown({ ...report, agents: [a] });
+    expect(md).toContain("Other repo commits (not attributed to this agent):");
+    expect(md).toContain("`def5678` human hotfix, not agent work");
+    // attributed list must not absorb the unattributed commit
+    const attributedBlock = md.slice(md.indexOf("**Commits:**"), md.indexOf("Other repo commits"));
+    expect(attributedBlock).not.toContain("def5678");
+  });
+
+  test("markdown: no unattributed section when all commits attributed", () => {
+    expect(renderMarkdown(report)).not.toContain("Other repo commits");
+  });
+
+  test("html: unattributed commits shown, escaped, labeled", () => {
+    const a = agent({
+      commits: [{ sha: "def5678abcdefghijklmnopqrstuvwxyz123456", authorDate: "2026-07-07T15:00:00.000Z", subject: "hotfix <b>bold</b>", attributed: false }],
+    });
+    const html = renderHtml({ ...report, agents: [a] });
+    expect(html).toContain("Other repo commits");
+    expect(html).toContain("def5678");
+    expect(html).toContain("hotfix &lt;b&gt;bold&lt;/b&gt;");
+    expect(html).not.toContain("<b>bold</b>");
+  });
+
   test("markdown: empty exceptions section says all clear", () => {
     const md = renderMarkdown({ ...report, exceptions: [] });
     expect(md).toContain("No exceptions");
+  });
+
+  test("markdown: rollup line summarizes statuses before exceptions", () => {
+    const md = renderMarkdown(report);
+    expect(md).toContain("2 agents: 1 needs_human, 1 completed");
+    expect(md.indexOf("2 agents:")).toBeLessThan(md.indexOf("## Exceptions"));
+  });
+
+  test("markdown: rollup counts attributed commits and skips zero statuses", () => {
+    const md = renderMarkdown(report);
+    expect(md).toContain("2 commits");
+    expect(md).not.toContain("0 failed");
+    expect(md).not.toContain("0 silent");
+  });
+
+  test("markdown: rollup pluralizes counts correctly", () => {
+    const md = renderMarkdown({ ...report, agents: [agent({})] });
+    expect(md).toContain("1 agent: 1 completed — 1 commit, 1 file touched");
+  });
+
+  test("markdown: rollup counts unique files across agents", () => {
+    const md = renderMarkdown({ ...report, agents: [agent({}), agent({ profileId: "codex:/w" })] });
+    expect(md).toContain("1 file touched");
+  });
+
+  test("markdown: empty report gets a plain rollup, not a dangling colon", () => {
+    const md = renderMarkdown({ ...report, exceptions: [], agents: [] });
+    expect(md).toContain("No agent activity in this window.");
+    expect(md).not.toContain("0 agents:");
+  });
+
+  test("markdown: unattributed commit list is capped at 5", () => {
+    const many = Array.from({ length: 7 }, (_, i) => ({
+      sha: `${i}bc1234abcdefghijklmnopqrstuvwxyz123456`,
+      authorDate: "2026-07-07T15:00:00.000Z",
+      subject: `hotfix ${i}`,
+      attributed: false,
+    }));
+    const md = renderMarkdown({ ...report, agents: [agent({ commits: many })] });
+    expect(md).toContain("hotfix 4");
+    expect(md).not.toContain("hotfix 5");
+    expect(md).toContain("…and 2 more");
+  });
+
+  test("html: rollup appears before exceptions", () => {
+    const html = renderHtml(report);
+    expect(html).toContain("2 agents: 1 needs_human, 1 completed");
+    expect(html.indexOf("2 agents:")).toBeLessThan(html.indexOf("Exceptions"));
   });
 
   test("json: round-trips with schemaVersion", () => {

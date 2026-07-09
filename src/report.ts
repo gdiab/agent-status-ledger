@@ -20,6 +20,25 @@ export interface BuildReportOptions {
 const SEVERITY_ORDER = { urgent: 0, warning: 1, info: 2 } as const;
 const EXCEPTION_STATUSES = new Set(["blocked", "failed", "silent", "needs_human"]);
 
+// Per-profile work (git log + LLM narrative) is independent across profiles;
+// run it concurrently, capped so a many-agent morning doesn't burst-hit the
+// Anthropic rate limit.
+const PROFILE_CONCURRENCY = 4;
+
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) {
+        const i = next++;
+        results[i] = await fn(items[i]!);
+      }
+    }),
+  );
+  return results;
+}
+
 export async function buildReport(opts: BuildReportOptions): Promise<Report> {
   const { since, now, config } = opts;
   const sessions = [
@@ -32,8 +51,7 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
   ];
   const profiles = resolveProfiles(sessions);
 
-  const agents: AgentReport[] = [];
-  for (const profile of profiles) {
+  const agents: AgentReport[] = await mapLimit(profiles, PROFILE_CONCURRENCY, async (profile) => {
     const rawCommits = attributeCommits(await listCommits(profile.workdir, since), profile.sessions);
     // Defense in depth: redact commit subjects here at the model layer too, so any
     // future consumer of buildReport() (not just the CLI's own render pass) gets a
@@ -44,7 +62,7 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
     const { narrative, source } = opts.useLlm
       ? await generateNarrative(facts, status, { model: config.model, apiKey: opts.apiKey, fetchFn: opts.fetchFn })
       : { narrative: templateNarrative(facts, status), source: "template" as const };
-    agents.push({
+    return {
       profileId: profile.profileId,
       displayName: profile.displayName,
       platform: profile.platform,
@@ -54,8 +72,8 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
       narrative,
       narrativeSource: source,
       commits,
-    });
-  }
+    };
+  });
 
   agents.sort((a, b) =>
     SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || a.displayName.localeCompare(b.displayName));

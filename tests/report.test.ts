@@ -51,4 +51,52 @@ describe("buildReport", () => {
     expect(agent.commits[0]!.subject).toContain("[REDACTED]");
     expect(agent.commits[0]!.subject).not.toContain("hunter2secret");
   });
+
+  test("runs per-profile work concurrently with a bounded pool", async () => {
+    const world = mkdtempSync(join(tmpdir(), "asl-report-"));
+    const ccRoot = join(world, "claude-projects");
+    for (let i = 0; i < 5; i++) {
+      const dir = join(ccRoot, `-work-p${i}`);
+      mkdirSync(dir, { recursive: true });
+      const f = join(dir, "s.jsonl");
+      writeFileSync(f, JSON.stringify({
+        type: "user", timestamp: "2026-07-07T12:00:00.000Z", cwd: `/work/p${i}`,
+        sessionId: `cc-p${i}`, message: { role: "user", content: "task" },
+      }) + "\n");
+      utimesSync(f, MTIME, MTIME);
+    }
+    const config = defaultConfig();
+    config.connectors.claudeCode.rootDir = ccRoot;
+    config.connectors.codex.enabled = false;
+
+    let inflight = 0;
+    let maxInflight = 0;
+    // Barrier, not sleeps: the first two calls hold until both have arrived,
+    // so maxInflight >= 2 is guaranteed rather than won by a timing race.
+    let released = false;
+    const waiters: Array<() => void> = [];
+    const gate = () =>
+      new Promise<void>((resolve) => {
+        if (released) return resolve();
+        waiters.push(resolve);
+        if (waiters.length >= 2) {
+          released = true;
+          for (const w of waiters) w();
+        }
+      });
+    const canned = JSON.stringify({ workedOn: "w", completed: "c", inProgress: "i", blocked: "b", recommendation: "r" });
+    const fetchFn = (async () => {
+      inflight++;
+      maxInflight = Math.max(maxInflight, inflight);
+      await gate();
+      inflight--;
+      return new Response(JSON.stringify({ content: [{ type: "text", text: canned }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const report = await buildReport({ since: SINCE, now: NOW, config, useLlm: true, apiKey: "k", fetchFn });
+    expect(report.agents.length).toBe(5);
+    expect(report.agents.every((a) => a.narrativeSource === "llm")).toBe(true);
+    expect(maxInflight).toBeGreaterThanOrEqual(2); // actually parallel
+    expect(maxInflight).toBeLessThanOrEqual(4);    // but bounded
+  });
 });
