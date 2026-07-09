@@ -1,4 +1,5 @@
 import type { AgentReport, Report } from "../types";
+import { rollupLine } from "./rollup";
 
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -64,6 +65,7 @@ code { font-size: .85em; }
 <body>
 <h1>Agent Standup — ${esc(day)}</h1>
 <p class="window">${esc(report.windowStart)} → ${esc(report.windowEnd)}</p>
+<p class="rollup">${esc(rollupLine(report))}</p>
 <section class="exceptions"><h2>Exceptions</h2><ul>${exceptions}</ul></section>
 <section><h2>All agents</h2>${report.agents.map(card).join("\n")}</section>
 <footer class="window">Generated ${esc(report.generatedAt)} · schema v${report.schemaVersion}</footer>

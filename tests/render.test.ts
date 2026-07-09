@@ -76,6 +76,30 @@ describe("renderers", () => {
     expect(md).toContain("No exceptions");
   });
 
+  test("markdown: rollup line summarizes statuses before exceptions", () => {
+    const md = renderMarkdown(report);
+    expect(md).toContain("2 agents: 1 needs_human, 1 completed");
+    expect(md.indexOf("2 agents:")).toBeLessThan(md.indexOf("## Exceptions"));
+  });
+
+  test("markdown: rollup counts attributed commits and skips zero statuses", () => {
+    const md = renderMarkdown(report);
+    expect(md).toContain("2 commits");
+    expect(md).not.toContain("0 failed");
+    expect(md).not.toContain("0 silent");
+  });
+
+  test("markdown: rollup pluralizes counts correctly", () => {
+    const md = renderMarkdown({ ...report, agents: [agent({})] });
+    expect(md).toContain("1 agent: 1 completed — 1 commit, 1 file touched");
+  });
+
+  test("html: rollup appears before exceptions", () => {
+    const html = renderHtml(report);
+    expect(html).toContain("2 agents: 1 needs_human, 1 completed");
+    expect(html.indexOf("2 agents:")).toBeLessThan(html.indexOf("Exceptions"));
+  });
+
   test("json: round-trips with schemaVersion", () => {
     const parsed = JSON.parse(renderJson(report));
     expect(parsed.schemaVersion).toBe(1);

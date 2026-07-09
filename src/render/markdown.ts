@@ -1,4 +1,5 @@
 import type { AgentReport, Report } from "../types";
+import { rollupLine } from "./rollup";
 
 function agentSection(a: AgentReport): string {
   const lines = [
@@ -41,6 +42,8 @@ export function renderMarkdown(report: Report): string {
     `# Agent Standup — ${day}`,
     "",
     `Window: ${report.windowStart} → ${report.windowEnd}`,
+    "",
+    rollupLine(report),
     "",
     "## Exceptions",
     "",

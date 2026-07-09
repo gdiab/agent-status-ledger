@@ -2,6 +2,8 @@
 
 Window: 2026-07-07T07:00:00.000Z → 2026-07-08T07:00:00.000Z
 
+3 agents: 1 silent, 1 needs_human, 1 completed — 1 commit, 1 file touched
+
 ## Exceptions
 
 - **silent (claude-code)** — silent (urgent): Check whether this agent is stuck.
