@@ -41,4 +41,15 @@ describe("config", () => {
     expect(c.connectors.claudeCode.rootDir).toContain(".claude/projects");
     expect(c.connectors.codex.rootDir).toContain(".codex");
   });
+
+  test("minSessionSeconds defaults to 60", () => {
+    expect(defaultConfig().thresholds.minSessionSeconds).toBe(60);
+  });
+
+  test("thresholds.min_session_seconds is read from toml", () => {
+    const dir = mkdtempSync(join(tmpdir(), "asl-config-"));
+    const p = join(dir, "config.toml");
+    writeFileSync(p, "[thresholds]\nmin_session_seconds = 120\n");
+    expect(loadConfig(p).thresholds.minSessionSeconds).toBe(120);
+  });
 });

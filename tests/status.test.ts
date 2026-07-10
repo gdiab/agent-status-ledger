@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { AgentEvent, AgentProfile, CommitEvidence, EventType, RawSession } from "../src/types";
 import { inferStatus } from "../src/status";
 
-const T = { activeWindowHours: 2, silentThresholdHours: 6 };
+const T = { activeWindowHours: 2, silentThresholdHours: 6, minSessionSeconds: 60 };
 const NOW = new Date("2026-07-07T20:00:00.000Z");
 
 function profileWith(events: Array<[string, EventType]>, filesTouched: string[] = []): AgentProfile {

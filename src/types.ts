@@ -102,4 +102,5 @@ export interface Report {
 export interface Thresholds {
   activeWindowHours: number;
   silentThresholdHours: number;
+  minSessionSeconds: number;   // profiles with only shorter, artifact-free sessions are trivial
 }
