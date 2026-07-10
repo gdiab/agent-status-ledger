@@ -3,3 +3,13 @@ reports/
 .env
 .cursor/
 CLAUDE.md
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+
+# beads issue data lives in the private backup repo (gdiab/asl-issues), not here
+.beads/issues.jsonl
+.beads/dolt-backup*.json

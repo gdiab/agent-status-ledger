@@ -43,10 +43,23 @@ async function buildWorld() {
   utimesSync(s1, MTIME, MTIME);
   mkdirSync(join(ccRoot, "-work-silent"), { recursive: true });
   const s2 = join(ccRoot, "-work-silent", "s2.jsonl");
-  writeFileSync(s2, JSON.stringify({
-    type: "user", timestamp: "2026-07-07T12:00:00.000Z", cwd: "/work/silent", sessionId: "cc-silent-1",
-    message: { role: "user", content: "long task" },
-  }) + "\n");
+  // Two events 8 minutes apart, so the session itself is well above
+  // minSessionSeconds (60s) and isn't filtered as a trivial noise profile.
+  // lastEventAt (12:08) is still ~18h51m before NOW (07:00 next day), far
+  // past silentThresholdHours (6h), so the profile still infers `silent`.
+  // Both events are `user` turns (not `assistant`) so `awaitingUser` stays
+  // false, keeping the ball in the agent's court — required for `silent`
+  // rather than `idle` once NOW is well past silentThresholdHours.
+  writeFileSync(s2, [
+    JSON.stringify({
+      type: "user", timestamp: "2026-07-07T12:00:00.000Z", cwd: "/work/silent", sessionId: "cc-silent-1",
+      message: { role: "user", content: "long task" },
+    }),
+    JSON.stringify({
+      type: "user", timestamp: "2026-07-07T12:08:00.000Z", cwd: "/work/silent", sessionId: "cc-silent-1",
+      message: { role: "user", content: "still going?" },
+    }),
+  ].join("\n") + "\n");
   utimesSync(s2, MTIME, MTIME);
 
   // codex home: approval-blocked session

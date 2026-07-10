@@ -32,6 +32,14 @@ export interface RawSession {
   events: AgentEvent[];
   filesTouched: string[];
   errors: string[];         // first lines only
+  // True iff the session's last meaningful event puts the ball in the human's
+  // court (agent finished its reply). Absent = unknown = treated as false, so
+  // unparseable logs still alert (silent) rather than silently demote.
+  awaitingUser?: boolean;
+  // True iff the session ends with agent work visibly in flight (dangling
+  // tool call, unprocessed tool result, task or approval pending). A mid-work
+  // session must never be filtered as trivial noise.
+  midWork?: boolean;
 }
 
 export interface ScanOptions {
@@ -97,9 +105,14 @@ export interface Report {
   windowEnd: string;
   exceptions: AgentReport[];  // status in blocked|failed|silent|needs_human
   agents: AgentReport[];      // all agents, exceptions included, sorted by severity then name
+  // Display names of profiles hidden as noise (only sub-minSessionSeconds
+  // sessions, nothing touched/produced/errored). Additive + optional:
+  // schemaVersion stays 1. Absent when empty.
+  trivialProfiles?: string[];
 }
 
 export interface Thresholds {
   activeWindowHours: number;
   silentThresholdHours: number;
+  minSessionSeconds: number;   // profiles with only shorter, artifact-free sessions are trivial
 }

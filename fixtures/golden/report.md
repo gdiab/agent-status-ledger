@@ -16,7 +16,7 @@ Window: 2026-07-07T07:00:00.000Z → 2026-07-08T07:00:00.000Z
 - Status: **silent** (urgent)
 - Evidence: claimed_only
 - Workdir: `/work/silent`
-- Sessions: 1 (2026-07-07T12:00:00.000Z → 2026-07-07T12:00:00.000Z)
+- Sessions: 1 (2026-07-07T12:00:00.000Z → 2026-07-07T12:08:00.000Z)
 
 **Worked on:** 1 session: untitled work.
 **Completed:** No durable artifacts detected.
@@ -62,5 +62,22 @@ Window: 2026-07-07T07:00:00.000Z → 2026-07-08T07:00:00.000Z
 
 **Files touched:**
 - `<REPO>/src/login.ts`
+
+## Legend
+
+- **active** — Activity within the active window — working right now.
+- **idle** — Open session gone quiet with the ball in your court — no action needed.
+- **completed** — Finished its work, or produced durable artifacts (commits).
+- **blocked** — The agent reported it cannot proceed.
+- **failed** — The last run ended in an error.
+- **silent** — Left open mid-work and quiet past the silent threshold — check whether it is stuck.
+- **needs_human** — An approval or decision is waiting on you.
+- **urgent** (severity) — Needs your attention now.
+- **warning** (severity) — Worth a look today.
+- **info** (severity) — No action needed.
+- **proven** (evidence) — Commits or artifacts back this up.
+- **partially proven** (evidence) — Files were touched, but nothing durable was produced.
+- **claimed only** (evidence) — Only the session log claims this — no artifacts found.
+- **unknown** (evidence) — Not enough information to judge.
 
 _Generated 2026-07-08T07:00:00.000Z. Narratives: template._

@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { jsonlEntries } from "../src/connectors/jsonl";
+import { jsonlEntries, withContext } from "../src/connectors/jsonl";
 import { parseClaudeSession } from "../src/connectors/claude-code";
 
 describe("jsonlEntries", () => {
@@ -34,6 +34,32 @@ describe("jsonlEntries", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("withContext", () => {
+  test("composes message, tool, and input", () => {
+    expect(withContext("exit code 143", "Bash", { command: "xcrun simctl list" }))
+      .toBe('exit code 143 — while Bash: {"command":"xcrun simctl list"}');
+  });
+
+  test("collapses whitespace and truncates input to 80 chars with ellipsis", () => {
+    const long = "a".repeat(100) + "\n" + "b".repeat(50);
+    const out = withContext("boom", "Bash", long);
+    expect(out).toBe(`boom — while Bash: ${"a".repeat(80)}…`);
+  });
+
+  test("omits the colon segment when input is empty", () => {
+    expect(withContext("boom", "Bash", "")).toBe("boom — while Bash");
+    expect(withContext("boom", "Bash", undefined)).toBe("boom — while Bash");
+  });
+
+  test("redacts a secret before truncation even when it straddles the 80-char boundary", () => {
+    const padding = "x".repeat(50);
+    const token = "ghp_" + "A".repeat(36);
+    const out = withContext("boom", "Bash", `${padding} ${token}`);
+    expect(out).toContain("[REDACTED]");
+    expect(out).not.toContain("ghp_");
   });
 });
 

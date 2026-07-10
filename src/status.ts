@@ -46,7 +46,19 @@ export function inferStatus(
   if (newest !== undefined && open && !hasCurrentArtifact) {
     const idleMs = now.getTime() - Date.parse(newest.lastEventAt);
     if (idleMs <= t.activeWindowHours * HOUR_MS) newestOpenStatus = "active";
-    else if (idleMs >= t.silentThresholdHours * HOUR_MS) newestOpenStatus = "silent";
+    // An interactive session the human simply walked away from is a diary
+    // entry, not an alarm; only an agent that went quiet mid-work is silent.
+    else if (idleMs >= t.silentThresholdHours * HOUR_MS) {
+      // Any open session that went dark mid-conversation keeps the profile
+      // silent — a newer abandoned chat must not mask an older stuck one.
+      const anyStuckOpen = profile.sessions.some(
+        (s) =>
+          !s.events.some((e) => TERMINAL_EVENT_TYPES.has(e.type)) &&
+          now.getTime() - Date.parse(s.lastEventAt) >= t.silentThresholdHours * HOUR_MS &&
+          s.awaitingUser !== true,
+      );
+      newestOpenStatus = anyStuckOpen ? "silent" : "idle";
+    }
   }
 
   let status: Status;

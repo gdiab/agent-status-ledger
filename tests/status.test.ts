@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { AgentEvent, AgentProfile, CommitEvidence, EventType, RawSession } from "../src/types";
 import { inferStatus } from "../src/status";
 
-const T = { activeWindowHours: 2, silentThresholdHours: 6 };
+const T = { activeWindowHours: 2, silentThresholdHours: 6, minSessionSeconds: 60 };
 const NOW = new Date("2026-07-07T20:00:00.000Z");
 
 function profileWith(events: Array<[string, EventType]>, filesTouched: string[] = []): AgentProfile {
@@ -120,5 +120,38 @@ describe("inferStatus", () => {
       NOW, T,
     );
     expect(r.status).toBe("completed");
+  });
+
+  test("long-quiet open session with ball in user's court → idle / info", () => {
+    const p = profileWith([["2026-07-07T09:00:00.000Z", "run_started"], ["2026-07-07T09:10:00.000Z", "run_progressed"]]);
+    p.sessions[0]!.awaitingUser = true;      // agent finished its reply; user walked away
+    const r = inferStatus(p, [], NOW, T);    // 10h50m quiet, past silentThresholdHours
+    expect(r.status).toBe("idle");
+    expect(r.severity).toBe("info");
+  });
+
+  test("long-quiet open session mid-work (or unknown) → silent / urgent", () => {
+    for (const flag of [false, undefined]) {
+      const p = profileWith([["2026-07-07T09:00:00.000Z", "run_started"], ["2026-07-07T09:10:00.000Z", "run_progressed"]]);
+      p.sessions[0]!.awaitingUser = flag;
+      const r = inferStatus(p, [], NOW, T);
+      expect(r.status).toBe("silent");
+      expect(r.severity).toBe("urgent");
+    }
+  });
+
+  test("a newer abandoned (awaitingUser) open session must not mask an older stuck open session → silent / urgent", () => {
+    // Older session: went dark mid-work (awaitingUser false), long past silentThresholdHours.
+    // Newer session: the user just walked away after a plain reply (awaitingUser true).
+    // The newest-session-wins logic must not let the newer "idle" reading hide the older "stuck" one.
+    const p = twoSessionProfile(
+      [["2026-07-07T05:00:00.000Z", "run_started"], ["2026-07-07T05:10:00.000Z", "run_progressed"]],
+      [["2026-07-07T09:00:00.000Z", "run_started"], ["2026-07-07T09:10:00.000Z", "run_progressed"]],
+    );
+    p.sessions[0]!.awaitingUser = false;  // older, stuck
+    p.sessions[1]!.awaitingUser = true;   // newer, abandoned but not stuck
+    const r = inferStatus(p, [], NOW, T);
+    expect(r.status).toBe("silent");
+    expect(r.severity).toBe("urgent");
   });
 });

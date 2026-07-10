@@ -18,7 +18,7 @@ export function defaultConfig(): Config {
   return {
     reportsDir: join(process.cwd(), "reports"),
     model: "claude-haiku-4-5-20251001",
-    thresholds: { activeWindowHours: 2, silentThresholdHours: 6 },
+    thresholds: { activeWindowHours: 2, silentThresholdHours: 6, minSessionSeconds: 60 },
     connectors: {
       claudeCode: { enabled: true, rootDir: join(homedir(), ".claude", "projects") },
       codex: { enabled: true, rootDir: join(homedir(), ".codex") },
@@ -46,6 +46,7 @@ export function loadConfig(path: string = configPath()): Config {
   const t = raw.thresholds as Record<string, unknown> | undefined;
   if (typeof t?.active_window_hours === "number") c.thresholds.activeWindowHours = t.active_window_hours;
   if (typeof t?.silent_threshold_hours === "number") c.thresholds.silentThresholdHours = t.silent_threshold_hours;
+  if (typeof t?.min_session_seconds === "number") c.thresholds.minSessionSeconds = t.min_session_seconds;
   const conns = raw.connectors as Record<string, Record<string, unknown>> | undefined;
   for (const [key, target] of [["claude_code", c.connectors.claudeCode], ["codex", c.connectors.codex]] as const) {
     const section = conns?.[key];

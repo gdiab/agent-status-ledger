@@ -32,6 +32,103 @@ describe("parseCodexSession", () => {
   test("no session_meta and no timestamps returns null", () => {
     expect(parseCodexSession("garbage\n", titles)).toBeNull();
   });
+
+  test("errors carry the in-flight exec command", () => {
+    const line = (o: unknown) => JSON.stringify(o);
+    const text = [
+      line({ type: "session_meta", timestamp: "2026-07-07T10:00:00Z", payload: { id: "c1", cwd: "/w" } }),
+      line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "exec_command_begin", command: ["npm", "run", "build"] } }),
+      line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "error", message: "build failed" } }),
+    ].join("\n");
+    expect(parseCodexSession(text, new Map())!.errors[0]).toBe("build failed — while exec: npm run build");
+  });
+
+  test("a finished exec command is not blamed for a later error", () => {
+    const line = (o: unknown) => JSON.stringify(o);
+    const text = [
+      line({ type: "session_meta", timestamp: "2026-07-07T10:00:00Z", payload: { id: "c1", cwd: "/w" } }),
+      line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "exec_command_begin", command: "ls" } }),
+      line({ type: "event_msg", timestamp: "2026-07-07T10:01:05Z", payload: { type: "exec_command_end" } }),
+      line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "stream_error", message: "connection reset" } }),
+    ].join("\n");
+    expect(parseCodexSession(text, new Map())!.errors[0]).toBe("connection reset");
+  });
+
+  describe("awaitingUser", () => {
+    const line = (o: unknown) => JSON.stringify(o);
+    const meta = line({ type: "session_meta", timestamp: "2026-07-07T10:00:00Z", payload: { id: "c1", cwd: "/w" } });
+    const parse = (rest: string[]) => parseCodexSession([meta, ...rest].join("\n"), new Map())!;
+
+    test("true when last event is agent_message", () => {
+      expect(parse([
+        line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "task_started" } }),
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "agent_message" } }),
+      ]).awaitingUser).toBe(true);
+    });
+
+    test("true when last event is task_complete", () => {
+      expect(parse([
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "task_complete", last_agent_message: "done" } }),
+      ]).awaitingUser).toBe(true);
+    });
+
+    test("false when last event is task_started (mid-work)", () => {
+      expect(parse([
+        line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "agent_message" } }),
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "task_started" } }),
+      ]).awaitingUser).toBe(false);
+    });
+
+    test("trailing unknown event types do not change the flag", () => {
+      expect(parse([
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "agent_message" } }),
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:01Z", payload: { type: "token_count" } }),
+      ]).awaitingUser).toBe(true);
+    });
+
+    test("false when a dangling exec_command_begin trails agent_message (no matching end)", () => {
+      expect(parse([
+        line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "task_started" } }),
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "agent_message" } }),
+        line({ type: "event_msg", timestamp: "2026-07-07T10:03:00Z", payload: { type: "exec_command_begin", command: "ls" } }),
+      ]).awaitingUser).toBe(false);
+    });
+
+    test("false when exec_command_begin is followed by exec_command_end (agent still owes processing)", () => {
+      expect(parse([
+        line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "task_started" } }),
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "agent_message" } }),
+        line({ type: "event_msg", timestamp: "2026-07-07T10:03:00Z", payload: { type: "exec_command_begin", command: "ls" } }),
+        line({ type: "event_msg", timestamp: "2026-07-07T10:03:05Z", payload: { type: "exec_command_end" } }),
+      ]).awaitingUser).toBe(false);
+    });
+  });
+
+  describe("midWork", () => {
+    const line = (o: unknown) => JSON.stringify(o);
+    const meta = line({ type: "session_meta", timestamp: "2026-07-07T10:00:00Z", payload: { id: "c1", cwd: "/w" } });
+    const parse = (rest: string[]) => parseCodexSession([meta, ...rest].join("\n"), new Map())!;
+
+    test("true when the log ends with a trailing task_started", () => {
+      expect(parse([
+        line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "task_started" } }),
+      ]).midWork).toBe(true);
+    });
+
+    test("false when the log ends with task_complete", () => {
+      expect(parse([
+        line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "task_started" } }),
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "task_complete", last_agent_message: "done" } }),
+      ]).midWork).toBe(false);
+    });
+
+    test("true when the log ends with a trailing exec_approval_request", () => {
+      expect(parse([
+        line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "task_started" } }),
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "exec_approval_request", command: "terraform apply" } }),
+      ]).midWork).toBe(true);
+    });
+  });
 });
 
 describe("scanCodex", () => {
