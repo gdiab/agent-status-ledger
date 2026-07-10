@@ -10,6 +10,7 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
   let startedAt: string | undefined;
   let lastEventAt: string | undefined;
   let awaitingUser = false;
+  let midWork = false;
   const events: AgentEvent[] = [];
   const errors: string[] = [];
   let lastCommand: string | undefined;
@@ -32,17 +33,22 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
         case "task_started":
           events.push({ timestamp: ts, type: "run_progressed", summary: p.type });
           awaitingUser = false;
+          midWork = true;
           break;
         case "agent_message":
           events.push({ timestamp: ts, type: "run_progressed", summary: p.type });
           awaitingUser = true;
+          midWork = false;
           break;
         case "task_complete":
           events.push({ timestamp: ts, type: "completed", summary: firstLine(String(p.last_agent_message ?? "task complete")) });
           awaitingUser = true;
+          midWork = false;
           break;
         case "exec_command_begin":
           lastCommand = firstLine(String(Array.isArray(p.command) ? p.command.join(" ") : (p.command ?? "")));
+          awaitingUser = false;
+          midWork = true;
           break;
         case "exec_command_end":
           lastCommand = undefined;    // don't blame a finished command for a later error
@@ -54,12 +60,14 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
           errors.push(msg);
           events.push({ timestamp: ts, type: "failed", summary: msg });
           awaitingUser = false;
+          midWork = false;
           break;
         }
         case "exec_approval_request":
         case "apply_patch_approval_request":
           events.push({ timestamp: ts, type: "approval_requested", summary: `approval requested: ${firstLine(String(p.command ?? p.type))}` });
           awaitingUser = false;
+          midWork = true;
           break;
         default:
           break;
@@ -79,6 +87,7 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
     filesTouched: [],
     errors,
     awaitingUser,
+    midWork,
   };
 }
 

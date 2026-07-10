@@ -33,7 +33,9 @@ A profile is **trivial** when ALL of:
   `thresholds.minSessionSeconds` (new config key, default **60**), and
 - no files touched in any session, and
 - no attributed commits, and
-- no errors captured.
+- no errors captured, and
+- no session is mid-work (`midWork !== true`) — a session with agent work
+  visibly in flight is never trivial, regardless of the other criteria.
 
 Behavior:
 
@@ -95,10 +97,12 @@ composes a single string:
 - **codex**: use the command/tool payload associated with the failed event
   when present.
 - If no in-flight context is available, the error string stays as today.
-- Context is truncated (~80 chars, single line, whitespace-collapsed)
-  before composition; redaction applies to the composed string exactly as
-  it does now (`errors` remains `string[]`, FactSheet unchanged, LLM
-  prompt unchanged).
+- Context is flattened, single-line, whitespace-collapsed, and has the
+  built-in redaction patterns applied to the tool input BEFORE truncation
+  (~80 chars) inside `withContext` — a secret that straddles the truncation
+  boundary must not leak its prefix. User-supplied `redactPatterns` still
+  apply downstream, at the fact-sheet layer, same as before (`errors`
+  remains `string[]`, FactSheet unchanged, LLM prompt unchanged).
 
 ## 4. Tooltips + legend
 

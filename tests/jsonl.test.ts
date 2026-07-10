@@ -53,6 +53,14 @@ describe("withContext", () => {
     expect(withContext("boom", "Bash", "")).toBe("boom — while Bash");
     expect(withContext("boom", "Bash", undefined)).toBe("boom — while Bash");
   });
+
+  test("redacts a secret before truncation even when it straddles the 80-char boundary", () => {
+    const padding = "x".repeat(50);
+    const token = "ghp_" + "A".repeat(36);
+    const out = withContext("boom", "Bash", `${padding} ${token}`);
+    expect(out).toContain("[REDACTED]");
+    expect(out).not.toContain("ghp_");
+  });
 });
 
 describe("parseClaudeSession with a truncated trailing line", () => {

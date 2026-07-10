@@ -92,6 +92,58 @@ describe("parseClaudeSession", () => {
       expect(parseClaudeSession(text, "/w")!.awaitingUser).toBe(true);
     });
   });
+
+  describe("midWork", () => {
+    const line = (o: unknown) => JSON.stringify(o);
+
+    test("true when log ends with a dangling tool_use", () => {
+      const text = [
+        line({ sessionId: "s", type: "user", timestamp: "2026-07-07T10:00:00Z", message: { content: [{ type: "text", text: "do it" }] } }),
+        line({ sessionId: "s", type: "assistant", timestamp: "2026-07-07T10:01:00Z", message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "sleep 999" } }] } }),
+      ].join("\n");
+      expect(parseClaudeSession(text, "/w")!.midWork).toBe(true);
+    });
+
+    test("false when log ends with a plain assistant reply", () => {
+      const text = [
+        line({ sessionId: "s", type: "user", timestamp: "2026-07-07T10:00:00Z", message: { content: [{ type: "text", text: "do it" }] } }),
+        line({ sessionId: "s", type: "assistant", timestamp: "2026-07-07T10:01:00Z", message: { content: [{ type: "text", text: "done" }] } }),
+      ].join("\n");
+      expect(parseClaudeSession(text, "/w")!.midWork).toBe(false);
+    });
+
+    test("false when log ends with a plain, unanswered user message", () => {
+      const text = [
+        line({ sessionId: "s", type: "assistant", timestamp: "2026-07-07T10:00:00Z", message: { content: [{ type: "text", text: "hi" }] } }),
+        line({ sessionId: "s", type: "user", timestamp: "2026-07-07T10:01:00Z", message: { content: [{ type: "text", text: "now do this" }] } }),
+      ].join("\n");
+      expect(parseClaudeSession(text, "/w")!.midWork).toBe(false);
+    });
+
+    test("true when log ends with a trailing tool_result user message (result awaiting processing)", () => {
+      const text = [
+        line({ sessionId: "s", type: "assistant", timestamp: "2026-07-07T10:00:00Z", message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } }] } }),
+        line({ sessionId: "s", type: "user", timestamp: "2026-07-07T10:00:30Z", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "a.ts" }] } }),
+      ].join("\n");
+      expect(parseClaudeSession(text, "/w")!.midWork).toBe(true);
+    });
+  });
+
+  describe("timestamp-less trailing turn entries", () => {
+    const line = (o: unknown) => JSON.stringify(o);
+
+    test("a timestamp-less trailing user entry still updates awaitingUser", () => {
+      const text = [
+        line({ sessionId: "s", type: "assistant", timestamp: "2026-07-07T10:00:00Z", message: { content: [{ type: "text", text: "done" }] } }),
+        line({ sessionId: "s", type: "user", message: { content: [{ type: "text", text: "one more thing" }] } }),
+      ].join("\n");
+      const s = parseClaudeSession(text, "/w")!;
+      expect(s.awaitingUser).toBe(false);
+      // lastEventAt must still reflect the last *timestamped* entry, since the
+      // trailing entry itself carries no timestamp to record.
+      expect(s.lastEventAt).toBe("2026-07-07T10:00:00.000Z");
+    });
+  });
 });
 
 describe("scanClaudeCode", () => {

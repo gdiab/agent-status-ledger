@@ -1,5 +1,6 @@
 import { readFileSync, statSync } from "node:fs";
 import type { RawSession, ScanOptions } from "../types";
+import { redact } from "../redact";
 
 export function firstLine(s: string): string {
   return s.split("\n", 1)[0]!.slice(0, 200);
@@ -9,10 +10,15 @@ const CONTEXT_MAX = 80;
 
 // "exit code 143 — while Bash: xcrun simctl…" — gives the reader (and the
 // narrative LLM) what the agent was doing when the error happened. Input is
-// flattened and truncated; redaction runs later on the composed string.
+// flattened, then redacted with the built-in patterns BEFORE truncation: a
+// secret that straddles the 80-char slice must not lose only its prefix past
+// the length floor redaction patterns require. Residual: user-supplied
+// redactPatterns (config.redactPatterns) still run later, at the fact-sheet
+// layer, downstream of truncation — an adversarial secret matched only by a
+// custom pattern could in principle be bisected by truncation here.
 export function withContext(message: string, toolName: string, input: unknown): string {
   const raw = input === undefined || input === null ? "" : typeof input === "string" ? input : JSON.stringify(input);
-  const flat = raw.replace(/\s+/g, " ").trim();
+  const flat = redact(raw.replace(/\s+/g, " ").trim());
   if (!flat) return `${message} — while ${toolName}`;
   const slice = flat.length > CONTEXT_MAX ? `${flat.slice(0, CONTEXT_MAX)}…` : flat;
   return `${message} — while ${toolName}: ${slice}`;

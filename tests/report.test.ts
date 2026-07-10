@@ -151,4 +151,14 @@ describe("isTrivialProfile", () => {
     const zeroDuration = sess({ lastEventAt: "2026-07-07T10:00:00.000Z" });
     expect(isTrivialProfile(prof([zeroDuration]), [], 60)).toBe(true);
   });
+
+  test("a short session with midWork true is NOT trivial (agent work visibly in flight)", () => {
+    const midWork = sess({ midWork: true });  // 10s, same shape as the trivial baseline
+    expect(isTrivialProfile(prof([midWork]), [], 60)).toBe(false);
+  });
+
+  test("the plain-unanswered-user-message junk shape (sub-minute, no files/errors/commits, midWork false) stays trivial", () => {
+    const junk = sess({ midWork: false, awaitingUser: false });
+    expect(isTrivialProfile(prof([junk]), [], 60)).toBe(true);
+  });
 });

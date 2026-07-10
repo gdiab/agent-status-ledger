@@ -36,6 +36,10 @@ export interface RawSession {
   // court (agent finished its reply). Absent = unknown = treated as false, so
   // unparseable logs still alert (silent) rather than silently demote.
   awaitingUser?: boolean;
+  // True iff the session ends with agent work visibly in flight (dangling
+  // tool call, unprocessed tool result, task or approval pending). A mid-work
+  // session must never be filtered as trivial noise.
+  midWork?: boolean;
 }
 
 export interface ScanOptions {

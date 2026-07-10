@@ -19,6 +19,7 @@ export function parseClaudeSession(text: string, fallbackCwd: string, path?: str
   let endedOnError = false;
   let lastErrorLine = "";
   let awaitingUser = false;
+  let midWork = false;
   const events: AgentEvent[] = [];
   const filesTouched = new Set<string>();
   const errors: string[] = [];
@@ -45,15 +46,36 @@ export function parseClaudeSession(text: string, fallbackCwd: string, path?: str
       }
       case "user":
       case "assistant": {
-        if (!ts) break;
-        events.push({ timestamp: ts, type: "run_progressed", summary: `${entry.type} turn` });
-        endedOnError = false;
+        // Flag updates need only entry.type/content, not a timestamp — a
+        // trailing entry with no timestamp must still update the ball-in-court
+        // and mid-work reads for the session, even though it contributes no
+        // event of its own. tool_use map registration is likewise needed
+        // before any later tool_result (timestamped or not) resolves it.
         const content = entry.message?.content;
         if (Array.isArray(content)) {
           for (const item of content) {
             if (item?.type === "tool_use" && typeof item.id === "string") {
               toolUses.set(item.id, { name: String(item.name ?? "tool"), input: item.input });
             }
+          }
+        }
+        // Ball-in-court: only an assistant reply with no tool_use pending means
+        // the human owes the next move. A trailing user entry (real message or
+        // tool_result) leaves the agent on the hook.
+        awaitingUser = entry.type === "assistant" &&
+          !(Array.isArray(content) && content.some((i: any) => i?.type === "tool_use"));
+        // Mid-work: an assistant turn that fires a tool call, or a user turn
+        // that delivers a tool_result still awaiting the agent's processing,
+        // both mean work is visibly in flight. A plain message (either side)
+        // clears it.
+        midWork = Array.isArray(content) &&
+          content.some((i: any) => i?.type === (entry.type === "assistant" ? "tool_use" : "tool_result"));
+
+        if (!ts) break;
+        events.push({ timestamp: ts, type: "run_progressed", summary: `${entry.type} turn` });
+        endedOnError = false;
+        if (Array.isArray(content)) {
+          for (const item of content) {
             if (item?.type === "tool_result" && item.is_error === true) {
               const body = typeof item.content === "string" ? item.content : JSON.stringify(item.content ?? "");
               const tool = typeof item.tool_use_id === "string" ? toolUses.get(item.tool_use_id) : undefined;
@@ -63,11 +85,6 @@ export function parseClaudeSession(text: string, fallbackCwd: string, path?: str
             }
           }
         }
-        // Ball-in-court: only an assistant reply with no tool_use pending means
-        // the human owes the next move. A trailing user entry (real message or
-        // tool_result) leaves the agent on the hook.
-        awaitingUser = entry.type === "assistant" &&
-          !(Array.isArray(content) && content.some((i: any) => i?.type === "tool_use"));
         break;
       }
       default:
@@ -94,6 +111,7 @@ export function parseClaudeSession(text: string, fallbackCwd: string, path?: str
     filesTouched: [...filesTouched].sort(),
     errors,
     awaitingUser,
+    midWork,
   };
 }
 

@@ -41,7 +41,9 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 
 // A 12-second accidental session run from ~ shouldn't get a card, let alone
 // an urgent exception — but nothing disappears silently: names are reported
-// in Report.trivialProfiles and rendered as a footer line.
+// in Report.trivialProfiles and rendered as a footer line. Mid-work sessions
+// are never trivial, regardless of span/files/errors/commits: fail toward
+// alerting, not toward suppressing a session that's still doing something.
 export function isTrivialProfile(profile: AgentProfile, commits: CommitEvidence[], minSessionSeconds: number): boolean {
   return (
     profile.sessions.every(
@@ -49,7 +51,9 @@ export function isTrivialProfile(profile: AgentProfile, commits: CommitEvidence[
         Date.parse(s.lastEventAt) - Date.parse(s.startedAt) < minSessionSeconds * 1000 &&
         s.filesTouched.length === 0 &&
         s.errors.length === 0,
-    ) && !commits.some((c) => c.attributed)
+    ) &&
+    !commits.some((c) => c.attributed) &&
+    !profile.sessions.some((s) => s.midWork)
   );
 }
 
