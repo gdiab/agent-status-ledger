@@ -101,6 +101,10 @@ export interface Report {
   windowEnd: string;
   exceptions: AgentReport[];  // status in blocked|failed|silent|needs_human
   agents: AgentReport[];      // all agents, exceptions included, sorted by severity then name
+  // Display names of profiles hidden as noise (only sub-minSessionSeconds
+  // sessions, nothing touched/produced/errored). Additive + optional:
+  // schemaVersion stays 1. Absent when empty.
+  trivialProfiles?: string[];
 }
 
 export interface Thresholds {

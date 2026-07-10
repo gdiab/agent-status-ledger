@@ -1,5 +1,5 @@
 import type { Config } from "./config";
-import type { AgentReport, Report } from "./types";
+import type { AgentProfile, AgentReport, CommitEvidence, Report } from "./types";
 import { scanClaudeCode } from "./connectors/claude-code";
 import { scanCodex } from "./connectors/codex";
 import { resolveProfiles } from "./resolver";
@@ -39,6 +39,20 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
   return results;
 }
 
+// A 12-second accidental session run from ~ shouldn't get a card, let alone
+// an urgent exception — but nothing disappears silently: names are reported
+// in Report.trivialProfiles and rendered as a footer line.
+export function isTrivialProfile(profile: AgentProfile, commits: CommitEvidence[], minSessionSeconds: number): boolean {
+  return (
+    profile.sessions.every(
+      (s) =>
+        Date.parse(s.lastEventAt) - Date.parse(s.startedAt) < minSessionSeconds * 1000 &&
+        s.filesTouched.length === 0 &&
+        s.errors.length === 0,
+    ) && !commits.some((c) => c.attributed)
+  );
+}
+
 export async function buildReport(opts: BuildReportOptions): Promise<Report> {
   const { since, now, config } = opts;
   const sessions = [
@@ -51,8 +65,13 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
   ];
   const profiles = resolveProfiles(sessions);
 
-  const agents: AgentReport[] = await mapLimit(profiles, PROFILE_CONCURRENCY, async (profile) => {
+  type ProfileResult = { agent: AgentReport } | { trivial: string };
+
+  const results = await mapLimit<AgentProfile, ProfileResult>(profiles, PROFILE_CONCURRENCY, async (profile) => {
     const rawCommits = attributeCommits(await listCommits(profile.workdir, since), profile.sessions);
+    if (isTrivialProfile(profile, rawCommits, config.thresholds.minSessionSeconds)) {
+      return { trivial: profile.displayName };
+    }
     // Defense in depth: redact commit subjects here at the model layer too, so any
     // future consumer of buildReport() (not just the CLI's own render pass) gets a
     // report object with secrets already scrubbed.
@@ -63,17 +82,22 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
       ? await generateNarrative(facts, status, { model: config.model, apiKey: opts.apiKey, fetchFn: opts.fetchFn })
       : { narrative: templateNarrative(facts, status), source: "template" as const };
     return {
-      profileId: profile.profileId,
-      displayName: profile.displayName,
-      platform: profile.platform,
-      workdir: profile.workdir,
-      status, severity, evidence,
-      facts,
-      narrative,
-      narrativeSource: source,
-      commits,
+      agent: {
+        profileId: profile.profileId,
+        displayName: profile.displayName,
+        platform: profile.platform,
+        workdir: profile.workdir,
+        status, severity, evidence,
+        facts,
+        narrative,
+        narrativeSource: source,
+        commits,
+      },
     };
   });
+
+  const agents = results.flatMap((r) => ("agent" in r ? [r.agent] : []));
+  const trivialProfiles = results.flatMap((r) => ("trivial" in r ? [r.trivial] : [])).sort();
 
   agents.sort((a, b) =>
     SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || a.displayName.localeCompare(b.displayName));
@@ -85,5 +109,6 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
     windowEnd: now.toISOString(),
     exceptions: agents.filter((a) => EXCEPTION_STATUSES.has(a.status)),
     agents,
+    ...(trivialProfiles.length ? { trivialProfiles } : {}),
   };
 }

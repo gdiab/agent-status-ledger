@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildReport } from "../src/report";
+import { buildReport, isTrivialProfile } from "../src/report";
 import { defaultConfig } from "../src/config";
+import type { AgentProfile, CommitEvidence, RawSession } from "../src/types";
 
 const NOW = new Date("2026-07-08T07:00:00.000Z");
 const SINCE = new Date("2026-07-07T07:00:00.000Z");
@@ -59,10 +60,19 @@ describe("buildReport", () => {
       const dir = join(ccRoot, `-work-p${i}`);
       mkdirSync(dir, { recursive: true });
       const f = join(dir, "s.jsonl");
-      writeFileSync(f, JSON.stringify({
-        type: "user", timestamp: "2026-07-07T12:00:00.000Z", cwd: `/work/p${i}`,
-        sessionId: `cc-p${i}`, message: { role: "user", content: "task" },
-      }) + "\n");
+      // Two events, 5 minutes apart: keeps the session comfortably above
+      // minSessionSeconds (60s) so isTrivialProfile doesn't filter these
+      // synthetic profiles out before they reach the (mocked) LLM path.
+      writeFileSync(f, [
+        JSON.stringify({
+          type: "user", timestamp: "2026-07-07T12:00:00.000Z", cwd: `/work/p${i}`,
+          sessionId: `cc-p${i}`, message: { role: "user", content: "task" },
+        }),
+        JSON.stringify({
+          type: "assistant", timestamp: "2026-07-07T12:05:00.000Z", cwd: `/work/p${i}`,
+          sessionId: `cc-p${i}`, message: { role: "assistant", content: "done" },
+        }),
+      ].join("\n") + "\n");
       utimesSync(f, MTIME, MTIME);
     }
     const config = defaultConfig();
@@ -98,5 +108,47 @@ describe("buildReport", () => {
     expect(report.agents.every((a) => a.narrativeSource === "llm")).toBe(true);
     expect(maxInflight).toBeGreaterThanOrEqual(2); // actually parallel
     expect(maxInflight).toBeLessThanOrEqual(4);    // but bounded
+  });
+});
+
+function sess(over: Partial<RawSession>): RawSession {
+  return {
+    platform: "claude-code", sessionId: "s", cwd: "/w",
+    startedAt: "2026-07-07T10:00:00.000Z", lastEventAt: "2026-07-07T10:00:10.000Z",  // 10s
+    events: [{ timestamp: "2026-07-07T10:00:00.000Z", type: "run_started", summary: "x" }],
+    filesTouched: [], errors: [],
+    ...over,
+  };
+}
+function prof(sessions: RawSession[]): AgentProfile {
+  return { profileId: "claude-code:/w", platform: "claude-code", workdir: "/w", displayName: "w (claude-code)", sessions };
+}
+const attributedCommit: CommitEvidence = { sha: "a".repeat(40), authorDate: "2026-07-07T10:00:05.000Z", subject: "x", attributed: true };
+
+describe("isTrivialProfile", () => {
+  test("all-short, artifact-free profile is trivial", () => {
+    expect(isTrivialProfile(prof([sess({}), sess({ sessionId: "s2" })]), [], 60)).toBe(true);
+  });
+
+  test("one long session defeats triviality", () => {
+    const long = sess({ lastEventAt: "2026-07-07T10:05:00.000Z" });  // 5 min
+    expect(isTrivialProfile(prof([sess({}), long]), [], 60)).toBe(false);
+  });
+
+  test("files touched, errors, or an attributed commit each defeat triviality", () => {
+    expect(isTrivialProfile(prof([sess({ filesTouched: ["/w/a.ts"] })]), [], 60)).toBe(false);
+    expect(isTrivialProfile(prof([sess({ errors: ["boom"] })]), [], 60)).toBe(false);
+    expect(isTrivialProfile(prof([sess({})]), [attributedCommit], 60)).toBe(false);
+    expect(isTrivialProfile(prof([sess({})]), [{ ...attributedCommit, attributed: false }], 60)).toBe(true);
+  });
+
+  test("single-event zero-duration silent-shaped profile is still trivial (accepted edge)", () => {
+    // startedAt === lastEventAt (a single logged event) reads as a 0s session
+    // regardless of how long ago it happened. isTrivialProfile only looks at
+    // the session's own span, not recency from `now` — a genuinely stale,
+    // single-event profile is filtered as noise (hidden from cards, still
+    // named in Report.trivialProfiles) rather than surfaced as `silent`.
+    const zeroDuration = sess({ lastEventAt: "2026-07-07T10:00:00.000Z" });
+    expect(isTrivialProfile(prof([zeroDuration]), [], 60)).toBe(true);
   });
 });
