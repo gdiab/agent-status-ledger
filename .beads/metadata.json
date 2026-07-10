@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "agent_status_ledger",
+  "project_id": "58e00d07-169b-4031-ad86-d9d884f3fbac"
+}
