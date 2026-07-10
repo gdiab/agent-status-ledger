@@ -121,4 +121,22 @@ describe("inferStatus", () => {
     );
     expect(r.status).toBe("completed");
   });
+
+  test("long-quiet open session with ball in user's court → idle / info", () => {
+    const p = profileWith([["2026-07-07T09:00:00.000Z", "run_started"], ["2026-07-07T09:10:00.000Z", "run_progressed"]]);
+    p.sessions[0]!.awaitingUser = true;      // agent finished its reply; user walked away
+    const r = inferStatus(p, [], NOW, T);    // 10h50m quiet, past silentThresholdHours
+    expect(r.status).toBe("idle");
+    expect(r.severity).toBe("info");
+  });
+
+  test("long-quiet open session mid-work (or unknown) → silent / urgent", () => {
+    for (const flag of [false, undefined]) {
+      const p = profileWith([["2026-07-07T09:00:00.000Z", "run_started"], ["2026-07-07T09:10:00.000Z", "run_progressed"]]);
+      p.sessions[0]!.awaitingUser = flag;
+      const r = inferStatus(p, [], NOW, T);
+      expect(r.status).toBe("silent");
+      expect(r.severity).toBe("urgent");
+    }
+  });
 });

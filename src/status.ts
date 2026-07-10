@@ -46,7 +46,9 @@ export function inferStatus(
   if (newest !== undefined && open && !hasCurrentArtifact) {
     const idleMs = now.getTime() - Date.parse(newest.lastEventAt);
     if (idleMs <= t.activeWindowHours * HOUR_MS) newestOpenStatus = "active";
-    else if (idleMs >= t.silentThresholdHours * HOUR_MS) newestOpenStatus = "silent";
+    // An interactive session the human simply walked away from is a diary
+    // entry, not an alarm; only an agent that went quiet mid-work is silent.
+    else if (idleMs >= t.silentThresholdHours * HOUR_MS) newestOpenStatus = newest.awaitingUser ? "idle" : "silent";
   }
 
   let status: Status;
