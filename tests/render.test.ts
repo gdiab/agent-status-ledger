@@ -3,6 +3,7 @@ import type { AgentReport, Report } from "../src/types";
 import { renderMarkdown } from "../src/render/markdown";
 import { renderJson } from "../src/render/json";
 import { renderHtml } from "../src/render/html";
+import { STATUS_HELP, EVIDENCE_HELP } from "../src/render/legend";
 
 function agent(over: Partial<AgentReport>): AgentReport {
   return {
@@ -154,5 +155,24 @@ describe("renderers", () => {
     const html = renderHtml({ ...report, trivialProfiles: ["<x> (codex)"] });
     expect(html).toContain("Ignored 1 trivial profile");
     expect(html).toContain("&lt;x&gt; (codex)");
+  });
+
+  test("html: status badge and evidence label carry tooltip titles", () => {
+    const html = renderHtml(report);
+    expect(html).toContain(`title="${STATUS_HELP.needs_human}"`);
+    expect(html).toContain(`title="${EVIDENCE_HELP.claimed_only}"`);
+  });
+
+  test("html: collapsed legend lists every status", () => {
+    const html = renderHtml(report);
+    expect(html).toContain("<details class=\"legend\">");
+    for (const help of Object.values(STATUS_HELP)) expect(html).toContain(help);
+  });
+
+  test("markdown: legend section lists every status and evidence level", () => {
+    const md = renderMarkdown(report);
+    expect(md).toContain("## Legend");
+    for (const help of Object.values(STATUS_HELP)) expect(md).toContain(help);
+    for (const help of Object.values(EVIDENCE_HELP)) expect(md).toContain(help);
   });
 });

@@ -1,5 +1,6 @@
 import type { AgentReport, Report } from "../types";
 import { rollupLine } from "./rollup";
+import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -17,8 +18,8 @@ function card(a: AgentReport): string {
   return `<article class="card">
   <header>
     <h3>${esc(a.displayName)}</h3>
-    <span class="badge" style="background:${SEVERITY_COLOR[a.severity]}">${esc(a.status)}</span>
-    <span class="evidence">${esc(a.evidence.replace("_", " "))}</span>
+    <span class="badge" style="background:${SEVERITY_COLOR[a.severity]}" title="${esc(STATUS_HELP[a.status])}">${esc(a.status)}</span>
+    <span class="evidence" title="${esc(EVIDENCE_HELP[a.evidence])}">${esc(a.evidence.replace("_", " "))}</span>
   </header>
   <dl>
     <dt>Worked on</dt><dd>${esc(a.narrative.workedOn)}</dd>
@@ -60,6 +61,7 @@ dl { display: grid; grid-template-columns: 8rem 1fr; gap: .25rem .75rem; margin:
 dt { font-weight: 600; opacity: .75; } dd { margin: 0; }
 .errors li { color: #c0392b; }
 code { font-size: .85em; }
+.legend { opacity: .8; font-size: .85rem; margin: 1.5rem 0; }
 </style>
 </head>
 <body>
@@ -68,6 +70,11 @@ code { font-size: .85em; }
 <p class="rollup">${esc(rollupLine(report))}</p>
 <section class="exceptions"><h2>Exceptions</h2><ul>${exceptions}</ul></section>
 <section><h2>All agents</h2>${report.agents.map(card).join("\n")}</section>
+<details class="legend"><summary>Legend</summary>
+<h4>Statuses</h4><ul>${(Object.entries(STATUS_HELP)).map(([k, v]) => `<li><strong>${esc(k)}</strong> — ${esc(v)}</li>`).join("")}</ul>
+<h4>Severity</h4><ul>${(Object.entries(SEVERITY_HELP)).map(([k, v]) => `<li><strong>${esc(k)}</strong> — ${esc(v)}</li>`).join("")}</ul>
+<h4>Evidence</h4><ul>${(Object.entries(EVIDENCE_HELP)).map(([k, v]) => `<li><strong>${esc(k.replace("_", " "))}</strong> — ${esc(v)}</li>`).join("")}</ul>
+</details>
 ${report.trivialProfiles?.length ? `<p class="window">Ignored ${report.trivialProfiles.length} trivial profile${report.trivialProfiles.length === 1 ? "" : "s"} (minimal activity, nothing produced): ${esc(report.trivialProfiles.join(", "))}</p>` : ""}
 <footer class="window">Generated ${esc(report.generatedAt)} · schema v${report.schemaVersion}</footer>
 </body>
