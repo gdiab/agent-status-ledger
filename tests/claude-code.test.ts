@@ -37,6 +37,22 @@ describe("parseClaudeSession", () => {
     expect(s.events.at(-1)!.type).not.toBe("failed");
   });
 
+  test("errors carry the in-flight tool context", () => {
+    const line = (o: unknown) => JSON.stringify(o);
+    const text = [
+      line({ sessionId: "s", type: "assistant", timestamp: "2026-07-07T10:00:00Z", message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "xcrun simctl list devices" } }] } }),
+      line({ sessionId: "s", type: "user", timestamp: "2026-07-07T10:00:30Z", message: { content: [{ type: "tool_result", tool_use_id: "t1", is_error: true, content: "exit code 143" }] } }),
+    ].join("\n");
+    const s = parseClaudeSession(text, "/w")!;
+    expect(s.errors[0]).toBe('exit code 143 — while Bash: {"command":"xcrun simctl list devices"}');
+  });
+
+  test("errors without a matching tool_use stay bare", () => {
+    const line = (o: unknown) => JSON.stringify(o);
+    const text = line({ sessionId: "s", type: "user", timestamp: "2026-07-07T10:00:30Z", message: { content: [{ type: "tool_result", tool_use_id: "missing", is_error: true, content: "boom" }] } });
+    expect(parseClaudeSession(text, "/w")!.errors[0]).toBe("boom");
+  });
+
   test("garbage lines are skipped, empty session returns null", () => {
     expect(parseClaudeSession("not json\n{\"broken\":", "/x")).toBeNull();
   });

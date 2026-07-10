@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentEvent, RawSession, ScanOptions } from "../types";
-import { firstLine, jsonlEntries, scanSessionFile } from "./jsonl";
+import { firstLine, jsonlEntries, scanSessionFile, withContext } from "./jsonl";
 import { toUtcIso } from "../time";
 
 export function parseCodexSession(text: string, titles: Map<string, string>, path?: string): RawSession | null {
@@ -12,6 +12,7 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
   let awaitingUser = false;
   const events: AgentEvent[] = [];
   const errors: string[] = [];
+  let lastCommand: string | undefined;
 
   for (const entry of jsonlEntries(text, path)) {
     const ts = typeof entry.timestamp === "string" ? toUtcIso(entry.timestamp) : undefined;
@@ -40,9 +41,16 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
           events.push({ timestamp: ts, type: "completed", summary: firstLine(String(p.last_agent_message ?? "task complete")) });
           awaitingUser = true;
           break;
+        case "exec_command_begin":
+          lastCommand = firstLine(String(Array.isArray(p.command) ? p.command.join(" ") : (p.command ?? "")));
+          break;
+        case "exec_command_end":
+          lastCommand = undefined;    // don't blame a finished command for a later error
+          break;
         case "error":
         case "stream_error": {
-          const msg = firstLine(String(p.message ?? "error"));
+          const base = firstLine(String(p.message ?? "error"));
+          const msg = lastCommand ? withContext(base, "exec", lastCommand) : base;
           errors.push(msg);
           events.push({ timestamp: ts, type: "failed", summary: msg });
           awaitingUser = false;

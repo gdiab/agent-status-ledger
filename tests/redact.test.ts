@@ -99,6 +99,12 @@ describe("redact", () => {
     expect(redact("internal-code-XJ99", ["internal-code-\\w+"])).toBe("[REDACTED]");
   });
 
+  test("secrets inside composed error context are masked", () => {
+    const r = redact('exit 1 — while Bash: {"command":"deploy --token ghp_ABCDEFGHIJKLMNOPQRST123456"}');
+    expect(r).toContain("[REDACTED]");
+    expect(r).not.toContain("ghp_ABCDEFGHIJKLMNOPQRST123456");
+  });
+
   test("redactFacts covers every string field", () => {
     const f = redactFacts({
       titles: ["Deploy with ghp_ABCDEFGHIJKLMNOPQRST123456"],

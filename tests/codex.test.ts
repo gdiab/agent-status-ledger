@@ -33,6 +33,27 @@ describe("parseCodexSession", () => {
     expect(parseCodexSession("garbage\n", titles)).toBeNull();
   });
 
+  test("errors carry the in-flight exec command", () => {
+    const line = (o: unknown) => JSON.stringify(o);
+    const text = [
+      line({ type: "session_meta", timestamp: "2026-07-07T10:00:00Z", payload: { id: "c1", cwd: "/w" } }),
+      line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "exec_command_begin", command: ["npm", "run", "build"] } }),
+      line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "error", message: "build failed" } }),
+    ].join("\n");
+    expect(parseCodexSession(text, new Map())!.errors[0]).toBe("build failed — while exec: npm run build");
+  });
+
+  test("a finished exec command is not blamed for a later error", () => {
+    const line = (o: unknown) => JSON.stringify(o);
+    const text = [
+      line({ type: "session_meta", timestamp: "2026-07-07T10:00:00Z", payload: { id: "c1", cwd: "/w" } }),
+      line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "exec_command_begin", command: "ls" } }),
+      line({ type: "event_msg", timestamp: "2026-07-07T10:01:05Z", payload: { type: "exec_command_end" } }),
+      line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "stream_error", message: "connection reset" } }),
+    ].join("\n");
+    expect(parseCodexSession(text, new Map())!.errors[0]).toBe("connection reset");
+  });
+
   describe("awaitingUser", () => {
     const line = (o: unknown) => JSON.stringify(o);
     const meta = line({ type: "session_meta", timestamp: "2026-07-07T10:00:00Z", payload: { id: "c1", cwd: "/w" } });

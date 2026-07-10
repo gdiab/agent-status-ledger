@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentEvent, RawSession, ScanOptions } from "../types";
-import { firstLine, jsonlEntries, scanSessionFile } from "./jsonl";
+import { firstLine, jsonlEntries, scanSessionFile, withContext } from "./jsonl";
 import { toUtcIso } from "../time";
 
 export function decodeProjectDir(name: string): string {
@@ -22,6 +22,7 @@ export function parseClaudeSession(text: string, fallbackCwd: string, path?: str
   const events: AgentEvent[] = [];
   const filesTouched = new Set<string>();
   const errors: string[] = [];
+  const toolUses = new Map<string, { name: string; input: unknown }>();
 
   for (const entry of jsonlEntries(text, path)) {
     if (typeof entry.sessionId === "string") sessionId = entry.sessionId;
@@ -50,9 +51,13 @@ export function parseClaudeSession(text: string, fallbackCwd: string, path?: str
         const content = entry.message?.content;
         if (Array.isArray(content)) {
           for (const item of content) {
+            if (item?.type === "tool_use" && typeof item.id === "string") {
+              toolUses.set(item.id, { name: String(item.name ?? "tool"), input: item.input });
+            }
             if (item?.type === "tool_result" && item.is_error === true) {
               const body = typeof item.content === "string" ? item.content : JSON.stringify(item.content ?? "");
-              lastErrorLine = firstLine(body);
+              const tool = typeof item.tool_use_id === "string" ? toolUses.get(item.tool_use_id) : undefined;
+              lastErrorLine = tool ? withContext(firstLine(body), tool.name, tool.input) : firstLine(body);
               errors.push(lastErrorLine);
               endedOnError = true;
             }
