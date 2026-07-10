@@ -9,6 +9,7 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
   let sessionId = "";
   let startedAt: string | undefined;
   let lastEventAt: string | undefined;
+  let awaitingUser = false;
   const events: AgentEvent[] = [];
   const errors: string[] = [];
 
@@ -28,22 +29,29 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
       const p = entry.payload;
       switch (p.type) {
         case "task_started":
+          events.push({ timestamp: ts, type: "run_progressed", summary: p.type });
+          awaitingUser = false;
+          break;
         case "agent_message":
           events.push({ timestamp: ts, type: "run_progressed", summary: p.type });
+          awaitingUser = true;
           break;
         case "task_complete":
           events.push({ timestamp: ts, type: "completed", summary: firstLine(String(p.last_agent_message ?? "task complete")) });
+          awaitingUser = true;
           break;
         case "error":
         case "stream_error": {
           const msg = firstLine(String(p.message ?? "error"));
           errors.push(msg);
           events.push({ timestamp: ts, type: "failed", summary: msg });
+          awaitingUser = false;
           break;
         }
         case "exec_approval_request":
         case "apply_patch_approval_request":
           events.push({ timestamp: ts, type: "approval_requested", summary: `approval requested: ${firstLine(String(p.command ?? p.type))}` });
+          awaitingUser = false;
           break;
         default:
           break;
@@ -62,6 +70,7 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
     events: [{ timestamp: startedAt, type: "run_started", summary: "session started" }, ...events],
     filesTouched: [],
     errors,
+    awaitingUser,
   };
 }
 

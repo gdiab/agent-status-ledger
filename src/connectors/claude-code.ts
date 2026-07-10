@@ -18,6 +18,7 @@ export function parseClaudeSession(text: string, fallbackCwd: string, path?: str
   let lastEventAt: string | undefined;
   let endedOnError = false;
   let lastErrorLine = "";
+  let awaitingUser = false;
   const events: AgentEvent[] = [];
   const filesTouched = new Set<string>();
   const errors: string[] = [];
@@ -57,6 +58,11 @@ export function parseClaudeSession(text: string, fallbackCwd: string, path?: str
             }
           }
         }
+        // Ball-in-court: only an assistant reply with no tool_use pending means
+        // the human owes the next move. A trailing user entry (real message or
+        // tool_result) leaves the agent on the hook.
+        awaitingUser = entry.type === "assistant" &&
+          !(Array.isArray(content) && content.some((i: any) => i?.type === "tool_use"));
         break;
       }
       default:
@@ -82,6 +88,7 @@ export function parseClaudeSession(text: string, fallbackCwd: string, path?: str
     events: all,
     filesTouched: [...filesTouched].sort(),
     errors,
+    awaitingUser,
   };
 }
 

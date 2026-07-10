@@ -32,6 +32,10 @@ export interface RawSession {
   events: AgentEvent[];
   filesTouched: string[];
   errors: string[];         // first lines only
+  // True iff the session's last meaningful event puts the ball in the human's
+  // court (agent finished its reply). Absent = unknown = treated as false, so
+  // unparseable logs still alert (silent) rather than silently demote.
+  awaitingUser?: boolean;
 }
 
 export interface ScanOptions {

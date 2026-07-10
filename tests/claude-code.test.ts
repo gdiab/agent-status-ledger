@@ -40,6 +40,42 @@ describe("parseClaudeSession", () => {
   test("garbage lines are skipped, empty session returns null", () => {
     expect(parseClaudeSession("not json\n{\"broken\":", "/x")).toBeNull();
   });
+
+  describe("awaitingUser", () => {
+    const line = (o: unknown) => JSON.stringify(o);
+
+    test("true when log ends with a plain assistant reply", () => {
+      const text = [
+        line({ sessionId: "s", type: "user", timestamp: "2026-07-07T10:00:00Z", message: { content: [{ type: "text", text: "do it" }] } }),
+        line({ sessionId: "s", type: "assistant", timestamp: "2026-07-07T10:01:00Z", message: { content: [{ type: "text", text: "done" }] } }),
+      ].join("\n");
+      expect(parseClaudeSession(text, "/w")!.awaitingUser).toBe(true);
+    });
+
+    test("false when log ends with a dangling tool_use", () => {
+      const text = [
+        line({ sessionId: "s", type: "user", timestamp: "2026-07-07T10:00:00Z", message: { content: [{ type: "text", text: "do it" }] } }),
+        line({ sessionId: "s", type: "assistant", timestamp: "2026-07-07T10:01:00Z", message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "sleep 999" } }] } }),
+      ].join("\n");
+      expect(parseClaudeSession(text, "/w")!.awaitingUser).toBe(false);
+    });
+
+    test("false when log ends with an unanswered user message", () => {
+      const text = [
+        line({ sessionId: "s", type: "assistant", timestamp: "2026-07-07T10:00:00Z", message: { content: [{ type: "text", text: "hi" }] } }),
+        line({ sessionId: "s", type: "user", timestamp: "2026-07-07T10:01:00Z", message: { content: [{ type: "text", text: "now do this" }] } }),
+      ].join("\n");
+      expect(parseClaudeSession(text, "/w")!.awaitingUser).toBe(false);
+    });
+
+    test("trailing non-turn entries do not change the flag", () => {
+      const text = [
+        line({ sessionId: "s", type: "assistant", timestamp: "2026-07-07T10:00:00Z", message: { content: [{ type: "text", text: "done" }] } }),
+        line({ sessionId: "s", type: "file-history-snapshot", timestamp: "2026-07-07T10:00:01Z", snapshot: { trackedFileBackups: {} } }),
+      ].join("\n");
+      expect(parseClaudeSession(text, "/w")!.awaitingUser).toBe(true);
+    });
+  });
 });
 
 describe("scanClaudeCode", () => {

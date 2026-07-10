@@ -32,6 +32,39 @@ describe("parseCodexSession", () => {
   test("no session_meta and no timestamps returns null", () => {
     expect(parseCodexSession("garbage\n", titles)).toBeNull();
   });
+
+  describe("awaitingUser", () => {
+    const line = (o: unknown) => JSON.stringify(o);
+    const meta = line({ type: "session_meta", timestamp: "2026-07-07T10:00:00Z", payload: { id: "c1", cwd: "/w" } });
+    const parse = (rest: string[]) => parseCodexSession([meta, ...rest].join("\n"), new Map())!;
+
+    test("true when last event is agent_message", () => {
+      expect(parse([
+        line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "task_started" } }),
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "agent_message" } }),
+      ]).awaitingUser).toBe(true);
+    });
+
+    test("true when last event is task_complete", () => {
+      expect(parse([
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "task_complete", last_agent_message: "done" } }),
+      ]).awaitingUser).toBe(true);
+    });
+
+    test("false when last event is task_started (mid-work)", () => {
+      expect(parse([
+        line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "agent_message" } }),
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "task_started" } }),
+      ]).awaitingUser).toBe(false);
+    });
+
+    test("trailing unknown event types do not change the flag", () => {
+      expect(parse([
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "agent_message" } }),
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:01Z", payload: { type: "token_count" } }),
+      ]).awaitingUser).toBe(true);
+    });
+  });
 });
 
 describe("scanCodex", () => {
