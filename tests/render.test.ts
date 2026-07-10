@@ -139,4 +139,20 @@ describe("renderers", () => {
     expect(html).not.toMatch(/src=["']http/);
     expect(html.indexOf("Exceptions")).toBeLessThan(html.indexOf("All agents"));
   });
+
+  test("markdown: trivial profiles footer line", () => {
+    const md = renderMarkdown({ ...report, trivialProfiles: ["/ (claude-code)", "tmp (codex)"] });
+    expect(md).toContain("Ignored 2 trivial profiles (minimal activity, nothing produced): / (claude-code), tmp (codex)");
+  });
+
+  test("markdown: singular trivial profile, and absent field renders nothing", () => {
+    expect(renderMarkdown({ ...report, trivialProfiles: ["/ (claude-code)"] })).toContain("Ignored 1 trivial profile (");
+    expect(renderMarkdown(report)).not.toContain("Ignored");
+  });
+
+  test("html: trivial profiles footer line, escaped", () => {
+    const html = renderHtml({ ...report, trivialProfiles: ["<x> (codex)"] });
+    expect(html).toContain("Ignored 1 trivial profile");
+    expect(html).toContain("&lt;x&gt; (codex)");
+  });
 });

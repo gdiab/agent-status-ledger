@@ -59,6 +59,10 @@ export function renderMarkdown(report: Report): string {
   }
   parts.push("", "## Agents", "");
   parts.push(report.agents.map(agentSection).join("\n\n---\n\n"));
+  if (report.trivialProfiles?.length) {
+    const c = report.trivialProfiles.length;
+    parts.push("", `_Ignored ${c} trivial profile${c === 1 ? "" : "s"} (minimal activity, nothing produced): ${report.trivialProfiles.join(", ")}_`);
+  }
   parts.push("", `_Generated ${report.generatedAt}. Narratives: ${report.agents.every((a) => a.narrativeSource === "template") ? "template" : "llm+template"}._`, "");
   return parts.join("\n");
 }

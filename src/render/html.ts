@@ -68,6 +68,7 @@ code { font-size: .85em; }
 <p class="rollup">${esc(rollupLine(report))}</p>
 <section class="exceptions"><h2>Exceptions</h2><ul>${exceptions}</ul></section>
 <section><h2>All agents</h2>${report.agents.map(card).join("\n")}</section>
+${report.trivialProfiles?.length ? `<p class="window">Ignored ${report.trivialProfiles.length} trivial profile${report.trivialProfiles.length === 1 ? "" : "s"} (minimal activity, nothing produced): ${esc(report.trivialProfiles.join(", "))}</p>` : ""}
 <footer class="window">Generated ${esc(report.generatedAt)} · schema v${report.schemaVersion}</footer>
 </body>
 </html>
