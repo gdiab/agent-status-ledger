@@ -10,7 +10,7 @@ import { renderHtml } from "./render/html";
 import { redact } from "./redact";
 import { resolveApiKey, macKeychainLookup } from "./apikey";
 
-const USAGE = "usage: asl report [--since 24h] [--open] [--no-llm] [--out DIR]";
+const USAGE = "usage: asl report [--since 24h] [--open] [--no-llm] [--out DIR] [--layout cards|flat]";
 
 function parseSince(s: string, now: Date): Date {
   const m = /^(\d+)([hd])$/.exec(s);
@@ -28,9 +28,17 @@ async function main() {
       open: { type: "boolean", default: false },
       "no-llm": { type: "boolean", default: false },
       out: { type: "string" },
+      layout: { type: "string", default: "cards" },
     },
   });
   if (positionals[0] !== "report") {
+    console.error(USAGE);
+    process.exit(2);
+  }
+
+  const layout = values.layout!;
+  if (layout !== "cards" && layout !== "flat") {
+    console.error(`error: --layout must be "cards" or "flat", got "${layout}"`);
     console.error(USAGE);
     process.exit(2);
   }
@@ -64,7 +72,7 @@ async function main() {
   const base = join(config.reportsDir, day);
   const md = redact(renderMarkdown(report), config.redactPatterns);
   const json = redact(renderJson(report), config.redactPatterns);
-  const html = redact(renderHtml(report), config.redactPatterns);
+  const html = redact(renderHtml(report, { layout }), config.redactPatterns);
   await Bun.write(`${base}.md`, md);
   await Bun.write(`${base}.json`, json);
   await Bun.write(`${base}.html`, html);

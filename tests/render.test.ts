@@ -4,6 +4,7 @@ import { renderMarkdown } from "../src/render/markdown";
 import { renderJson } from "../src/render/json";
 import { renderHtml } from "../src/render/html";
 import { STATUS_HELP, EVIDENCE_HELP } from "../src/render/legend";
+import { redact } from "../src/redact";
 
 function agent(over: Partial<AgentReport>): AgentReport {
   return {
@@ -209,5 +210,12 @@ describe("renderers", () => {
     const html = renderHtml({ ...report, agents: [a] });
     expect(html).toContain("I &lt;b&gt;bolded&lt;/b&gt; things.");
     expect(html).not.toContain("<b>bolded</b>");
+  });
+
+  test("html: standup blurb flows through redaction like all rendered output", () => {
+    const a = agent({ narrative: { ...agent({}).narrative, standup: "I set api_key=hunter2secret and moved on." } });
+    const html = redact(renderHtml({ ...report, agents: [a] }));
+    expect(html).toContain("[REDACTED]");
+    expect(html).not.toContain("hunter2secret");
   });
 });
