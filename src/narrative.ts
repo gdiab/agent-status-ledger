@@ -3,6 +3,15 @@ import type { AgentProfile, CommitEvidence, FactSheet, Narrative, Status } from 
 const CAP_FILES = 30;
 const CAP_ERRORS = 10;
 
+// Per-status closing copy: standup speaks as the agent, recommendation to the human.
+// One table so a new Status gets both voices in one place.
+const STATUS_VOICE: Partial<Record<Status, { standup: string; recommendation: string }>> = {
+  needs_human: { standup: "I'm waiting on you for an approval or decision.", recommendation: "An approval or decision is waiting on you." },
+  blocked: { standup: "I'm stuck and need help.", recommendation: "Investigate the errors above." },
+  failed: { standup: "I'm stuck and need help.", recommendation: "Investigate the errors above." },
+  silent: { standup: "I've gone quiet — check on me.", recommendation: "Check whether this agent is stuck." },
+};
+
 export function buildFactSheet(profile: AgentProfile, commits: CommitEvidence[]): FactSheet {
   const titles = [...new Set(profile.sessions.map((s) => s.title).filter((t): t is string => !!t))];
   const filesTouched = [...new Set(profile.sessions.flatMap((s) => s.filesTouched))].sort().slice(0, CAP_FILES);
@@ -22,24 +31,29 @@ export function buildFactSheet(profile: AgentProfile, commits: CommitEvidence[])
 export function templateNarrative(f: FactSheet, status: Status): Narrative {
   const sessions = `${f.sessionCount} session${f.sessionCount === 1 ? "" : "s"}`;
   const topics = f.titles.length ? f.titles.join("; ") : "untitled work";
+  const voice = STATUS_VOICE[status];
+  const standup =
+    `I worked on ${topics} across ${sessions}.` +
+    (f.commits.length ? ` I landed ${f.commits.length} commit${f.commits.length === 1 ? "" : "s"}.` : "") +
+    (f.errors.length ? ` I hit ${f.errors.length} error${f.errors.length === 1 ? "" : "s"} along the way.` : "") +
+    (voice ? ` ${voice.standup}` : " Nothing is blocking me.");
   return {
     workedOn: `${sessions}: ${topics}.`,
     completed: f.commits.length ? `Commits: ${f.commits.join("; ")}.` : "No durable artifacts detected.",
     inProgress: status === "active" || status === "idle" ? `Last activity ${f.lastActivity}.` : "Nothing in progress.",
     blocked: f.errors.length ? `Errors seen: ${f.errors.join("; ")}.` : "No blockers detected.",
-    recommendation:
-      status === "failed" || status === "blocked" ? "Investigate the errors above."
-      : status === "needs_human" ? "An approval or decision is waiting on you."
-      : status === "silent" ? "Check whether this agent is stuck."
-      : f.commits.length ? "Review the commits." : "No action needed.",
+    recommendation: voice?.recommendation ?? (f.commits.length ? "Review the commits." : "No action needed."),
+    standup,
   };
 }
 
 const PROMPT_HEADER = `You write one agent's entry in a morning standup report about AI coding agents.
 Use ONLY the facts in the JSON below. Do not invent work, files, or outcomes.
 Reply with STRICT JSON, no markdown fences, exactly these string fields:
-{"workedOn": "...", "completed": "...", "inProgress": "...", "blocked": "...", "recommendation": "..."}
-One or two short sentences per field. If a field has no supporting facts, say so plainly.`;
+{"workedOn": "...", "completed": "...", "inProgress": "...", "blocked": "...", "recommendation": "...", "standup": "..."}
+One or two short sentences per field, except "standup": 2-4 short sentences, first person singular,
+written as the agent itself speaking at standup ("I ..."), under 400 characters, grounded in the same
+facts, mentioning the blocker if one exists. If a field has no supporting facts, say so plainly.`;
 
 function extractJson(text: string): string {
   const start = text.indexOf("{");
@@ -85,6 +99,13 @@ export async function generateNarrative(
         inProgress: parsed.inProgress,
         blocked: parsed.blocked,
         recommendation: parsed.recommendation,
+        // Deliberate asymmetry: the five fields above are all-or-nothing (any
+        // missing → whole narrative falls back), but standup alone may be
+        // template-filled — so source "llm" means "at most this one field is
+        // template", not "every field came from the model".
+        standup: typeof parsed.standup === "string" && parsed.standup.trim()
+          ? parsed.standup
+          : fallback.narrative.standup,
       },
       source: "llm",
     };

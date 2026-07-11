@@ -6,11 +6,11 @@ import { loadConfig } from "./config";
 import { buildReport } from "./report";
 import { renderMarkdown } from "./render/markdown";
 import { renderJson } from "./render/json";
-import { renderHtml } from "./render/html";
+import { renderHtml, HTML_LAYOUTS, type HtmlLayout } from "./render/html";
 import { redact } from "./redact";
 import { resolveApiKey, macKeychainLookup } from "./apikey";
 
-const USAGE = "usage: asl report [--since 24h] [--open] [--no-llm] [--out DIR]";
+const USAGE = `usage: asl report [--since 24h] [--open] [--no-llm] [--out DIR] [--layout ${HTML_LAYOUTS.join("|")}]`;
 
 function parseSince(s: string, now: Date): Date {
   const m = /^(\d+)([hd])$/.exec(s);
@@ -19,18 +19,36 @@ function parseSince(s: string, now: Date): Date {
   return new Date(now.getTime() - ms);
 }
 
+function parseCliArgs() {
+  try {
+    return parseArgs({
+      args: Bun.argv.slice(2),
+      allowPositionals: true,
+      options: {
+        since: { type: "string", default: "24h" },
+        open: { type: "boolean", default: false },
+        "no-llm": { type: "boolean", default: false },
+        out: { type: "string" },
+        layout: { type: "string", default: "cards" },
+      },
+    });
+  } catch (e) {
+    console.error(`error: ${e instanceof Error ? e.message : e}`);
+    console.error(USAGE);
+    process.exit(2);
+  }
+}
+
 async function main() {
-  const { values, positionals } = parseArgs({
-    args: Bun.argv.slice(2),
-    allowPositionals: true,
-    options: {
-      since: { type: "string", default: "24h" },
-      open: { type: "boolean", default: false },
-      "no-llm": { type: "boolean", default: false },
-      out: { type: "string" },
-    },
-  });
+  const { values, positionals } = parseCliArgs();
   if (positionals[0] !== "report") {
+    console.error(USAGE);
+    process.exit(2);
+  }
+
+  const layout = values.layout!;
+  if (!(HTML_LAYOUTS as readonly string[]).includes(layout)) {
+    console.error(`error: --layout must be ${HTML_LAYOUTS.map((l) => `"${l}"`).join(" or ")}, got "${layout}"`);
     console.error(USAGE);
     process.exit(2);
   }
@@ -64,7 +82,7 @@ async function main() {
   const base = join(config.reportsDir, day);
   const md = redact(renderMarkdown(report), config.redactPatterns);
   const json = redact(renderJson(report), config.redactPatterns);
-  const html = redact(renderHtml(report), config.redactPatterns);
+  const html = redact(renderHtml(report, { layout: layout as HtmlLayout }), config.redactPatterns);
   await Bun.write(`${base}.md`, md);
   await Bun.write(`${base}.json`, json);
   await Bun.write(`${base}.html`, html);

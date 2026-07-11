@@ -26,7 +26,8 @@
         "completed": "No durable artifacts detected.",
         "inProgress": "Nothing in progress.",
         "blocked": "No blockers detected.",
-        "recommendation": "Check whether this agent is stuck."
+        "recommendation": "Check whether this agent is stuck.",
+        "standup": "I worked on untitled work across 1 session. I've gone quiet — check on me."
       },
       "narrativeSource": "template",
       "commits": []
@@ -55,7 +56,8 @@
         "completed": "No durable artifacts detected.",
         "inProgress": "Nothing in progress.",
         "blocked": "No blockers detected.",
-        "recommendation": "An approval or decision is waiting on you."
+        "recommendation": "An approval or decision is waiting on you.",
+        "standup": "I worked on Terraform deploy across 1 session. I'm waiting on you for an approval or decision."
       },
       "narrativeSource": "template",
       "commits": []
@@ -84,7 +86,8 @@
         "completed": "No durable artifacts detected.",
         "inProgress": "Nothing in progress.",
         "blocked": "No blockers detected.",
-        "recommendation": "Check whether this agent is stuck."
+        "recommendation": "Check whether this agent is stuck.",
+        "standup": "I worked on untitled work across 1 session. I've gone quiet — check on me."
       },
       "narrativeSource": "template",
       "commits": []
@@ -113,7 +116,8 @@
         "completed": "No durable artifacts detected.",
         "inProgress": "Nothing in progress.",
         "blocked": "No blockers detected.",
-        "recommendation": "An approval or decision is waiting on you."
+        "recommendation": "An approval or decision is waiting on you.",
+        "standup": "I worked on Terraform deploy across 1 session. I'm waiting on you for an approval or decision."
       },
       "narrativeSource": "template",
       "commits": []
@@ -146,7 +150,8 @@
         "completed": "Commits: 8db6c7f fix login redirect.",
         "inProgress": "Nothing in progress.",
         "blocked": "No blockers detected.",
-        "recommendation": "Review the commits."
+        "recommendation": "Review the commits.",
+        "standup": "I worked on Fix login bug across 1 session. I landed 1 commit. Nothing is blocking me."
       },
       "narrativeSource": "template",
       "commits": [

@@ -39,11 +39,23 @@ describe("buildFactSheet", () => {
 });
 
 describe("templateNarrative", () => {
-  test("produces all five fields from facts alone", () => {
+  test("produces all six fields from facts alone", () => {
     const n = templateNarrative(buildFactSheet(profile, commits), "completed");
     expect(n.workedOn).toContain("Fix login bug");
     expect(n.completed).toContain("fix login redirect");
     for (const v of Object.values(n)) expect(typeof v).toBe("string");
+  });
+
+  test("standup is first person and grounded in the facts", () => {
+    const n = templateNarrative(buildFactSheet(profile, commits), "completed");
+    expect(n.standup).toMatch(/^I /);
+    expect(n.standup).toContain("Fix login bug");
+    expect(n.standup).toContain("1 commit");
+  });
+
+  test("standup mentions waiting on human when status needs_human", () => {
+    const n = templateNarrative(buildFactSheet(profile, commits), "needs_human");
+    expect(n.standup).toContain("waiting on you");
   });
 });
 
@@ -51,7 +63,7 @@ describe("generateNarrative", () => {
   const facts: FactSheet = buildFactSheet(profile, commits);
 
   test("uses LLM response when valid", async () => {
-    const canned = { workedOn: "w", completed: "c", inProgress: "i", blocked: "b", recommendation: "r" };
+    const canned = { workedOn: "w", completed: "c", inProgress: "i", blocked: "b", recommendation: "r", standup: "I fixed the login redirect and committed it." };
     const fetchFn = (async (_url: any, init: any) => {
       const body = JSON.parse(init.body);
       expect(body.model).toBe("claude-haiku-4-5-20251001");
@@ -79,5 +91,15 @@ describe("generateNarrative", () => {
       new Response(JSON.stringify({ content: [{ type: "text", text: "not json at all" }] }), { status: 200 })) as unknown as typeof fetch;
     const r = await generateNarrative(facts, "completed", { model: "m", apiKey: "k", fetchFn });
     expect(r.source).toBe("template");
+  });
+
+  test("LLM response missing standup keeps llm source, template-fills standup only", async () => {
+    const canned = { workedOn: "w", completed: "c", inProgress: "i", blocked: "b", recommendation: "r" };
+    const fetchFn = (async () =>
+      new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(canned) }] }), { status: 200 })) as unknown as typeof fetch;
+    const r = await generateNarrative(facts, "completed", { model: "m", apiKey: "k", fetchFn });
+    expect(r.source).toBe("llm");
+    expect(r.narrative.workedOn).toBe("w");
+    expect(r.narrative.standup).toMatch(/^I /);
   });
 });

@@ -3,8 +3,13 @@ import { rollupLine } from "./rollup";
 import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 
 function agentSection(a: AgentReport): string {
+  // The blurb is LLM output: collapse whitespace so it stays one lead line,
+  // and escape as plain inline text so LLM output can't inject HTML/links/emphasis.
+  const blurb = a.narrative.standup.replace(/\s+/g, " ").trim().replace(/([\\_*<>&[\]()!`])/g, "\\$1");
   const lines = [
     `### ${a.displayName}`,
+    "",
+    `_${blurb}_`,
     "",
     `- Status: **${a.status}** (${a.severity})`,
     `- Evidence: ${a.evidence}`,

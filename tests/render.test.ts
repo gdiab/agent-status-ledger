@@ -4,6 +4,7 @@ import { renderMarkdown } from "../src/render/markdown";
 import { renderJson } from "../src/render/json";
 import { renderHtml } from "../src/render/html";
 import { STATUS_HELP, EVIDENCE_HELP } from "../src/render/legend";
+import { redact } from "../src/redact";
 
 function agent(over: Partial<AgentReport>): AgentReport {
   return {
@@ -14,7 +15,7 @@ function agent(over: Partial<AgentReport>): AgentReport {
       commits: ["abc1234 fix login redirect"], sessionCount: 1,
       firstActivity: "2026-07-07T09:00:00.000Z", lastActivity: "2026-07-07T09:30:00.000Z",
     },
-    narrative: { workedOn: "Fixed login.", completed: "Login fix committed.", inProgress: "Nothing.", blocked: "None.", recommendation: "Review the commit." },
+    narrative: { workedOn: "Fixed login.", completed: "Login fix committed.", inProgress: "Nothing.", blocked: "None.", recommendation: "Review the commit.", standup: "I fixed the login bug and committed the fix. Nothing is blocking me." },
     narrativeSource: "template",
     commits: [{ sha: "abc1234abcdefghijklmnopqrstuvwxyz123456", authorDate: "2026-07-07T09:20:00.000Z", subject: "fix login redirect", attributed: true }],
     ...over,
@@ -28,7 +29,7 @@ const report: Report = {
   windowStart: "2026-07-07T07:00:00.000Z",
   windowEnd: "2026-07-08T07:00:00.000Z",
   exceptions: [blocked],
-  agents: [blocked, agent({})],
+  agents: [agent({}), blocked],
 };
 
 describe("renderers", () => {
@@ -174,5 +175,68 @@ describe("renderers", () => {
     expect(md).toContain("## Legend");
     for (const help of Object.values(STATUS_HELP)) expect(md).toContain(help);
     for (const help of Object.values(EVIDENCE_HELP)) expect(md).toContain(help);
+  });
+
+  test("markdown: standup blurb is an italic lead line right after the agent heading", () => {
+    const md = renderMarkdown(report);
+    expect(md).toContain("_I fixed the login bug and committed the fix. Nothing is blocking me._");
+    const section = md.slice(md.indexOf("### w (claude-code)"));
+    expect(section.indexOf("_I fixed the login bug")).toBeLessThan(section.indexOf("- Status:"));
+  });
+
+  test("markdown: standup with newlines collapses to one lead line", () => {
+    const a = agent({ narrative: { ...agent({}).narrative, standup: "I did things.\nThen more\n\nthings." } });
+    const md = renderMarkdown({ ...report, agents: [a] });
+    expect(md).toContain("_I did things. Then more things._");
+  });
+
+  test("markdown: standup underscores are escaped so italics survive", () => {
+    const a = agent({ narrative: { ...agent({}).narrative, standup: "I renamed foo_bar to baz_qux." } });
+    const md = renderMarkdown({ ...report, agents: [a] });
+    expect(md).toContain("_I renamed foo\\_bar to baz\\_qux._");
+  });
+
+  test("markdown: standup raw HTML is escaped to plain text", () => {
+    const a = agent({ narrative: { ...agent({}).narrative, standup: "I shipped <img src=x onerror=alert(1)> today." } });
+    const md = renderMarkdown({ ...report, agents: [a] });
+    expect(md).toContain("\\<img src=x onerror=alert\\(1\\)\\>");
+  });
+
+  test("html: default layout renders details/summary standup cards in a grid", () => {
+    const html = renderHtml({ ...report, agents: [agent({})] });
+    expect(html).toContain('<div class="cards">');
+    expect(html).toContain('<details class="card">');
+    expect(html).not.toContain('<article class="card">');
+    expect(html).toContain(".cards {");
+    // summary (card front) carries the blurb; full detail is behind it
+    const summary = html.slice(html.indexOf("<summary>"), html.indexOf("</summary>"));
+    expect(summary).toContain("I fixed the login bug and committed the fix.");
+    expect(summary).toContain("w (claude-code)");
+    const card = html.slice(html.indexOf('<details class="card">'), html.indexOf("</details>"));
+    expect(card).toContain("<dt>Worked on</dt>");
+  });
+
+  test("html: --layout flat renders the legacy article cards, no collapsible agents", () => {
+    const html = renderHtml(report, { layout: "flat" });
+    expect(html).toContain('<article class="card">');
+    expect(html).not.toContain('<details class="card">');
+    expect(html).toContain("<dt>Worked on</dt>");
+    expect(html).toContain('<details class="legend">'); // legend stays collapsible
+    expect(html).not.toContain(".cards {");
+    expect(html).not.toContain("details.card");
+  });
+
+  test("html: standup blurb is escaped", () => {
+    const a = agent({ narrative: { ...agent({}).narrative, standup: "I <b>bolded</b> things." } });
+    const html = renderHtml({ ...report, agents: [a] });
+    expect(html).toContain("I &lt;b&gt;bolded&lt;/b&gt; things.");
+    expect(html).not.toContain("<b>bolded</b>");
+  });
+
+  test("html: standup blurb flows through redaction like all rendered output", () => {
+    const a = agent({ narrative: { ...agent({}).narrative, standup: "I set api_key=hunter2secret and moved on." } });
+    const html = redact(renderHtml({ ...report, agents: [a] }));
+    expect(html).toContain("[REDACTED]");
+    expect(html).not.toContain("hunter2secret");
   });
 });

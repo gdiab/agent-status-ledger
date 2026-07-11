@@ -82,6 +82,7 @@ export interface Narrative {
   inProgress: string;
   blocked: string;
   recommendation: string;
+  standup: string;          // 2–4 sentences, first person, the agent speaking at standup
 }
 
 export interface AgentReport {
