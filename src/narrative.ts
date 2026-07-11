@@ -22,6 +22,14 @@ export function buildFactSheet(profile: AgentProfile, commits: CommitEvidence[])
 export function templateNarrative(f: FactSheet, status: Status): Narrative {
   const sessions = `${f.sessionCount} session${f.sessionCount === 1 ? "" : "s"}`;
   const topics = f.titles.length ? f.titles.join("; ") : "untitled work";
+  const standup =
+    `I worked on ${topics} across ${sessions}.` +
+    (f.commits.length ? ` I landed ${f.commits.length} commit${f.commits.length === 1 ? "" : "s"}.` : "") +
+    (f.errors.length ? ` I hit ${f.errors.length} error${f.errors.length === 1 ? "" : "s"} along the way.` : "") +
+    (status === "needs_human" ? " I'm waiting on you for an approval or decision."
+      : status === "blocked" || status === "failed" ? " I'm stuck and need help."
+      : status === "silent" ? " I've gone quiet — check on me."
+      : " Nothing is blocking me.");
   return {
     workedOn: `${sessions}: ${topics}.`,
     completed: f.commits.length ? `Commits: ${f.commits.join("; ")}.` : "No durable artifacts detected.",
@@ -32,14 +40,17 @@ export function templateNarrative(f: FactSheet, status: Status): Narrative {
       : status === "needs_human" ? "An approval or decision is waiting on you."
       : status === "silent" ? "Check whether this agent is stuck."
       : f.commits.length ? "Review the commits." : "No action needed.",
+    standup,
   };
 }
 
 const PROMPT_HEADER = `You write one agent's entry in a morning standup report about AI coding agents.
 Use ONLY the facts in the JSON below. Do not invent work, files, or outcomes.
 Reply with STRICT JSON, no markdown fences, exactly these string fields:
-{"workedOn": "...", "completed": "...", "inProgress": "...", "blocked": "...", "recommendation": "..."}
-One or two short sentences per field. If a field has no supporting facts, say so plainly.`;
+{"workedOn": "...", "completed": "...", "inProgress": "...", "blocked": "...", "recommendation": "...", "standup": "..."}
+One or two short sentences per field, except "standup": 2-4 short sentences, first person singular,
+written as the agent itself speaking at standup ("I ..."), under 400 characters, grounded in the same
+facts, mentioning the blocker if one exists. If a field has no supporting facts, say so plainly.`;
 
 function extractJson(text: string): string {
   const start = text.indexOf("{");
@@ -85,6 +96,9 @@ export async function generateNarrative(
         inProgress: parsed.inProgress,
         blocked: parsed.blocked,
         recommendation: parsed.recommendation,
+        standup: typeof parsed.standup === "string" && parsed.standup.trim()
+          ? parsed.standup
+          : fallback.narrative.standup,
       },
       source: "llm",
     };
