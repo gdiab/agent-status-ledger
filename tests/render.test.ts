@@ -175,4 +175,11 @@ describe("renderers", () => {
     for (const help of Object.values(STATUS_HELP)) expect(md).toContain(help);
     for (const help of Object.values(EVIDENCE_HELP)) expect(md).toContain(help);
   });
+
+  test("markdown: standup blurb is an italic lead line right after the agent heading", () => {
+    const md = renderMarkdown(report);
+    expect(md).toContain("_I fixed the login bug and committed the fix. Nothing is blocking me._");
+    const section = md.slice(md.indexOf("### w (claude-code)"));
+    expect(section.indexOf("_I fixed the login bug")).toBeLessThan(section.indexOf("- Status:"));
+  });
 });

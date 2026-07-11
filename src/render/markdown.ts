@@ -6,6 +6,8 @@ function agentSection(a: AgentReport): string {
   const lines = [
     `### ${a.displayName}`,
     "",
+    `_${a.narrative.standup}_`,
+    "",
     `- Status: **${a.status}** (${a.severity})`,
     `- Evidence: ${a.evidence}`,
     `- Workdir: \`${a.workdir}\``,

@@ -13,6 +13,8 @@ Window: 2026-07-07T07:00:00.000Z → 2026-07-08T07:00:00.000Z
 
 ### silent (claude-code)
 
+_I worked on untitled work across 1 session. I've gone quiet — check on me._
+
 - Status: **silent** (urgent)
 - Evidence: claimed_only
 - Workdir: `/work/silent`
@@ -28,6 +30,8 @@ Window: 2026-07-07T07:00:00.000Z → 2026-07-08T07:00:00.000Z
 
 ### infra (codex)
 
+_I worked on Terraform deploy across 1 session. I'm waiting on you for an approval or decision._
+
 - Status: **needs_human** (warning)
 - Evidence: claimed_only
 - Workdir: `/work/infra`
@@ -42,6 +46,8 @@ Window: 2026-07-07T07:00:00.000Z → 2026-07-08T07:00:00.000Z
 ---
 
 ### repo (claude-code)
+
+_I worked on Fix login bug across 1 session. I landed 1 commit. Nothing is blocking me._
 
 - Status: **completed** (info)
 - Evidence: proven
