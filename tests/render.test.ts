@@ -184,11 +184,24 @@ describe("renderers", () => {
     expect(section.indexOf("_I fixed the login bug")).toBeLessThan(section.indexOf("- Status:"));
   });
 
+  test("markdown: standup with newlines collapses to one lead line", () => {
+    const a = agent({ narrative: { ...agent({}).narrative, standup: "I did things.\nThen more\n\nthings." } });
+    const md = renderMarkdown({ ...report, agents: [a] });
+    expect(md).toContain("_I did things. Then more things._");
+  });
+
+  test("markdown: standup underscores are escaped so italics survive", () => {
+    const a = agent({ narrative: { ...agent({}).narrative, standup: "I renamed foo_bar to baz_qux." } });
+    const md = renderMarkdown({ ...report, agents: [a] });
+    expect(md).toContain("_I renamed foo\\_bar to baz\\_qux._");
+  });
+
   test("html: default layout renders details/summary standup cards in a grid", () => {
-    const html = renderHtml(report);
+    const html = renderHtml({ ...report, agents: [agent({})] });
     expect(html).toContain('<div class="cards">');
     expect(html).toContain('<details class="card">');
     expect(html).not.toContain('<article class="card">');
+    expect(html).toContain(".cards {");
     // summary (card front) carries the blurb; full detail is behind it
     const summary = html.slice(html.indexOf("<summary>"), html.indexOf("</summary>"));
     expect(summary).toContain("I fixed the login bug and committed the fix.");
@@ -203,6 +216,8 @@ describe("renderers", () => {
     expect(html).not.toContain('<details class="card">');
     expect(html).toContain("<dt>Worked on</dt>");
     expect(html).toContain('<details class="legend">'); // legend stays collapsible
+    expect(html).not.toContain(".cards {");
+    expect(html).not.toContain("details.card");
   });
 
   test("html: standup blurb is escaped", () => {

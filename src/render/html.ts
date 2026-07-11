@@ -8,7 +8,8 @@ function esc(s: string): string {
 
 const SEVERITY_COLOR: Record<string, string> = { urgent: "#c0392b", warning: "#b8860b", info: "#2d7a46" };
 
-export type HtmlLayout = "cards" | "flat";
+export const HTML_LAYOUTS = ["cards", "flat"] as const;
+export type HtmlLayout = (typeof HTML_LAYOUTS)[number];
 
 function badges(a: AgentReport): string {
   return `<span class="badge" style="background:${SEVERITY_COLOR[a.severity]}" title="${esc(STATUS_HELP[a.status])}">${esc(a.status)}</span>
@@ -65,9 +66,17 @@ export function renderHtml(report: Report, opts: { layout?: HtmlLayout } = {}): 
     ? report.exceptions.map((a) =>
         `<li><strong>${esc(a.displayName)}</strong> — ${esc(a.status)}: ${esc(a.narrative.recommendation)}</li>`).join("")
     : "<li>No exceptions — nothing needs you.</li>";
-  const agentsSection = layout === "cards"
-    ? `<section><h2>All agents</h2><div class="cards">${report.agents.map(standupCard).join("\n")}</div></section>`
-    : `<section><h2>All agents</h2>${report.agents.map(flatCard).join("\n")}</section>`;
+  const agentCards = layout === "cards"
+    ? `<div class="cards">${report.agents.map(standupCard).join("\n")}</div>`
+    : report.agents.map(flatCard).join("\n");
+  const agentsSection = `<section><h2>All agents</h2>${agentCards}</section>`;
+  const cardCss = layout === "cards" ? `
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); gap: 1rem; align-items: start; }
+.cards .card { margin: 0; }
+details.card > summary { cursor: pointer; list-style: none; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card .standup { display: block; font-style: italic; margin-top: .5rem; }
+details.card .detail { margin-top: .75rem; border-top: 1px solid #8884; padding-top: .5rem; }` : "";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -88,13 +97,7 @@ dl { display: grid; grid-template-columns: 8rem 1fr; gap: .25rem .75rem; margin:
 dt { font-weight: 600; opacity: .75; } dd { margin: 0; }
 .errors li { color: #c0392b; }
 code { font-size: .85em; }
-.legend { opacity: .8; font-size: .85rem; margin: 1.5rem 0; }
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); gap: 1rem; align-items: start; }
-.cards .card { margin: 0; }
-details.card > summary { cursor: pointer; list-style: none; }
-details.card > summary::-webkit-details-marker { display: none; }
-details.card .standup { display: block; font-style: italic; margin-top: .5rem; }
-details.card .detail { margin-top: .75rem; border-top: 1px solid #8884; padding-top: .5rem; }
+.legend { opacity: .8; font-size: .85rem; margin: 1.5rem 0; }${cardCss}
 </style>
 </head>
 <body>
