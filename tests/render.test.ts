@@ -196,6 +196,12 @@ describe("renderers", () => {
     expect(md).toContain("_I renamed foo\\_bar to baz\\_qux._");
   });
 
+  test("markdown: standup raw HTML is escaped to plain text", () => {
+    const a = agent({ narrative: { ...agent({}).narrative, standup: "I shipped <img src=x onerror=alert(1)> today." } });
+    const md = renderMarkdown({ ...report, agents: [a] });
+    expect(md).toContain("\\<img src=x onerror=alert\\(1\\)\\>");
+  });
+
   test("html: default layout renders details/summary standup cards in a grid", () => {
     const html = renderHtml({ ...report, agents: [agent({})] });
     expect(html).toContain('<div class="cards">');
