@@ -28,7 +28,7 @@ const report: Report = {
   windowStart: "2026-07-07T07:00:00.000Z",
   windowEnd: "2026-07-08T07:00:00.000Z",
   exceptions: [blocked],
-  agents: [blocked, agent({})],
+  agents: [agent({}), blocked],
 };
 
 describe("renderers", () => {
@@ -181,5 +181,33 @@ describe("renderers", () => {
     expect(md).toContain("_I fixed the login bug and committed the fix. Nothing is blocking me._");
     const section = md.slice(md.indexOf("### w (claude-code)"));
     expect(section.indexOf("_I fixed the login bug")).toBeLessThan(section.indexOf("- Status:"));
+  });
+
+  test("html: default layout renders details/summary standup cards in a grid", () => {
+    const html = renderHtml(report);
+    expect(html).toContain('<div class="cards">');
+    expect(html).toContain('<details class="card">');
+    expect(html).not.toContain('<article class="card">');
+    // summary (card front) carries the blurb; full detail is behind it
+    const summary = html.slice(html.indexOf("<summary>"), html.indexOf("</summary>"));
+    expect(summary).toContain("I fixed the login bug and committed the fix.");
+    expect(summary).toContain("w (claude-code)");
+    const card = html.slice(html.indexOf('<details class="card">'), html.indexOf("</details>"));
+    expect(card).toContain("<dt>Worked on</dt>");
+  });
+
+  test("html: --layout flat renders the legacy article cards, no collapsible agents", () => {
+    const html = renderHtml(report, { layout: "flat" });
+    expect(html).toContain('<article class="card">');
+    expect(html).not.toContain('<details class="card">');
+    expect(html).toContain("<dt>Worked on</dt>");
+    expect(html).toContain('<details class="legend">'); // legend stays collapsible
+  });
+
+  test("html: standup blurb is escaped", () => {
+    const a = agent({ narrative: { ...agent({}).narrative, standup: "I <b>bolded</b> things." } });
+    const html = renderHtml({ ...report, agents: [a] });
+    expect(html).toContain("I &lt;b&gt;bolded&lt;/b&gt; things.");
+    expect(html).not.toContain("<b>bolded</b>");
   });
 });

@@ -8,20 +8,22 @@ function esc(s: string): string {
 
 const SEVERITY_COLOR: Record<string, string> = { urgent: "#c0392b", warning: "#b8860b", info: "#2d7a46" };
 
-function card(a: AgentReport): string {
+export type HtmlLayout = "cards" | "flat";
+
+function badges(a: AgentReport): string {
+  return `<span class="badge" style="background:${SEVERITY_COLOR[a.severity]}" title="${esc(STATUS_HELP[a.status])}">${esc(a.status)}</span>
+    <span class="evidence" title="${esc(EVIDENCE_HELP[a.evidence])}">${esc(a.evidence.replace("_", " "))}</span>`;
+}
+
+// Everything below the card header: shared by both layouts.
+function cardBody(a: AgentReport): string {
   const commits = a.commits.filter((c) => c.attributed)
     .map((c) => `<li><code>${esc(c.sha.slice(0, 7))}</code> ${esc(c.subject)}</li>`).join("");
   const unattributed = a.commits.filter((c) => !c.attributed)
     .map((c) => `<li><code>${esc(c.sha.slice(0, 7))}</code> ${esc(c.subject)}</li>`).join("");
   const files = a.facts.filesTouched.map((f) => `<li><code>${esc(f)}</code></li>`).join("");
   const errors = a.facts.errors.map((e) => `<li>${esc(e)}</li>`).join("");
-  return `<article class="card">
-  <header>
-    <h3>${esc(a.displayName)}</h3>
-    <span class="badge" style="background:${SEVERITY_COLOR[a.severity]}" title="${esc(STATUS_HELP[a.status])}">${esc(a.status)}</span>
-    <span class="evidence" title="${esc(EVIDENCE_HELP[a.evidence])}">${esc(a.evidence.replace("_", " "))}</span>
-  </header>
-  <dl>
+  return `<dl>
     <dt>Worked on</dt><dd>${esc(a.narrative.workedOn)}</dd>
     <dt>Completed</dt><dd>${esc(a.narrative.completed)}</dd>
     <dt>In progress</dt><dd>${esc(a.narrative.inProgress)}</dd>
@@ -31,16 +33,41 @@ function card(a: AgentReport): string {
   ${commits ? `<h4>Commits</h4><ul>${commits}</ul>` : ""}
   ${unattributed ? `<details><summary>Other repo commits (not attributed to this agent)</summary><ul>${unattributed}</ul></details>` : ""}
   ${files ? `<details><summary>Files touched (${a.facts.filesTouched.length})</summary><ul>${files}</ul></details>` : ""}
-  ${errors ? `<h4>Errors</h4><ul class="errors">${errors}</ul>` : ""}
+  ${errors ? `<h4>Errors</h4><ul class="errors">${errors}</ul>` : ""}`;
+}
+
+function flatCard(a: AgentReport): string {
+  return `<article class="card">
+  <header>
+    <h3>${esc(a.displayName)}</h3>
+    ${badges(a)}
+  </header>
+  ${cardBody(a)}
 </article>`;
 }
 
-export function renderHtml(report: Report): string {
+function standupCard(a: AgentReport): string {
+  return `<details class="card">
+  <summary>
+    <h3>${esc(a.displayName)} ${badges(a)}</h3>
+    <span class="standup">${esc(a.narrative.standup)}</span>
+  </summary>
+  <div class="detail">
+  ${cardBody(a)}
+  </div>
+</details>`;
+}
+
+export function renderHtml(report: Report, opts: { layout?: HtmlLayout } = {}): string {
+  const layout = opts.layout ?? "cards";
   const day = report.windowEnd.slice(0, 10);
   const exceptions = report.exceptions.length
     ? report.exceptions.map((a) =>
         `<li><strong>${esc(a.displayName)}</strong> — ${esc(a.status)}: ${esc(a.narrative.recommendation)}</li>`).join("")
     : "<li>No exceptions — nothing needs you.</li>";
+  const agentsSection = layout === "cards"
+    ? `<section><h2>All agents</h2><div class="cards">${report.agents.map(standupCard).join("\n")}</div></section>`
+    : `<section><h2>All agents</h2>${report.agents.map(flatCard).join("\n")}</section>`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -62,6 +89,12 @@ dt { font-weight: 600; opacity: .75; } dd { margin: 0; }
 .errors li { color: #c0392b; }
 code { font-size: .85em; }
 .legend { opacity: .8; font-size: .85rem; margin: 1.5rem 0; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); gap: 1rem; align-items: start; }
+.cards .card { margin: 0; }
+details.card > summary { cursor: pointer; list-style: none; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card .standup { display: block; font-style: italic; margin-top: .5rem; }
+details.card .detail { margin-top: .75rem; border-top: 1px solid #8884; padding-top: .5rem; }
 </style>
 </head>
 <body>
@@ -69,7 +102,7 @@ code { font-size: .85em; }
 <p class="window">${esc(report.windowStart)} → ${esc(report.windowEnd)}</p>
 <p class="rollup">${esc(rollupLine(report))}</p>
 <section class="exceptions"><h2>Exceptions</h2><ul>${exceptions}</ul></section>
-<section><h2>All agents</h2>${report.agents.map(card).join("\n")}</section>
+${agentsSection}
 <details class="legend"><summary>Legend</summary>
 <h4>Statuses</h4><ul>${(Object.entries(STATUS_HELP)).map(([k, v]) => `<li><strong>${esc(k)}</strong> — ${esc(v)}</li>`).join("")}</ul>
 <h4>Severity</h4><ul>${(Object.entries(SEVERITY_HELP)).map(([k, v]) => `<li><strong>${esc(k)}</strong> — ${esc(v)}</li>`).join("")}</ul>
