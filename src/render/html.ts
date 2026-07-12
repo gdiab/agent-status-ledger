@@ -33,6 +33,18 @@ function badges(a: AgentReport): string {
     <span class="evidence" title="${esc(EVIDENCE_HELP[a.evidence])}">${esc(a.evidence.replace("_", " "))}</span>`;
 }
 
+// Stable separator produced by withContext (src/connectors/jsonl.ts) between
+// the error reason and its tool/payload context.
+const ERROR_CONTEXT_MARKER = " — while ";
+
+// Reason stays the red headline; the tool payload drops to a de-emphasized
+// code block. Lines without the marker render whole, as before.
+function errorItem(e: string): string {
+  const i = e.indexOf(ERROR_CONTEXT_MARKER);
+  if (i === -1) return `<li>${esc(e)}</li>`;
+  return `<li>${esc(e.slice(0, i))}<code class="error-ctx">${esc(e.slice(i + ERROR_CONTEXT_MARKER.length))}</code></li>`;
+}
+
 // Everything below the card header: shared by both layouts.
 function cardBody(a: AgentReport): string {
   const commits = a.commits.filter((c) => c.attributed)
@@ -40,7 +52,7 @@ function cardBody(a: AgentReport): string {
   const unattributed = a.commits.filter((c) => !c.attributed)
     .map((c) => `<li><code>${esc(c.sha.slice(0, 7))}</code> ${esc(c.subject)}</li>`).join("");
   const files = a.facts.filesTouched.map((f) => `<li><code>${esc(f)}</code></li>`).join("");
-  const errors = a.facts.errors.map((e) => `<li>${esc(e)}</li>`).join("");
+  const errors = a.facts.errors.map(errorItem).join("");
   // A row collapses only when its backing facts are empty AND the narrative
   // is the exact template filler — LLM text is never sniffed, so a model's
   // own phrasing always renders even over empty facts.
@@ -162,6 +174,7 @@ dl { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: .25rem .75r
 dt { font-weight: 600; opacity: .75; } dd { margin: 0; }
 .filler { grid-column: 1 / -1; opacity: .5; }
 .errors li { color: ${ERROR_RED}; }
+.errors li > code { display: block; color: CanvasText; overflow-x: auto; white-space: pre-wrap; font-size: .75rem; opacity: .8; }
 code { font-size: .85em; }
 .legend { opacity: .8; font-size: .85rem; margin: 1.5rem 0; }${cardCss}
 </style>

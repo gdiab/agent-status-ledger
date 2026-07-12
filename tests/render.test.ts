@@ -435,6 +435,26 @@ describe("renderers", () => {
     expect(html).toContain("<dt>Blocked</dt>"); // facts.errors is non-empty
   });
 
+  test("html: error lines split reason from tool payload at the withContext marker", () => {
+    const a = agent({ facts: { ...agent({}).facts, errors: ["exit code 143 — while Bash: rm -rf <dir>"] } });
+    const html = renderHtml({ ...report, exceptions: [], agents: [a] });
+    expect(html).toContain('<li>exit code 143<code class="error-ctx">Bash: rm -rf &lt;dir&gt;</code></li>');
+    expect(html).not.toContain(" — while Bash");
+    const rule = cssRule(html, ".errors li > code");
+    expect(rule).toContain("display: block");
+    expect(rule).toContain("overflow-x: auto");
+    expect(rule).toContain("white-space: pre-wrap");
+    expect(rule).toContain("font-size: .75rem");
+    expect(rule).toContain("opacity: .8");
+  });
+
+  test("html: error lines without the marker render as before, escaped", () => {
+    const a = agent({ facts: { ...agent({}).facts, errors: ["plain <error> line"] } });
+    const html = renderHtml({ ...report, exceptions: [], agents: [a] });
+    expect(html).toContain("<li>plain &lt;error&gt; line</li>");
+    expect(html).not.toContain("error-ctx");
+  });
+
   test("html: standup blurb is escaped", () => {
     const a = agent({ narrative: { ...agent({}).narrative, standup: "I <b>bolded</b> things." } });
     const html = renderHtml({ ...report, agents: [a] });
