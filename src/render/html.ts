@@ -39,6 +39,14 @@ const ERROR_CONTEXT_MARKER = " — while ";
 
 // Reason stays the red headline; the tool payload drops to a de-emphasized
 // code block. Lines without the marker render whole, as before.
+// Basename-first emphasis: the directory prefix is dimmed so the filename
+// pops; the full path remains the element's text content.
+function fileItem(f: string): string {
+  const i = f.lastIndexOf("/");
+  if (i === -1) return `<li><code>${esc(f)}</code></li>`;
+  return `<li><code><span class="dir">${esc(f.slice(0, i + 1))}</span>${esc(f.slice(i + 1))}</code></li>`;
+}
+
 function errorItem(e: string): string {
   const i = e.indexOf(ERROR_CONTEXT_MARKER);
   if (i === -1) return `<li>${esc(e)}</li>`;
@@ -51,7 +59,7 @@ function cardBody(a: AgentReport): string {
     .map((c) => `<li><code>${esc(c.sha.slice(0, 7))}</code> ${esc(c.subject)}</li>`).join("");
   const unattributed = a.commits.filter((c) => !c.attributed)
     .map((c) => `<li><code>${esc(c.sha.slice(0, 7))}</code> ${esc(c.subject)}</li>`).join("");
-  const files = a.facts.filesTouched.map((f) => `<li><code>${esc(f)}</code></li>`).join("");
+  const files = a.facts.filesTouched.map(fileItem).join("");
   const errors = a.facts.errors.map(errorItem).join("");
   // A row collapses only when its backing facts are empty AND the narrative
   // is the exact template filler — LLM text is never sniffed, so a model's
@@ -181,6 +189,7 @@ dt { font-weight: 600; opacity: .75; } dd { margin: 0; }
 .errors li { color: ${ERROR_RED}; }
 .errors li > code { display: block; color: CanvasText; overflow-x: auto; white-space: pre-wrap; font-size: .75rem; opacity: .8; }
 code { font-size: .85em; }
+.dir { opacity: .6; }
 .legend { opacity: .8; font-size: .85rem; margin: 1.5rem 0; }${cardCss}
 </style>
 </head>

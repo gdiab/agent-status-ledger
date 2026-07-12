@@ -489,6 +489,21 @@ describe("renderers", () => {
     expect(html).not.toContain("error-ctx");
   });
 
+  test("html: file paths dim the directory prefix so the basename pops", () => {
+    const a = agent({ facts: { ...agent({}).facts, filesTouched: ["/w/src/deep/login.ts", "README.md"] } });
+    const html = renderHtml({ ...report, exceptions: [], agents: [a] });
+    expect(html).toContain('<code><span class="dir">/w/src/deep/</span>login.ts</code>');
+    expect(html).toContain("<code>README.md</code>"); // no dir → no wrapper
+    expect(cssRule(html, ".dir")).toContain("opacity: .6");
+  });
+
+  test("html: dimmed file paths stay escaped", () => {
+    const a = agent({ facts: { ...agent({}).facts, filesTouched: ["/w/<x>/e&.ts"] } });
+    const html = renderHtml({ ...report, exceptions: [], agents: [a] });
+    expect(html).toContain('<span class="dir">/w/&lt;x&gt;/</span>e&amp;.ts');
+    expect(html).not.toContain("<x>");
+  });
+
   test("html: standup blurb is escaped", () => {
     const a = agent({ narrative: { ...agent({}).narrative, standup: "I <b>bolded</b> things." } });
     const html = renderHtml({ ...report, agents: [a] });
