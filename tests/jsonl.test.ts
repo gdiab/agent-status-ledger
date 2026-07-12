@@ -61,6 +61,14 @@ describe("withContext", () => {
     expect(out).toContain("[REDACTED]");
     expect(out).not.toContain("ghp_");
   });
+
+  test("applies user redactPatterns before truncation when the secret straddles the 80-char boundary", () => {
+    const padding = "x".repeat(50);
+    const secret = "CORPSECRET_" + "Z".repeat(40);
+    const out = withContext("boom", "Bash", `${padding} ${secret}`, ["CORPSECRET_[A-Z_]+"]);
+    expect(out).toContain("[REDACTED]");
+    expect(out).not.toContain("CORPSECRET");
+  });
 });
 
 describe("parseClaudeSession with a truncated trailing line", () => {

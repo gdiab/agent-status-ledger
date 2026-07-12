@@ -43,6 +43,34 @@ describe("parseCodexSession", () => {
     expect(parseCodexSession(text, new Map())!.errors[0]).toBe("build failed — while exec: npm run build");
   });
 
+  describe("user redactPatterns run before truncation (asl-f4k)", () => {
+    const line = (o: unknown) => JSON.stringify(o);
+    const patterns = ["CORPSECRET_[A-Z_]+"];
+    const secret = "CORPSECRET_" + "Z".repeat(60);
+    const meta = line({ type: "session_meta", timestamp: "2026-07-07T10:00:00Z", payload: { id: "c1", cwd: "/w" } });
+
+    test("error message: pattern secret straddling the 200-char first-line slice never leaks a prefix", () => {
+      const text = [
+        meta,
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "error", message: `${"m".repeat(150)} ${secret} trailing` } }),
+      ].join("\n");
+      const s = parseCodexSession(text, new Map(), undefined, patterns)!;
+      expect(s.errors[0]).toContain("[REDACTED]");
+      expect(s.errors[0]).not.toContain("CORPSECRET");
+    });
+
+    test("in-flight exec command: pattern secret is redacted before the context slice", () => {
+      const text = [
+        meta,
+        line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "exec_command_begin", command: `${"x".repeat(60)} ${secret}` } }),
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "error", message: "build failed" } }),
+      ].join("\n");
+      const s = parseCodexSession(text, new Map(), undefined, patterns)!;
+      expect(s.errors[0]).toContain("[REDACTED]");
+      expect(s.errors[0]).not.toContain("CORPSECRET");
+    });
+  });
+
   test("a finished exec command is not blamed for a later error", () => {
     const line = (o: unknown) => JSON.stringify(o);
     const text = [

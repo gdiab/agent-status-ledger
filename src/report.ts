@@ -61,10 +61,10 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
   const { since, now, config } = opts;
   const sessions = [
     ...(config.connectors.claudeCode.enabled
-      ? await scanClaudeCode({ since, now, rootDir: config.connectors.claudeCode.rootDir })
+      ? await scanClaudeCode({ since, now, rootDir: config.connectors.claudeCode.rootDir, redactPatterns: config.redactPatterns })
       : []),
     ...(config.connectors.codex.enabled
-      ? await scanCodex({ since, now, rootDir: config.connectors.codex.rootDir })
+      ? await scanCodex({ since, now, rootDir: config.connectors.codex.rootDir, redactPatterns: config.redactPatterns })
       : []),
   ];
   const profiles = resolveProfiles(sessions);

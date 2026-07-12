@@ -2,9 +2,10 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentEvent, RawSession, ScanOptions } from "../types";
 import { firstLine, jsonlEntries, scanSessionFile, withContext } from "./jsonl";
+import { redact } from "../redact";
 import { toUtcIso } from "../time";
 
-export function parseCodexSession(text: string, titles: Map<string, string>, path?: string): RawSession | null {
+export function parseCodexSession(text: string, titles: Map<string, string>, path?: string, redactPatterns: string[] = []): RawSession | null {
   let cwd = "";
   let sessionId = "";
   let startedAt: string | undefined;
@@ -46,7 +47,9 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
           midWork = false;
           break;
         case "exec_command_begin":
-          lastCommand = firstLine(String(Array.isArray(p.command) ? p.command.join(" ") : (p.command ?? "")));
+          // Redact before firstLine's 200-char slice — a secret bisected here
+          // would leak its prefix through withContext's later 80-char slice.
+          lastCommand = firstLine(redact(String(Array.isArray(p.command) ? p.command.join(" ") : (p.command ?? "")), redactPatterns));
           awaitingUser = false;
           midWork = true;
           break;
@@ -55,8 +58,8 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
           break;
         case "error":
         case "stream_error": {
-          const base = firstLine(String(p.message ?? "error"));
-          const msg = lastCommand ? withContext(base, "exec", lastCommand) : base;
+          const base = firstLine(redact(String(p.message ?? "error"), redactPatterns));
+          const msg = lastCommand ? withContext(base, "exec", lastCommand, redactPatterns) : base;
           errors.push(msg);
           events.push({ timestamp: ts, type: "failed", summary: msg });
           awaitingUser = false;
@@ -122,7 +125,7 @@ export async function scanCodex(opts: ScanOptions): Promise<RawSession[]> {
     for (const file of readdirSync(dir)) {
       if (!file.endsWith(".jsonl")) continue;
       const path = join(dir, file);
-      const session = scanSessionFile(path, opts, (text) => parseCodexSession(text, titles, path));
+      const session = scanSessionFile(path, opts, (text) => parseCodexSession(text, titles, path, opts.redactPatterns));
       if (session) out.push(session);
     }
   }

@@ -57,6 +57,30 @@ describe("parseClaudeSession", () => {
     expect(parseClaudeSession("not json\n{\"broken\":", "/x")).toBeNull();
   });
 
+  describe("user redactPatterns run before truncation (asl-f4k)", () => {
+    const line = (o: unknown) => JSON.stringify(o);
+    const patterns = ["CORPSECRET_[A-Z_]+"];
+    const secret = "CORPSECRET_" + "Z".repeat(60);
+
+    test("tool input: pattern secret straddling the 80-char context slice never leaks a prefix", () => {
+      const text = [
+        line({ sessionId: "s", type: "assistant", timestamp: "2026-07-07T10:00:00Z", message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: `${"x".repeat(40)} ${secret}` } }] } }),
+        line({ sessionId: "s", type: "user", timestamp: "2026-07-07T10:00:30Z", message: { content: [{ type: "tool_result", tool_use_id: "t1", is_error: true, content: "exit code 143" }] } }),
+      ].join("\n");
+      const s = parseClaudeSession(text, "/w", undefined, patterns)!;
+      expect(s.errors[0]).toContain("[REDACTED]");
+      expect(s.errors[0]).not.toContain("CORPSECRET");
+    });
+
+    test("error body: pattern secret straddling the 200-char first-line slice never leaks a prefix", () => {
+      const body = `${"y".repeat(150)} ${secret} trailing`;
+      const text = line({ sessionId: "s", type: "user", timestamp: "2026-07-07T10:00:30Z", message: { content: [{ type: "tool_result", tool_use_id: "missing", is_error: true, content: body }] } });
+      const s = parseClaudeSession(text, "/w", undefined, patterns)!;
+      expect(s.errors[0]).toContain("[REDACTED]");
+      expect(s.errors[0]).not.toContain("CORPSECRET");
+    });
+  });
+
   describe("awaitingUser", () => {
     const line = (o: unknown) => JSON.stringify(o);
 

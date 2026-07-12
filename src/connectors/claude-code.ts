@@ -2,6 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentEvent, RawSession, ScanOptions } from "../types";
 import { firstLine, jsonlEntries, scanSessionFile, withContext } from "./jsonl";
+import { redact } from "../redact";
 import { toUtcIso } from "../time";
 
 export function decodeProjectDir(name: string): string {
@@ -10,7 +11,7 @@ export function decodeProjectDir(name: string): string {
   return name.replace(/-/g, "/");
 }
 
-export function parseClaudeSession(text: string, fallbackCwd: string, path?: string): RawSession | null {
+export function parseClaudeSession(text: string, fallbackCwd: string, path?: string, redactPatterns: string[] = []): RawSession | null {
   let cwd = fallbackCwd;
   let sessionId = "";
   let title: string | undefined;
@@ -77,9 +78,11 @@ export function parseClaudeSession(text: string, fallbackCwd: string, path?: str
         if (Array.isArray(content)) {
           for (const item of content) {
             if (item?.type === "tool_result" && item.is_error === true) {
-              const body = typeof item.content === "string" ? item.content : JSON.stringify(item.content ?? "");
+              // Redact before firstLine's 200-char slice — same straddle hazard
+              // as withContext's 80-char context slice.
+              const body = redact(typeof item.content === "string" ? item.content : JSON.stringify(item.content ?? ""), redactPatterns);
               const tool = typeof item.tool_use_id === "string" ? toolUses.get(item.tool_use_id) : undefined;
-              lastErrorLine = tool ? withContext(firstLine(body), tool.name, tool.input) : firstLine(body);
+              lastErrorLine = tool ? withContext(firstLine(body), tool.name, tool.input, redactPatterns) : firstLine(body);
               errors.push(lastErrorLine);
               endedOnError = true;
             }
@@ -130,7 +133,7 @@ export async function scanClaudeCode(opts: ScanOptions): Promise<RawSession[]> {
     for (const file of entries) {
       if (!file.endsWith(".jsonl")) continue;
       const path = join(projDir, file);
-      const session = scanSessionFile(path, opts, (text) => parseClaudeSession(text, decodeProjectDir(dir), path));
+      const session = scanSessionFile(path, opts, (text) => parseClaudeSession(text, decodeProjectDir(dir), path, opts.redactPatterns));
       if (session) out.push(session);
     }
   }

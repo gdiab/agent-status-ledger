@@ -10,15 +10,14 @@ const CONTEXT_MAX = 80;
 
 // "exit code 143 — while Bash: xcrun simctl…" — gives the reader (and the
 // narrative LLM) what the agent was doing when the error happened. Input is
-// flattened, then redacted with the built-in patterns BEFORE truncation: a
-// secret that straddles the 80-char slice must not lose only its prefix past
-// the length floor redaction patterns require. Residual: user-supplied
-// redactPatterns (config.redactPatterns) still run later, at the fact-sheet
-// layer, downstream of truncation — an adversarial secret matched only by a
-// custom pattern could in principle be bisected by truncation here.
-export function withContext(message: string, toolName: string, input: unknown): string {
+// flattened, then redacted (built-in patterns plus the caller's user-supplied
+// redactPatterns) BEFORE truncation: a secret that straddles the 80-char slice
+// must not lose only its prefix past the length floor redaction patterns
+// require. Callers own passing extraPatterns — the later fact-sheet redaction
+// pass only ever sees the truncated string.
+export function withContext(message: string, toolName: string, input: unknown, extraPatterns: string[] = []): string {
   const raw = input === undefined || input === null ? "" : typeof input === "string" ? input : JSON.stringify(input);
-  const flat = redact(raw.replace(/\s+/g, " ").trim());
+  const flat = redact(raw.replace(/\s+/g, " ").trim(), extraPatterns);
   if (!flat) return `${message} — while ${toolName}`;
   const slice = flat.length > CONTEXT_MAX ? `${flat.slice(0, CONTEXT_MAX)}…` : flat;
   return `${message} — while ${toolName}: ${slice}`;

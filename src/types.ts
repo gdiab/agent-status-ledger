@@ -46,6 +46,10 @@ export interface ScanOptions {
   since: Date;
   now: Date;
   rootDir: string;          // ~/.claude/projects or ~/.codex — injectable for tests
+  // User-supplied redact regexes (config.redactPatterns). Connectors must apply
+  // these BEFORE any truncation — downstream redactFacts sees only truncated
+  // strings, so a secret straddling a slice boundary would leak its prefix.
+  redactPatterns?: string[];
 }
 
 export interface AgentProfile {
