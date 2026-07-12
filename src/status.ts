@@ -66,7 +66,10 @@ export function inferStatus(
           now.getTime() - Date.parse(s.lastEventAt) >= t.silentThresholdHours * HOUR_MS &&
           s.awaitingUser !== true,
       );
-      newestOpenStatus = anyStuckOpen ? "silent" : "idle";
+      // Delivered work beats an abandoned chat's idle reading: with in-window
+      // artifacts, fall through to the historical chain (completed) instead of
+      // underreporting a profile that shipped (asl-290).
+      newestOpenStatus = anyStuckOpen ? "silent" : hasArtifact ? undefined : "idle";
     }
   }
 

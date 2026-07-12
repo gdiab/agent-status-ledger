@@ -140,6 +140,21 @@ describe("inferStatus", () => {
     }
   });
 
+  test("delivered commits beat an abandoned newest session's idle reading → completed / info", () => {
+    // Older session did real work and its commits landed in the window; the
+    // newest session is an open chat the user walked away from (awaitingUser).
+    // The profile delivered — "idle" underreports it (asl-290).
+    const p = twoSessionProfile(
+      [["2026-07-07T05:00:00.000Z", "run_started"], ["2026-07-07T05:10:00.000Z", "run_progressed"]],
+      [["2026-07-07T09:00:00.000Z", "run_started"], ["2026-07-07T09:10:00.000Z", "run_progressed"]],
+    );
+    p.sessions[0]!.awaitingUser = true;
+    p.sessions[1]!.awaitingUser = true;
+    const r = inferStatus(p, [commit(true, "2026-07-07T05:20:00.000Z")], NOW, T);
+    expect(r.status).toBe("completed");
+    expect(r.severity).toBe("info");
+  });
+
   test("a newer abandoned (awaitingUser) open session must not mask an older stuck open session → silent / urgent", () => {
     // Older session: went dark mid-work (awaitingUser false), long past silentThresholdHours.
     // Newer session: the user just walked away after a plain reply (awaitingUser true).
