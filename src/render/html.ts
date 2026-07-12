@@ -88,12 +88,12 @@ details.card .detail { margin-top: .75rem; border-top: 1px solid #8884; padding-
 body { max-width: 60rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
 h1 { font-size: 1.5rem; } h3 { margin: 0; font-size: 1.1rem; }
 .window { opacity: .7; font-size: .85rem; }
-.exceptions { border: 1px solid #c0392b55; border-radius: 8px; padding: 1rem 1.5rem; margin: 1rem 0; }
-.card { border: 1px solid #8884; border-radius: 8px; padding: 1rem 1.25rem; margin: 1rem 0; }
-.card header { display: flex; gap: .6rem; align-items: center; margin-bottom: .5rem; }
+.exceptions { border: 1px solid #c0392b55; border-radius: 8px; padding: 1rem 1.5rem; margin: 1rem 0; overflow-wrap: anywhere; }
+.card { border: 1px solid #8884; border-radius: 8px; padding: 1rem 1.25rem; margin: 1rem 0; overflow-wrap: anywhere; }
+.card header { display: flex; flex-wrap: wrap; gap: .6rem; row-gap: .25rem; align-items: center; margin-bottom: .5rem; }
 .badge { color: #fff; border-radius: 999px; padding: .1rem .6rem; font-size: .75rem; }
 .evidence { opacity: .6; font-size: .75rem; }
-dl { display: grid; grid-template-columns: 8rem 1fr; gap: .25rem .75rem; margin: .5rem 0; }
+dl { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: .25rem .75rem; margin: .5rem 0; }
 dt { font-weight: 600; opacity: .75; } dd { margin: 0; }
 .errors li { color: #c0392b; }
 code { font-size: .85em; }
