@@ -1,4 +1,4 @@
-import type { AgentReport, Report } from "../types";
+import type { AgentReport, Report, Severity } from "../types";
 import { plural, rollupCounts, rollupLine } from "./rollup";
 import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 import { STATUS_SEVERITY } from "../status";
@@ -10,7 +10,7 @@ function esc(s: string): string {
 
 // warning is #8a6d00, not the classic #b8860b: white-on-#b8860b is 3.25:1,
 // below AA for badge-size text.
-const SEVERITY_COLOR: Record<string, string> = { urgent: "#c0392b", warning: "#8a6d00", info: "#2d7a46" };
+const SEVERITY_COLOR: Record<Severity, string> = { urgent: "#c0392b", warning: "#8a6d00", info: "#2d7a46" };
 // #c0392b on the dark canvas is 3.20:1; the page opts into color-scheme
 // light dark, so error red must adapt per scheme.
 const ERROR_RED = "light-dark(#c0392b, #e07b6c)";
@@ -63,23 +63,25 @@ function cardBody(a: AgentReport): string {
   const errors = a.facts.errors.map(errorItem).join("");
   // A row collapses only when its backing facts are empty AND the narrative
   // is the exact template filler — LLM text is never sniffed, so a model's
-  // own phrasing always renders even over empty facts.
-  const fillerCompleted = a.facts.commits.length === 0 && a.narrative.completed === FILLER_COMPLETED;
-  const fillerInProgress = a.narrative.inProgress === FILLER_IN_PROGRESS;
-  const fillerBlocked = a.facts.errors.length === 0 && a.narrative.blocked === FILLER_BLOCKED;
-  const fillerNext = a.facts.commits.length === 0 && a.facts.errors.length === 0
-    && a.narrative.recommendation === FILLER_RECOMMENDATION;
-  const allFiller = fillerCompleted && fillerInProgress && fillerBlocked;
+  // own phrasing always renders even over empty facts. Each row: label,
+  // narrative text, its template filler, and whether facts force it to show.
+  const hasCommits = a.facts.commits.length > 0;
+  const hasErrors = a.facts.errors.length > 0;
+  type Row = readonly [label: string, text: string, filler: string, backed: boolean];
+  const mid: Row[] = [
+    ["Completed", a.narrative.completed, FILLER_COMPLETED, hasCommits],
+    ["In progress", a.narrative.inProgress, FILLER_IN_PROGRESS, false],
+    ["Blocked", a.narrative.blocked, FILLER_BLOCKED, hasErrors],
+  ];
+  const next: Row = ["Next", a.narrative.recommendation, FILLER_RECOMMENDATION, hasCommits || hasErrors];
+  const shows = ([, text, filler, backed]: Row) => backed || text !== filler;
+  const kept = mid.filter(shows);
   const rows = [
     `<dt>Worked on</dt><dd>${esc(a.narrative.workedOn)}</dd>`,
-    ...(allFiller
+    ...(kept.length === 0
       ? [`<dd class="filler">Nothing completed, in progress, or blocked.</dd>`]
-      : [
-          ...(fillerCompleted ? [] : [`<dt>Completed</dt><dd>${esc(a.narrative.completed)}</dd>`]),
-          ...(fillerInProgress ? [] : [`<dt>In progress</dt><dd>${esc(a.narrative.inProgress)}</dd>`]),
-          ...(fillerBlocked ? [] : [`<dt>Blocked</dt><dd>${esc(a.narrative.blocked)}</dd>`]),
-        ]),
-    ...(fillerNext ? [] : [`<dt>Next</dt><dd>${esc(a.narrative.recommendation)}</dd>`]),
+      : kept.map(([label, text]) => `<dt>${label}</dt><dd>${esc(text)}</dd>`)),
+    ...(shows(next) ? [`<dt>Next</dt><dd>${esc(next[1])}</dd>`] : []),
   ];
   return `<dl>
     ${rows.join("\n    ")}
