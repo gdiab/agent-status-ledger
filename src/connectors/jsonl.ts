@@ -2,26 +2,29 @@ import { readFileSync, statSync } from "node:fs";
 import type { RawSession, ScanOptions } from "../types";
 import { redact } from "../redact";
 
-export function firstLine(s: string): string {
-  return s.split("\n", 1)[0]!.slice(0, 200);
-}
-
+const LINE_MAX = 200;
 const CONTEXT_MAX = 80;
 
+// The one excerpting primitive: redaction (built-ins plus the user's
+// config.redactPatterns) always precedes the first-line/length slice, so a
+// secret straddling a truncation boundary can never leak its prefix.
+// Connectors excerpt only through a Clip — never with a bare slice.
+export type Clip = (s: string, max?: number) => string;
+
+export function makeClip(patterns: string[]): Clip {
+  return (s, max = LINE_MAX) => {
+    const line = redact(s, patterns).split("\n", 1)[0]!;
+    return line.length > max ? `${line.slice(0, max)}…` : line;
+  };
+}
+
 // "exit code 143 — while Bash: xcrun simctl…" — gives the reader (and the
-// narrative LLM) what the agent was doing when the error happened. Input is
-// flattened, then redacted with the built-in patterns BEFORE truncation: a
-// secret that straddles the 80-char slice must not lose only its prefix past
-// the length floor redaction patterns require. Residual: user-supplied
-// redactPatterns (config.redactPatterns) still run later, at the fact-sheet
-// layer, downstream of truncation — an adversarial secret matched only by a
-// custom pattern could in principle be bisected by truncation here.
-export function withContext(message: string, toolName: string, input: unknown): string {
+// narrative LLM) what the agent was doing when the error happened.
+export function withContext(message: string, toolName: string, input: unknown, clip: Clip = makeClip([])): string {
   const raw = input === undefined || input === null ? "" : typeof input === "string" ? input : JSON.stringify(input);
-  const flat = redact(raw.replace(/\s+/g, " ").trim());
+  const flat = clip(raw.replace(/\s+/g, " ").trim(), CONTEXT_MAX);
   if (!flat) return `${message} — while ${toolName}`;
-  const slice = flat.length > CONTEXT_MAX ? `${flat.slice(0, CONTEXT_MAX)}…` : flat;
-  return `${message} — while ${toolName}: ${slice}`;
+  return `${message} — while ${toolName}: ${flat}`;
 }
 
 export function* jsonlEntries(text: string, path?: string): Generator<any> {

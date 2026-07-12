@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { jsonlEntries, withContext } from "../src/connectors/jsonl";
+import { jsonlEntries, makeClip, withContext } from "../src/connectors/jsonl";
 import { parseClaudeSession } from "../src/connectors/claude-code";
 
 describe("jsonlEntries", () => {
@@ -60,6 +60,14 @@ describe("withContext", () => {
     const out = withContext("boom", "Bash", `${padding} ${token}`);
     expect(out).toContain("[REDACTED]");
     expect(out).not.toContain("ghp_");
+  });
+
+  test("applies user redactPatterns before truncation when the secret straddles the 80-char boundary", () => {
+    const padding = "x".repeat(50);
+    const secret = "CORPSECRET_" + "Z".repeat(40);
+    const out = withContext("boom", "Bash", `${padding} ${secret}`, makeClip(["CORPSECRET_[A-Z_]+"]));
+    expect(out).toContain("[REDACTED]");
+    expect(out).not.toContain("CORPSECRET");
   });
 });
 

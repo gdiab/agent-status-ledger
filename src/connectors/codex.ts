@@ -1,10 +1,10 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentEvent, RawSession, ScanOptions } from "../types";
-import { firstLine, jsonlEntries, scanSessionFile, withContext } from "./jsonl";
+import { jsonlEntries, makeClip, scanSessionFile, withContext, type Clip } from "./jsonl";
 import { toUtcIso } from "../time";
 
-export function parseCodexSession(text: string, titles: Map<string, string>, path?: string): RawSession | null {
+export function parseCodexSession(text: string, titles: Map<string, string>, path?: string, clip: Clip = makeClip([])): RawSession | null {
   let cwd = "";
   let sessionId = "";
   let startedAt: string | undefined;
@@ -41,12 +41,13 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
           midWork = false;
           break;
         case "task_complete":
-          events.push({ timestamp: ts, type: "completed", summary: firstLine(String(p.last_agent_message ?? "task complete")) });
+          events.push({ timestamp: ts, type: "completed", summary: clip(String(p.last_agent_message ?? "task complete")) });
           awaitingUser = true;
           midWork = false;
           break;
         case "exec_command_begin":
-          lastCommand = firstLine(String(Array.isArray(p.command) ? p.command.join(" ") : (p.command ?? "")));
+          // Stored raw; clipped (redacted + sliced) only at the output point.
+          lastCommand = String(Array.isArray(p.command) ? p.command.join(" ") : (p.command ?? ""));
           awaitingUser = false;
           midWork = true;
           break;
@@ -55,8 +56,8 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
           break;
         case "error":
         case "stream_error": {
-          const base = firstLine(String(p.message ?? "error"));
-          const msg = lastCommand ? withContext(base, "exec", lastCommand) : base;
+          const base = clip(String(p.message ?? "error"));
+          const msg = lastCommand ? withContext(base, "exec", lastCommand, clip) : base;
           errors.push(msg);
           events.push({ timestamp: ts, type: "failed", summary: msg });
           awaitingUser = false;
@@ -65,7 +66,7 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
         }
         case "exec_approval_request":
         case "apply_patch_approval_request":
-          events.push({ timestamp: ts, type: "approval_requested", summary: `approval requested: ${firstLine(String(p.command ?? p.type))}` });
+          events.push({ timestamp: ts, type: "approval_requested", summary: `approval requested: ${clip(String(p.command ?? p.type))}` });
           awaitingUser = false;
           midWork = true;
           break;
@@ -118,11 +119,12 @@ export async function scanCodex(opts: ScanOptions): Promise<RawSession[]> {
   const sessionsDir = join(opts.rootDir, "sessions");
   if (!existsSync(sessionsDir)) return out;
   const titles = loadCodexTitles(opts.rootDir);
+  const clip = makeClip(opts.redactPatterns);
   for (const dir of dateDirsInWindow(sessionsDir, opts.since, opts.now)) {
     for (const file of readdirSync(dir)) {
       if (!file.endsWith(".jsonl")) continue;
       const path = join(dir, file);
-      const session = scanSessionFile(path, opts, (text) => parseCodexSession(text, titles, path));
+      const session = scanSessionFile(path, opts, (text) => parseCodexSession(text, titles, path, clip));
       if (session) out.push(session);
     }
   }

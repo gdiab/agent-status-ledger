@@ -1,7 +1,8 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentEvent, RawSession, ScanOptions } from "../types";
-import { firstLine, jsonlEntries, scanSessionFile, withContext } from "./jsonl";
+import { isBenignToolError } from "./benign";
+import { jsonlEntries, makeClip, scanSessionFile, withContext, type Clip } from "./jsonl";
 import { toUtcIso } from "../time";
 
 export function decodeProjectDir(name: string): string {
@@ -10,7 +11,7 @@ export function decodeProjectDir(name: string): string {
   return name.replace(/-/g, "/");
 }
 
-export function parseClaudeSession(text: string, fallbackCwd: string, path?: string): RawSession | null {
+export function parseClaudeSession(text: string, fallbackCwd: string, path?: string, clip: Clip = makeClip([])): RawSession | null {
   let cwd = fallbackCwd;
   let sessionId = "";
   let title: string | undefined;
@@ -77,9 +78,10 @@ export function parseClaudeSession(text: string, fallbackCwd: string, path?: str
         if (Array.isArray(content)) {
           for (const item of content) {
             if (item?.type === "tool_result" && item.is_error === true) {
-              const body = typeof item.content === "string" ? item.content : JSON.stringify(item.content ?? "");
+              const body = clip(typeof item.content === "string" ? item.content : JSON.stringify(item.content ?? ""));
               const tool = typeof item.tool_use_id === "string" ? toolUses.get(item.tool_use_id) : undefined;
-              lastErrorLine = tool ? withContext(firstLine(body), tool.name, tool.input) : firstLine(body);
+              if (isBenignToolError(tool, body)) continue;
+              lastErrorLine = tool ? withContext(body, tool.name, tool.input, clip) : body;
               errors.push(lastErrorLine);
               endedOnError = true;
             }
@@ -118,6 +120,7 @@ export function parseClaudeSession(text: string, fallbackCwd: string, path?: str
 export async function scanClaudeCode(opts: ScanOptions): Promise<RawSession[]> {
   const out: RawSession[] = [];
   if (!existsSync(opts.rootDir)) return out;
+  const clip = makeClip(opts.redactPatterns);
   for (const dir of readdirSync(opts.rootDir)) {
     const projDir = join(opts.rootDir, dir);
     let entries: string[];
@@ -130,7 +133,7 @@ export async function scanClaudeCode(opts: ScanOptions): Promise<RawSession[]> {
     for (const file of entries) {
       if (!file.endsWith(".jsonl")) continue;
       const path = join(projDir, file);
-      const session = scanSessionFile(path, opts, (text) => parseClaudeSession(text, decodeProjectDir(dir), path));
+      const session = scanSessionFile(path, opts, (text) => parseClaudeSession(text, decodeProjectDir(dir), path, clip));
       if (session) out.push(session);
     }
   }

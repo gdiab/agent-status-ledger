@@ -13,3 +13,4 @@ CLAUDE.md
 # beads issue data lives in the private backup repo (gdiab/asl-issues), not here
 .beads/issues.jsonl
 .beads/dolt-backup*.json
+.beads/interactions.jsonl
