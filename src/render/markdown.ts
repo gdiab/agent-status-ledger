@@ -3,8 +3,10 @@ import { rollupLine } from "./rollup";
 import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 
 // Names come from workdir basenames and platform labels; escape markdown
-// emphasis/link chars so a name like my_project can't open a formatting span.
-const mdEscape = (s: string) => s.replace(/([\\_*[\]])/g, "\\$1");
+// emphasis/link/code chars so a name like my_project or a`b can't open a
+// formatting span. Narrower than the blurb escaper below by design: names are
+// filesystem-derived, not LLM output, and md injection is accepted for v0.
+const mdEscape = (s: string) => s.replace(/([\\_*[\]`])/g, "\\$1");
 
 function agentSection(a: AgentReport): string {
   // The blurb is LLM output: collapse whitespace so it stays one lead line,

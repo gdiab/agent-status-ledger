@@ -16,6 +16,57 @@ function lastOf(events: AgentEvent[], type: AgentEvent["type"]): AgentEvent | un
   return undefined;
 }
 
+const TERMINAL_EVENT_TYPES = new Set(["completed", "failed", "blocked", "approval_requested"]);
+
+// The newest session's own reading of the profile, or undefined to defer to
+// the historical chain. A completed/artifact event anywhere in the profile's
+// history must not mask the *newest* session's own state: if it is still open
+// (no terminal event) and has produced no artifact of its own, it reports on
+// its own timeline — recent events → active, long quiet → silent or idle. In
+// the in-between range we defer, so an older completion still reads completed.
+//
+// Arbitration exceptions, in order:
+// - Any open session that went dark mid-work keeps the profile silent — a
+//   newer abandoned chat must not mask an older stuck one.
+// - Delivered work beats an abandoned chat's idle reading: with in-window
+//   artifacts or attributed commits we defer to the historical chain
+//   (completed) instead of underreporting a profile that shipped (asl-290).
+//   A claimed-only `completed` event deliberately does not qualify —
+//   delivery is evidence, a claim is not.
+function newestOpenReading(
+  profile: AgentProfile,
+  attributed: CommitEvidence[],
+  hasArtifact: boolean,
+  now: Date,
+  t: Thresholds,
+): Status | undefined {
+  const newest = profile.sessions.reduce<(typeof profile.sessions)[number] | undefined>(
+    (max, s) => (!max || s.startedAt > max.startedAt ? s : max),
+    undefined,
+  );
+  if (newest === undefined) return undefined;
+  if (newest.events.some((e) => TERMINAL_EVENT_TYPES.has(e.type))) return undefined;
+  const hasCurrentArtifact =
+    attributed.some((c) => Date.parse(c.authorDate) >= Date.parse(newest.startedAt)) ||
+    newest.events.some((e) => e.type === "artifact_created");
+  if (hasCurrentArtifact) return undefined;
+
+  const idleMs = now.getTime() - Date.parse(newest.lastEventAt);
+  if (idleMs <= t.activeWindowHours * HOUR_MS) return "active";
+  if (idleMs < t.silentThresholdHours * HOUR_MS) return undefined;
+
+  // An interactive session the human simply walked away from is a diary
+  // entry, not an alarm; only an agent that went quiet mid-work is silent.
+  const anyStuckOpen = profile.sessions.some(
+    (s) =>
+      !s.events.some((e) => TERMINAL_EVENT_TYPES.has(e.type)) &&
+      now.getTime() - Date.parse(s.lastEventAt) >= t.silentThresholdHours * HOUR_MS &&
+      s.awaitingUser !== true,
+  );
+  if (anyStuckOpen) return "silent";
+  return hasArtifact ? undefined : "idle";
+}
+
 export function inferStatus(
   profile: AgentProfile,
   commits: CommitEvidence[],
@@ -34,44 +85,7 @@ export function inferStatus(
   const attributed = commits.filter((c) => c.attributed);
   const hasArtifact = events.some((e) => e.type === "artifact_created") || attributed.length > 0;
 
-  // A completed/artifact event anywhere in the profile's history must not mask the
-  // *newest* session's own state. Find the newest session (by startedAt); if it is
-  // still open (no terminal event of its own) and has produced no artifact of its
-  // own (no attributed commit since it started, no artifact_created event), report
-  // it on its own timeline: recent events → active, long quiet → silent. In the
-  // in-between (idle-ish) range we fall through to the historical chain, where an
-  // older completion still reads as completed.
-  const TERMINAL_EVENT_TYPES = new Set(["completed", "failed", "blocked", "approval_requested"]);
-  const newest = profile.sessions.reduce<(typeof profile.sessions)[number] | undefined>(
-    (max, s) => (!max || s.startedAt > max.startedAt ? s : max),
-    undefined,
-  );
-  const open = newest !== undefined && !newest.events.some((e) => TERMINAL_EVENT_TYPES.has(e.type));
-  const hasCurrentArtifact =
-    newest !== undefined &&
-    (attributed.some((c) => Date.parse(c.authorDate) >= Date.parse(newest.startedAt)) ||
-      newest.events.some((e) => e.type === "artifact_created"));
-  let newestOpenStatus: Status | undefined;
-  if (newest !== undefined && open && !hasCurrentArtifact) {
-    const idleMs = now.getTime() - Date.parse(newest.lastEventAt);
-    if (idleMs <= t.activeWindowHours * HOUR_MS) newestOpenStatus = "active";
-    // An interactive session the human simply walked away from is a diary
-    // entry, not an alarm; only an agent that went quiet mid-work is silent.
-    else if (idleMs >= t.silentThresholdHours * HOUR_MS) {
-      // Any open session that went dark mid-conversation keeps the profile
-      // silent — a newer abandoned chat must not mask an older stuck one.
-      const anyStuckOpen = profile.sessions.some(
-        (s) =>
-          !s.events.some((e) => TERMINAL_EVENT_TYPES.has(e.type)) &&
-          now.getTime() - Date.parse(s.lastEventAt) >= t.silentThresholdHours * HOUR_MS &&
-          s.awaitingUser !== true,
-      );
-      // Delivered work beats an abandoned chat's idle reading: with in-window
-      // artifacts, fall through to the historical chain (completed) instead of
-      // underreporting a profile that shipped (asl-290).
-      newestOpenStatus = anyStuckOpen ? "silent" : hasArtifact ? undefined : "idle";
-    }
-  }
+  const newestOpenStatus = newestOpenReading(profile, attributed, hasArtifact, now, t);
 
   let status: Status;
   if (after(approval, completed)) status = "needs_human";
