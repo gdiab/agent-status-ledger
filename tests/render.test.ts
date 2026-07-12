@@ -226,6 +226,41 @@ describe("renderers", () => {
     expect(html).not.toContain("details.card");
   });
 
+  // Extract a single CSS rule body from the rendered <style> block.
+  function cssRule(html: string, selector: string): string {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const m = html.match(new RegExp(`^${escaped} \\{([^}]*)\\}`, "m"));
+    if (!m) throw new Error(`no CSS rule for selector: ${selector}`);
+    return m[1]!;
+  }
+
+  test("html: cards layout CSS breaks long unbroken tokens inside cards and exceptions", () => {
+    const html = renderHtml(report);
+    expect(cssRule(html, ".card")).toContain("overflow-wrap: anywhere");
+    expect(cssRule(html, ".exceptions")).toContain("overflow-wrap: anywhere");
+  });
+
+  test("html: flat layout CSS breaks long unbroken tokens inside cards and exceptions", () => {
+    const html = renderHtml(report, { layout: "flat" });
+    expect(cssRule(html, ".card")).toContain("overflow-wrap: anywhere");
+    expect(cssRule(html, ".exceptions")).toContain("overflow-wrap: anywhere");
+  });
+
+  test("html: dl grid column clamps min-content so long dd tokens cannot widen the card", () => {
+    for (const layout of ["cards", "flat"] as const) {
+      expect(cssRule(renderHtml(report, { layout }), "dl")).toContain("8rem minmax(0, 1fr)");
+    }
+  });
+
+  test("html: flat card header wraps badges under long display names", () => {
+    const header = cssRule(renderHtml(report, { layout: "flat" }), ".card header");
+    expect(header).toContain("flex-wrap: wrap");
+    // row-gap must come AFTER the gap shorthand — gap resets row-gap, so the
+    // reverse order silently loses the tighter wrap spacing.
+    expect(header.indexOf("row-gap: .25rem")).toBeGreaterThan(header.indexOf("gap: .6rem"));
+    expect(header).toContain("row-gap: .25rem");
+  });
+
   test("html: standup blurb is escaped", () => {
     const a = agent({ narrative: { ...agent({}).narrative, standup: "I <b>bolded</b> things." } });
     const html = renderHtml({ ...report, agents: [a] });
