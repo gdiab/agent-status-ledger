@@ -44,6 +44,20 @@ describe("renderers", () => {
     expect(md).toContain("Evidence: proven");
   });
 
+  test("markdown: names with markdown metacharacters are escaped in heading, exceptions, and trivial-profiles line", () => {
+    const nasty = agent({ displayName: "my_project [wip] *hot* `tick (codex)", status: "needs_human", severity: "warning" });
+    const md = renderMarkdown({
+      ...report,
+      agents: [nasty],
+      exceptions: [nasty],
+      trivialProfiles: ["under_score (claude-code)"],
+    });
+    expect(md).toContain("### my\\_project \\[wip\\] \\*hot\\* \\`tick (codex)");
+    expect(md).toContain("- **my\\_project \\[wip\\] \\*hot\\* \\`tick (codex)** —");
+    expect(md).toContain("under\\_score (claude-code)");
+    expect(md).not.toContain("### my_project");
+  });
+
   test("markdown: unattributed commits shown as labeled repo context", () => {
     const a = agent({
       commits: [
