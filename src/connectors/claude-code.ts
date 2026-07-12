@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentEvent, RawSession, ScanOptions } from "../types";
+import { isBenignToolError } from "./benign";
 import { firstLine, jsonlEntries, scanSessionFile, withContext } from "./jsonl";
 import { redact } from "../redact";
 import { toUtcIso } from "../time";
@@ -82,6 +83,7 @@ export function parseClaudeSession(text: string, fallbackCwd: string, path?: str
               // as withContext's 80-char context slice.
               const body = redact(typeof item.content === "string" ? item.content : JSON.stringify(item.content ?? ""), redactPatterns);
               const tool = typeof item.tool_use_id === "string" ? toolUses.get(item.tool_use_id) : undefined;
+              if (isBenignToolError(tool?.name ?? "", tool?.input, body)) continue;
               lastErrorLine = tool ? withContext(firstLine(body), tool.name, tool.input, redactPatterns) : firstLine(body);
               errors.push(lastErrorLine);
               endedOnError = true;
