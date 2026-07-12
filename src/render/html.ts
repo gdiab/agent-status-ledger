@@ -111,9 +111,12 @@ function rollupChips(report: Report): string {
 function standupCard(a: AgentReport): string {
   // Exception-severity detail must be visible without interaction (and in
   // print), so warning/urgent cards start open.
+  // The name is a styled span with an explicit heading role, not an <h3>:
+  // browsers strip heading semantics inside <summary>, and keeping the badges
+  // outside the heading element keeps tooltip text out of its accessible name.
   return `<details class="card"${severityEdge(a)}${a.severity === "info" ? "" : " open"}>
   <summary>
-    <h3>${esc(a.displayName)} ${badges(a)}</h3>
+    <span class="name" role="heading" aria-level="3">${esc(a.displayName)}</span> ${badges(a)}
     <span class="standup">${esc(a.narrative.standup)}</span>
   </summary>
   <div class="detail">
@@ -145,6 +148,7 @@ export function renderHtml(report: Report, opts: { layout?: HtmlLayout } = {}): 
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); gap: 1rem; align-items: start; }
 .group { font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; opacity: .7; margin: 1.25rem 0 .5rem; }
 .cards .card { margin: 0; }
+.cards .name { font-size: 1.1rem; font-weight: 600; }
 .cards dl { grid-template-columns: 6rem minmax(0, 1fr); }
 .cards dt { font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; }
 details.card > summary { cursor: pointer; list-style: none; position: relative; padding-right: 1.5rem; }
@@ -170,6 +174,7 @@ h1 { font-size: 1.5rem; } h3 { margin: 0; font-size: 1.1rem; }
 .card header { display: flex; flex-wrap: wrap; gap: .6rem; row-gap: .25rem; align-items: center; margin-bottom: .5rem; }
 .badge { color: #fff; border-radius: 999px; padding: .1rem .6rem; font-size: .75rem; }
 .evidence { opacity: .6; font-size: .75rem; }
+.badge[title], .evidence[title] { text-decoration: underline dotted; text-underline-offset: .15em; cursor: help; }
 dl { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: .25rem .75rem; margin: .5rem 0; }
 dt { font-weight: 600; opacity: .75; } dd { margin: 0; }
 .filler { grid-column: 1 / -1; opacity: .5; }
@@ -183,13 +188,13 @@ code { font-size: .85em; }
 <h1>Agent Standup — ${esc(day)}</h1>
 <p class="window" title="${esc(report.windowStart)} → ${esc(report.windowEnd)}">${esc(fmtUtc(report.windowStart))} → ${esc(fmtUtc(report.windowEnd))} UTC</p>
 ${rollupChips(report)}
-<section class="exceptions"><h2>Exceptions</h2><ul>${exceptions}</ul></section>
-${agentsSection}
 <details class="legend"><summary>Legend</summary>
 <h4>Statuses</h4><ul>${(Object.entries(STATUS_HELP)).map(([k, v]) => `<li><strong>${esc(k)}</strong> — ${esc(v)}</li>`).join("")}</ul>
 <h4>Severity</h4><ul>${(Object.entries(SEVERITY_HELP)).map(([k, v]) => `<li><strong>${esc(k)}</strong> — ${esc(v)}</li>`).join("")}</ul>
 <h4>Evidence</h4><ul>${(Object.entries(EVIDENCE_HELP)).map(([k, v]) => `<li><strong>${esc(k.replace("_", " "))}</strong> — ${esc(v)}</li>`).join("")}</ul>
 </details>
+<section class="exceptions"><h2>Exceptions</h2><ul>${exceptions}</ul></section>
+${agentsSection}
 ${report.trivialProfiles?.length ? `<p class="window">Ignored ${report.trivialProfiles.length} trivial profile${report.trivialProfiles.length === 1 ? "" : "s"} (minimal activity, nothing produced): ${esc(report.trivialProfiles.join(", "))}</p>` : ""}
 <footer class="window" title="${esc(report.generatedAt)}">Generated ${esc(fmtUtc(report.generatedAt))} UTC · schema v${report.schemaVersion}</footer>
 </body>

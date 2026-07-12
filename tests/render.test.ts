@@ -185,6 +185,39 @@ describe("renderers", () => {
     expect(html).toContain(`title="${EVIDENCE_HELP.claimed_only}"`);
   });
 
+  test("html: card name is a heading exposed inside summary, badges outside it", () => {
+    const html = renderHtml({ ...report, agents: [agent({})] });
+    expect(html).toContain('<span class="name" role="heading" aria-level="3">w (claude-code)</span>');
+    const cardStart = html.indexOf('<details class="card"');
+    const summary = html.slice(html.indexOf("<summary>", cardStart), html.indexOf("</summary>", cardStart));
+    expect(summary).not.toContain("<h3>");
+    // badge tooltip text must not pollute the heading's accessible name
+    const heading = summary.slice(summary.indexOf('role="heading"'), summary.indexOf("</span>"));
+    expect(heading).not.toContain("badge");
+  });
+
+  test("html: flat layout keeps real h3 headings, no role attributes", () => {
+    const flat = renderHtml(report, { layout: "flat" });
+    expect(flat).toContain("<h3>w (claude-code)</h3>");
+    expect(flat).not.toContain('role="heading"');
+  });
+
+  test("html: legend sits directly under the rollup chips, above exceptions", () => {
+    for (const layout of ["cards", "flat"] as const) {
+      const html = renderHtml(report, { layout });
+      const legend = html.indexOf('<details class="legend">');
+      expect(legend).toBeGreaterThan(html.indexOf('class="rollup"'));
+      expect(legend).toBeLessThan(html.indexOf("<h2>Exceptions</h2>"));
+    }
+  });
+
+  test("html: badges carry a discoverable abbr-like help affordance", () => {
+    const rule = cssRule(renderHtml(report), ".badge[title], .evidence[title]");
+    expect(rule).toContain("underline");
+    expect(rule).toContain("dotted");
+    expect(rule).toContain("cursor: help");
+  });
+
   test("html: collapsed legend lists every status", () => {
     const html = renderHtml(report);
     expect(html).toContain("<details class=\"legend\">");
@@ -230,10 +263,11 @@ describe("renderers", () => {
     expect(html).not.toContain('<article class="card"');
     expect(html).toContain(".cards {");
     // summary (card front) carries the blurb; full detail is behind it
-    const summary = html.slice(html.indexOf("<summary>"), html.indexOf("</summary>"));
+    const cardStart = html.indexOf('<details class="card"');
+    const summary = html.slice(html.indexOf("<summary>", cardStart), html.indexOf("</summary>", cardStart));
     expect(summary).toContain("I fixed the login bug and committed the fix.");
     expect(summary).toContain("w (claude-code)");
-    const card = html.slice(html.indexOf('<details class="card"'), html.indexOf("</details>"));
+    const card = html.slice(cardStart, html.indexOf("</details>", cardStart));
     expect(card).toContain("<dt>Worked on</dt>");
   });
 
