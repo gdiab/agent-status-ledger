@@ -4,6 +4,7 @@ import { renderMarkdown } from "../src/render/markdown";
 import { renderJson } from "../src/render/json";
 import { renderHtml } from "../src/render/html";
 import { STATUS_HELP, EVIDENCE_HELP } from "../src/render/legend";
+import { FILLER_BLOCKED, FILLER_COMPLETED, FILLER_IN_PROGRESS, FILLER_RECOMMENDATION } from "../src/narrative";
 import { redact } from "../src/redact";
 
 function agent(over: Partial<AgentReport>): AgentReport {
@@ -122,8 +123,28 @@ describe("renderers", () => {
 
   test("html: rollup appears before exceptions", () => {
     const html = renderHtml(report);
-    expect(html).toContain("2 agents: 1 needs_human, 1 completed");
+    expect(html).toContain("2 agents:");
     expect(html.indexOf("2 agents:")).toBeLessThan(html.indexOf("Exceptions"));
+  });
+
+  test("html: rollup renders counts as status chips reusing badge styling", () => {
+    const html = renderHtml(report);
+    const start = html.indexOf('<p class="rollup">');
+    const rollup = html.slice(start, html.indexOf("</p>", start));
+    expect(rollup).toContain("2 agents:");
+    expect(rollup).toContain('class="badge"');
+    expect(rollup).toContain("1 needs_human");
+    expect(rollup).toContain("1 completed");
+    // worst-first, same order as the markdown rollup line
+    expect(rollup.indexOf("1 needs_human")).toBeLessThan(rollup.indexOf("1 completed"));
+    expect(rollup).toContain("2 commits");
+    expect(rollup).toContain("1 file touched"); // both fixtures touch the same file
+  });
+
+  test("html: empty report rolls up to a plain sentence, no chips", () => {
+    const html = renderHtml({ ...report, exceptions: [], agents: [] });
+    expect(html).toContain("No agent activity in this window.");
+    expect(html).not.toContain('class="badge"');
   });
 
   test("json: round-trips with schemaVersion", () => {
@@ -162,6 +183,39 @@ describe("renderers", () => {
     const html = renderHtml(report);
     expect(html).toContain(`title="${STATUS_HELP.needs_human}"`);
     expect(html).toContain(`title="${EVIDENCE_HELP.claimed_only}"`);
+  });
+
+  test("html: card name is a heading exposed inside summary, badges outside it", () => {
+    const html = renderHtml({ ...report, agents: [agent({})] });
+    expect(html).toContain('<span class="name" role="heading" aria-level="3">w (claude-code)</span>');
+    const cardStart = html.indexOf('<details class="card"');
+    const summary = html.slice(html.indexOf("<summary>", cardStart), html.indexOf("</summary>", cardStart));
+    expect(summary).not.toContain("<h3>");
+    // badge tooltip text must not pollute the heading's accessible name
+    const heading = summary.slice(summary.indexOf('role="heading"'), summary.indexOf("</span>"));
+    expect(heading).not.toContain("badge");
+  });
+
+  test("html: flat layout keeps real h3 headings, no role attributes", () => {
+    const flat = renderHtml(report, { layout: "flat" });
+    expect(flat).toContain("<h3>w (claude-code)</h3>");
+    expect(flat).not.toContain('role="heading"');
+  });
+
+  test("html: legend sits directly under the rollup chips, above exceptions", () => {
+    for (const layout of ["cards", "flat"] as const) {
+      const html = renderHtml(report, { layout });
+      const legend = html.indexOf('<details class="legend">');
+      expect(legend).toBeGreaterThan(html.indexOf('class="rollup"'));
+      expect(legend).toBeLessThan(html.indexOf("<h2>Exceptions</h2>"));
+    }
+  });
+
+  test("html: badges carry a discoverable abbr-like help affordance", () => {
+    const rule = cssRule(renderHtml(report), ".badge[title], .evidence[title]");
+    expect(rule).toContain("underline");
+    expect(rule).toContain("dotted");
+    expect(rule).toContain("cursor: help");
   });
 
   test("html: collapsed legend lists every status", () => {
@@ -205,21 +259,54 @@ describe("renderers", () => {
   test("html: default layout renders details/summary standup cards in a grid", () => {
     const html = renderHtml({ ...report, agents: [agent({})] });
     expect(html).toContain('<div class="cards">');
-    expect(html).toContain('<details class="card">');
-    expect(html).not.toContain('<article class="card">');
+    expect(html).toContain('<details class="card"');
+    expect(html).not.toContain('<article class="card"');
     expect(html).toContain(".cards {");
     // summary (card front) carries the blurb; full detail is behind it
-    const summary = html.slice(html.indexOf("<summary>"), html.indexOf("</summary>"));
+    const cardStart = html.indexOf('<details class="card"');
+    const summary = html.slice(html.indexOf("<summary>", cardStart), html.indexOf("</summary>", cardStart));
     expect(summary).toContain("I fixed the login bug and committed the fix.");
     expect(summary).toContain("w (claude-code)");
-    const card = html.slice(html.indexOf('<details class="card">'), html.indexOf("</details>"));
+    const card = html.slice(cardStart, html.indexOf("</details>", cardStart));
     expect(card).toContain("<dt>Worked on</dt>");
+  });
+
+  test("html: every card carries a severity-colored left edge in both layouts", () => {
+    for (const layout of ["cards", "flat"] as const) {
+      const html = renderHtml(report, { layout });
+      expect(html).toContain("border-left: 3px solid #8a6d00"); // warning card
+      expect(html).toContain("border-left: 3px solid #2d7a46"); // info card
+    }
+  });
+
+  test("html: cards layout splits needs-attention from FYI when both exist", () => {
+    const html = renderHtml(report); // one warning agent, one info agent
+    expect(html).toContain("Needs attention");
+    expect(html).toContain("FYI");
+    expect(html.indexOf("Needs attention")).toBeLessThan(html.indexOf("FYI"));
+    expect(html.match(/<div class="cards">/g)?.length).toBe(2);
+  });
+
+  test("html: no triage group labels when only one kind exists", () => {
+    const allInfo = renderHtml({ ...report, exceptions: [], agents: [agent({})] });
+    expect(allInfo).not.toContain("Needs attention");
+    expect(allInfo).not.toContain("FYI");
+    const allWarn = renderHtml({ ...report, agents: [blocked] });
+    expect(allWarn).not.toContain("Needs attention");
+    expect(allWarn).not.toContain("FYI");
+  });
+
+  test("html: flat layout keeps the severity edge but no triage grouping", () => {
+    const flat = renderHtml(report, { layout: "flat" });
+    expect(flat).toContain("border-left: 3px solid");
+    expect(flat).not.toContain("Needs attention");
+    expect(flat).not.toContain("FYI");
   });
 
   test("html: --layout flat renders the legacy article cards, no collapsible agents", () => {
     const html = renderHtml(report, { layout: "flat" });
-    expect(html).toContain('<article class="card">');
-    expect(html).not.toContain('<details class="card">');
+    expect(html).toContain('<article class="card"');
+    expect(html).not.toContain('<details class="card"');
     expect(html).toContain("<dt>Worked on</dt>");
     expect(html).toContain('<details class="legend">'); // legend stays collapsible
     expect(html).not.toContain(".cards {");
@@ -252,6 +339,58 @@ describe("renderers", () => {
     }
   });
 
+  test("html: cards layout summary shows a chevron affordance and hover cue", () => {
+    const html = renderHtml(report);
+    expect(cssRule(html, "details.card > summary::after")).toContain('"▸"');
+    expect(cssRule(html, "details.card[open] > summary::after")).toContain('"▾"');
+    expect(cssRule(html, "details.card > summary:hover")).toContain("background: #8881");
+  });
+
+  test("html: warning badge gold and error red meet AA contrast", () => {
+    const html = renderHtml(report);
+    expect(html).toContain("background:#8a6d00");
+    expect(html).not.toContain("#b8860b");
+    expect(cssRule(html, ".errors li")).toContain("light-dark(#c0392b, #e07b6c)");
+  });
+
+  test("html: cards layout narrows dl labels to 6rem uppercase; flat keeps 8rem", () => {
+    const html = renderHtml(report);
+    expect(cssRule(html, ".cards dl")).toContain("6rem minmax(0, 1fr)");
+    const dt = cssRule(html, ".cards dt");
+    expect(dt).toContain("font-size: .8rem");
+    expect(dt).toContain("text-transform: uppercase");
+    expect(renderHtml(report, { layout: "flat" })).not.toContain(".cards dl");
+  });
+
+  test("html: body max-width admits a third card column on wide screens", () => {
+    expect(cssRule(renderHtml(report), "body")).toContain("max-width: 80rem");
+  });
+
+  test("html: window and footer timestamps are human-readable UTC, full ISO in title", () => {
+    const html = renderHtml(report);
+    expect(html).toContain("Jul 7, 07:00 → Jul 8, 07:00 UTC");
+    expect(html).toContain('title="2026-07-07T07:00:00.000Z → 2026-07-08T07:00:00.000Z"');
+    expect(html).toContain("Generated Jul 8, 07:00 UTC");
+    expect(html).toContain('title="2026-07-08T07:00:00.000Z"');
+    // raw ISO strings live only in title attributes, never as visible text
+    expect(html).not.toContain(">2026-07-07T07:00:00.000Z");
+  });
+
+  test("html: standup blurb is upright with a quote-bar, not italic", () => {
+    const standup = cssRule(renderHtml(report), "details.card .standup");
+    expect(standup).not.toContain("italic");
+    expect(standup).toContain("border-left: 2px solid #8884");
+    expect(standup).toContain("opacity: .85");
+  });
+
+  test("html: exception-severity cards render open; info cards stay collapsed", () => {
+    const html = renderHtml(report); // one info agent, one warning agent
+    const open = html.match(/<details class="card"[^>]*\bopen\b/g) ?? [];
+    const all = html.match(/<details class="card"/g) ?? [];
+    expect(all.length).toBe(2);
+    expect(open.length).toBe(1);
+  });
+
   test("html: flat card header wraps badges under long display names", () => {
     const header = cssRule(renderHtml(report, { layout: "flat" }), ".card header");
     expect(header).toContain("flex-wrap: wrap");
@@ -259,6 +398,110 @@ describe("renderers", () => {
     // reverse order silently loses the tighter wrap spacing.
     expect(header.indexOf("row-gap: .25rem")).toBeGreaterThan(header.indexOf("gap: .6rem"));
     expect(header).toContain("row-gap: .25rem");
+  });
+
+  // A quiet, claimed-only agent: no commits, files, or errors, and every
+  // collapsible narrative field is the exact template filler.
+  function quietAgent(): AgentReport {
+    return agent({
+      evidence: "claimed_only",
+      facts: { ...agent({}).facts, filesTouched: [], errors: [], commits: [] },
+      commits: [],
+      narrative: {
+        workedOn: "1 session: untitled work.",
+        completed: FILLER_COMPLETED,
+        inProgress: FILLER_IN_PROGRESS,
+        blocked: FILLER_BLOCKED,
+        recommendation: FILLER_RECOMMENDATION,
+        standup: "I worked on untitled work across 1 session. Nothing is blocking me.",
+      },
+    });
+  }
+
+  test("html: fully quiet card collapses filler rows into one dimmed line", () => {
+    for (const layout of ["cards", "flat"] as const) {
+      const html = renderHtml({ ...report, exceptions: [], agents: [quietAgent()] }, { layout });
+      expect(html).toContain("Nothing completed, in progress, or blocked.");
+      expect(html).toContain("<dt>Worked on</dt>");
+      expect(html).not.toContain("<dt>Completed</dt>");
+      expect(html).not.toContain("<dt>In progress</dt>");
+      expect(html).not.toContain("<dt>Blocked</dt>");
+      expect(html).not.toContain("<dt>Next</dt>");
+      expect(cssRule(html, ".filler")).toContain("opacity: .5");
+    }
+  });
+
+  test("html: partially quiet card skips only its template filler rows", () => {
+    const a = agent({ narrative: { ...agent({}).narrative, inProgress: FILLER_IN_PROGRESS, blocked: FILLER_BLOCKED } });
+    const html = renderHtml({ ...report, exceptions: [], agents: [a] });
+    expect(html).toContain("<dt>Completed</dt>"); // backed by a real commit
+    expect(html).toContain("<dt>Next</dt>");
+    expect(html).not.toContain("<dt>In progress</dt>");
+    expect(html).not.toContain("<dt>Blocked</dt>");
+    expect(html).not.toContain("Nothing completed, in progress, or blocked");
+  });
+
+  test("html: LLM narrative text renders even when backing facts are empty", () => {
+    const a = agent({
+      facts: { ...agent({}).facts, filesTouched: [], errors: [], commits: [] },
+      commits: [],
+      narrative: {
+        ...agent({}).narrative,
+        completed: "Wrapped up the refactor cleanly.",
+        inProgress: "Reviewing edge cases.",
+        blocked: "Waiting on CI quota.",
+      },
+    });
+    const html = renderHtml({ ...report, exceptions: [], agents: [a] });
+    expect(html).toContain("<dt>Completed</dt>");
+    expect(html).toContain("Wrapped up the refactor cleanly.");
+    expect(html).toContain("<dt>Blocked</dt>");
+    expect(html).not.toContain("Nothing completed, in progress, or blocked");
+  });
+
+  test("html: filler-shaped text with non-empty backing facts still renders", () => {
+    const a = agent({
+      narrative: { ...agent({}).narrative, completed: FILLER_COMPLETED, blocked: FILLER_BLOCKED },
+      facts: { ...agent({}).facts, errors: ["boom — something bad"] },
+    });
+    const html = renderHtml({ ...report, exceptions: [], agents: [a] });
+    expect(html).toContain("<dt>Completed</dt>"); // facts.commits is non-empty
+    expect(html).toContain("<dt>Blocked</dt>"); // facts.errors is non-empty
+  });
+
+  test("html: error lines split reason from tool payload at the withContext marker", () => {
+    const a = agent({ facts: { ...agent({}).facts, errors: ["exit code 143 — while Bash: rm -rf <dir>"] } });
+    const html = renderHtml({ ...report, exceptions: [], agents: [a] });
+    expect(html).toContain('<li>exit code 143<code class="error-ctx">Bash: rm -rf &lt;dir&gt;</code></li>');
+    expect(html).not.toContain(" — while Bash");
+    const rule = cssRule(html, ".errors li > code");
+    expect(rule).toContain("display: block");
+    expect(rule).toContain("overflow-x: auto");
+    expect(rule).toContain("white-space: pre-wrap");
+    expect(rule).toContain("font-size: .75rem");
+    expect(rule).toContain("opacity: .8");
+  });
+
+  test("html: error lines without the marker render as before, escaped", () => {
+    const a = agent({ facts: { ...agent({}).facts, errors: ["plain <error> line"] } });
+    const html = renderHtml({ ...report, exceptions: [], agents: [a] });
+    expect(html).toContain("<li>plain &lt;error&gt; line</li>");
+    expect(html).not.toContain("error-ctx");
+  });
+
+  test("html: file paths dim the directory prefix so the basename pops", () => {
+    const a = agent({ facts: { ...agent({}).facts, filesTouched: ["/w/src/deep/login.ts", "README.md"] } });
+    const html = renderHtml({ ...report, exceptions: [], agents: [a] });
+    expect(html).toContain('<code><span class="dir">/w/src/deep/</span>login.ts</code>');
+    expect(html).toContain("<code>README.md</code>"); // no dir → no wrapper
+    expect(cssRule(html, ".dir")).toContain("opacity: .6");
+  });
+
+  test("html: dimmed file paths stay escaped", () => {
+    const a = agent({ facts: { ...agent({}).facts, filesTouched: ["/w/<x>/e&.ts"] } });
+    const html = renderHtml({ ...report, exceptions: [], agents: [a] });
+    expect(html).toContain('<span class="dir">/w/&lt;x&gt;/</span>e&amp;.ts');
+    expect(html).not.toContain("<x>");
   });
 
   test("html: standup blurb is escaped", () => {

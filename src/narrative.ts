@@ -28,6 +28,15 @@ export function buildFactSheet(profile: AgentProfile, commits: CommitEvidence[])
   };
 }
 
+// Exact filler strings templateNarrative emits when a field has nothing to
+// say. Renderers that collapse no-content rows must anchor to these constants
+// (combined with empty backing facts), never free-text matching — LLM
+// narratives vary and must never be sniffed.
+export const FILLER_COMPLETED = "No durable artifacts detected.";
+export const FILLER_IN_PROGRESS = "Nothing in progress.";
+export const FILLER_BLOCKED = "No blockers detected.";
+export const FILLER_RECOMMENDATION = "No action needed.";
+
 export function templateNarrative(f: FactSheet, status: Status): Narrative {
   const sessions = `${f.sessionCount} session${f.sessionCount === 1 ? "" : "s"}`;
   const topics = f.titles.length ? f.titles.join("; ") : "untitled work";
@@ -39,10 +48,10 @@ export function templateNarrative(f: FactSheet, status: Status): Narrative {
     (voice ? ` ${voice.standup}` : " Nothing is blocking me.");
   return {
     workedOn: `${sessions}: ${topics}.`,
-    completed: f.commits.length ? `Commits: ${f.commits.join("; ")}.` : "No durable artifacts detected.",
-    inProgress: status === "active" || status === "idle" ? `Last activity ${f.lastActivity}.` : "Nothing in progress.",
-    blocked: f.errors.length ? `Errors seen: ${f.errors.join("; ")}.` : "No blockers detected.",
-    recommendation: voice?.recommendation ?? (f.commits.length ? "Review the commits." : "No action needed."),
+    completed: f.commits.length ? `Commits: ${f.commits.join("; ")}.` : FILLER_COMPLETED,
+    inProgress: status === "active" || status === "idle" ? `Last activity ${f.lastActivity}.` : FILLER_IN_PROGRESS,
+    blocked: f.errors.length ? `Errors seen: ${f.errors.join("; ")}.` : FILLER_BLOCKED,
+    recommendation: voice?.recommendation ?? (f.commits.length ? "Review the commits." : FILLER_RECOMMENDATION),
     standup,
   };
 }
