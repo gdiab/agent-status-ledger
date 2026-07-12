@@ -4,6 +4,7 @@ import { renderMarkdown } from "../src/render/markdown";
 import { renderJson } from "../src/render/json";
 import { renderHtml } from "../src/render/html";
 import { STATUS_HELP, EVIDENCE_HELP } from "../src/render/legend";
+import { FILLER_BLOCKED, FILLER_COMPLETED, FILLER_IN_PROGRESS, FILLER_RECOMMENDATION } from "../src/narrative";
 import { redact } from "../src/redact";
 
 function agent(over: Partial<AgentReport>): AgentReport {
@@ -363,6 +364,75 @@ describe("renderers", () => {
     // reverse order silently loses the tighter wrap spacing.
     expect(header.indexOf("row-gap: .25rem")).toBeGreaterThan(header.indexOf("gap: .6rem"));
     expect(header).toContain("row-gap: .25rem");
+  });
+
+  // A quiet, claimed-only agent: no commits, files, or errors, and every
+  // collapsible narrative field is the exact template filler.
+  function quietAgent(): AgentReport {
+    return agent({
+      evidence: "claimed_only",
+      facts: { ...agent({}).facts, filesTouched: [], errors: [], commits: [] },
+      commits: [],
+      narrative: {
+        workedOn: "1 session: untitled work.",
+        completed: FILLER_COMPLETED,
+        inProgress: FILLER_IN_PROGRESS,
+        blocked: FILLER_BLOCKED,
+        recommendation: FILLER_RECOMMENDATION,
+        standup: "I worked on untitled work across 1 session. Nothing is blocking me.",
+      },
+    });
+  }
+
+  test("html: fully quiet card collapses filler rows into one dimmed line", () => {
+    for (const layout of ["cards", "flat"] as const) {
+      const html = renderHtml({ ...report, exceptions: [], agents: [quietAgent()] }, { layout });
+      expect(html).toContain("Nothing completed, in progress, or blocked.");
+      expect(html).toContain("<dt>Worked on</dt>");
+      expect(html).not.toContain("<dt>Completed</dt>");
+      expect(html).not.toContain("<dt>In progress</dt>");
+      expect(html).not.toContain("<dt>Blocked</dt>");
+      expect(html).not.toContain("<dt>Next</dt>");
+      expect(cssRule(html, ".filler")).toContain("opacity: .5");
+    }
+  });
+
+  test("html: partially quiet card skips only its template filler rows", () => {
+    const a = agent({ narrative: { ...agent({}).narrative, inProgress: FILLER_IN_PROGRESS, blocked: FILLER_BLOCKED } });
+    const html = renderHtml({ ...report, exceptions: [], agents: [a] });
+    expect(html).toContain("<dt>Completed</dt>"); // backed by a real commit
+    expect(html).toContain("<dt>Next</dt>");
+    expect(html).not.toContain("<dt>In progress</dt>");
+    expect(html).not.toContain("<dt>Blocked</dt>");
+    expect(html).not.toContain("Nothing completed, in progress, or blocked");
+  });
+
+  test("html: LLM narrative text renders even when backing facts are empty", () => {
+    const a = agent({
+      facts: { ...agent({}).facts, filesTouched: [], errors: [], commits: [] },
+      commits: [],
+      narrative: {
+        ...agent({}).narrative,
+        completed: "Wrapped up the refactor cleanly.",
+        inProgress: "Reviewing edge cases.",
+        blocked: "Waiting on CI quota.",
+      },
+    });
+    const html = renderHtml({ ...report, exceptions: [], agents: [a] });
+    expect(html).toContain("<dt>Completed</dt>");
+    expect(html).toContain("Wrapped up the refactor cleanly.");
+    expect(html).toContain("<dt>Blocked</dt>");
+    expect(html).not.toContain("Nothing completed, in progress, or blocked");
+  });
+
+  test("html: filler-shaped text with non-empty backing facts still renders", () => {
+    const a = agent({
+      narrative: { ...agent({}).narrative, completed: FILLER_COMPLETED, blocked: FILLER_BLOCKED },
+      facts: { ...agent({}).facts, errors: ["boom — something bad"] },
+    });
+    const html = renderHtml({ ...report, exceptions: [], agents: [a] });
+    expect(html).toContain("<dt>Completed</dt>"); // facts.commits is non-empty
+    expect(html).toContain("<dt>Blocked</dt>"); // facts.errors is non-empty
   });
 
   test("html: standup blurb is escaped", () => {

@@ -2,6 +2,7 @@ import type { AgentReport, Report } from "../types";
 import { plural, rollupCounts, rollupLine } from "./rollup";
 import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 import { STATUS_SEVERITY } from "../status";
+import { FILLER_BLOCKED, FILLER_COMPLETED, FILLER_IN_PROGRESS, FILLER_RECOMMENDATION } from "../narrative";
 
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -40,12 +41,28 @@ function cardBody(a: AgentReport): string {
     .map((c) => `<li><code>${esc(c.sha.slice(0, 7))}</code> ${esc(c.subject)}</li>`).join("");
   const files = a.facts.filesTouched.map((f) => `<li><code>${esc(f)}</code></li>`).join("");
   const errors = a.facts.errors.map((e) => `<li>${esc(e)}</li>`).join("");
+  // A row collapses only when its backing facts are empty AND the narrative
+  // is the exact template filler — LLM text is never sniffed, so a model's
+  // own phrasing always renders even over empty facts.
+  const fillerCompleted = a.facts.commits.length === 0 && a.narrative.completed === FILLER_COMPLETED;
+  const fillerInProgress = a.narrative.inProgress === FILLER_IN_PROGRESS;
+  const fillerBlocked = a.facts.errors.length === 0 && a.narrative.blocked === FILLER_BLOCKED;
+  const fillerNext = a.facts.commits.length === 0 && a.facts.errors.length === 0
+    && a.narrative.recommendation === FILLER_RECOMMENDATION;
+  const allFiller = fillerCompleted && fillerInProgress && fillerBlocked;
+  const rows = [
+    `<dt>Worked on</dt><dd>${esc(a.narrative.workedOn)}</dd>`,
+    ...(allFiller
+      ? [`<dd class="filler">Nothing completed, in progress, or blocked.</dd>`]
+      : [
+          ...(fillerCompleted ? [] : [`<dt>Completed</dt><dd>${esc(a.narrative.completed)}</dd>`]),
+          ...(fillerInProgress ? [] : [`<dt>In progress</dt><dd>${esc(a.narrative.inProgress)}</dd>`]),
+          ...(fillerBlocked ? [] : [`<dt>Blocked</dt><dd>${esc(a.narrative.blocked)}</dd>`]),
+        ]),
+    ...(fillerNext ? [] : [`<dt>Next</dt><dd>${esc(a.narrative.recommendation)}</dd>`]),
+  ];
   return `<dl>
-    <dt>Worked on</dt><dd>${esc(a.narrative.workedOn)}</dd>
-    <dt>Completed</dt><dd>${esc(a.narrative.completed)}</dd>
-    <dt>In progress</dt><dd>${esc(a.narrative.inProgress)}</dd>
-    <dt>Blocked</dt><dd>${esc(a.narrative.blocked)}</dd>
-    <dt>Next</dt><dd>${esc(a.narrative.recommendation)}</dd>
+    ${rows.join("\n    ")}
   </dl>
   ${commits ? `<h4>Commits</h4><ul>${commits}</ul>` : ""}
   ${unattributed ? `<details><summary>Other repo commits (not attributed to this agent)</summary><ul>${unattributed}</ul></details>` : ""}
@@ -143,6 +160,7 @@ h1 { font-size: 1.5rem; } h3 { margin: 0; font-size: 1.1rem; }
 .evidence { opacity: .6; font-size: .75rem; }
 dl { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: .25rem .75rem; margin: .5rem 0; }
 dt { font-weight: 600; opacity: .75; } dd { margin: 0; }
+.filler { grid-column: 1 / -1; opacity: .5; }
 .errors li { color: ${ERROR_RED}; }
 code { font-size: .85em; }
 .legend { opacity: .8; font-size: .85rem; margin: 1.5rem 0; }${cardCss}
