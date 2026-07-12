@@ -2,6 +2,15 @@ import type { AgentEvent, AgentProfile, CommitEvidence, EvidenceLevel, Severity,
 
 const HOUR_MS = 3600_000;
 
+// Severity is a pure function of status. Exported so renderers can color
+// per-status UI (rollup chips) without re-deriving the mapping; exhaustive by
+// construction — a new Status without a severity is a compile error.
+export const STATUS_SEVERITY: Record<Status, Severity> = {
+  failed: "urgent", silent: "urgent",
+  blocked: "warning", needs_human: "warning",
+  active: "info", idle: "info", completed: "info",
+};
+
 function lastOf(events: AgentEvent[], type: AgentEvent["type"]): AgentEvent | undefined {
   for (let i = events.length - 1; i >= 0; i--) if (events[i]!.type === type) return events[i];
   return undefined;
@@ -74,10 +83,7 @@ export function inferStatus(
     else status = "idle";
   }
 
-  const severity: Severity =
-    status === "failed" || status === "silent" ? "urgent"
-    : status === "blocked" || status === "needs_human" ? "warning"
-    : "info";
+  const severity: Severity = STATUS_SEVERITY[status];
 
   const evidence: EvidenceLevel = hasArtifact
     ? "proven"

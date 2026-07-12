@@ -7,8 +7,17 @@ const STATUS_RANK: Record<Status, number> = {
 };
 const STATUS_ORDER = (Object.keys(STATUS_RANK) as Status[]).sort((a, b) => STATUS_RANK[a] - STATUS_RANK[b]);
 
-export function rollupLine(report: Report): string {
-  if (report.agents.length === 0) return "No agent activity in this window.";
+export interface RollupCounts {
+  agents: number;
+  byStatus: { status: Status; count: number }[]; // worst-first, zero statuses omitted
+  commits: number;
+  files: number;
+}
+
+export const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+// Counts only — renderers own presentation (markdown prose, HTML chips).
+export function rollupCounts(report: Report): RollupCounts {
   const counts = new Map<Status, number>();
   let commits = 0;
   const files = new Set<string>();
@@ -17,9 +26,17 @@ export function rollupLine(report: Report): string {
     commits += a.commits.filter((c) => c.attributed).length;
     for (const f of a.facts.filesTouched) files.add(f);
   }
-  const n = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
-  const byStatus = STATUS_ORDER.filter((s) => counts.has(s))
-    .map((s) => `${counts.get(s)} ${s}`)
-    .join(", ");
-  return `${n(report.agents.length, "agent")}: ${byStatus} — ${n(commits, "commit")}, ${n(files.size, "file")} touched`;
+  return {
+    agents: report.agents.length,
+    byStatus: STATUS_ORDER.filter((s) => counts.has(s)).map((s) => ({ status: s, count: counts.get(s)! })),
+    commits,
+    files: files.size,
+  };
+}
+
+export function rollupLine(report: Report): string {
+  if (report.agents.length === 0) return "No agent activity in this window.";
+  const c = rollupCounts(report);
+  const byStatus = c.byStatus.map(({ status, count }) => `${count} ${status}`).join(", ");
+  return `${plural(c.agents, "agent")}: ${byStatus} — ${plural(c.commits, "commit")}, ${plural(c.files, "file")} touched`;
 }

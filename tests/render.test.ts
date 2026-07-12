@@ -122,8 +122,28 @@ describe("renderers", () => {
 
   test("html: rollup appears before exceptions", () => {
     const html = renderHtml(report);
-    expect(html).toContain("2 agents: 1 needs_human, 1 completed");
+    expect(html).toContain("2 agents:");
     expect(html.indexOf("2 agents:")).toBeLessThan(html.indexOf("Exceptions"));
+  });
+
+  test("html: rollup renders counts as status chips reusing badge styling", () => {
+    const html = renderHtml(report);
+    const start = html.indexOf('<p class="rollup">');
+    const rollup = html.slice(start, html.indexOf("</p>", start));
+    expect(rollup).toContain("2 agents:");
+    expect(rollup).toContain('class="badge"');
+    expect(rollup).toContain("1 needs_human");
+    expect(rollup).toContain("1 completed");
+    // worst-first, same order as the markdown rollup line
+    expect(rollup.indexOf("1 needs_human")).toBeLessThan(rollup.indexOf("1 completed"));
+    expect(rollup).toContain("2 commits");
+    expect(rollup).toContain("1 file touched"); // both fixtures touch the same file
+  });
+
+  test("html: empty report rolls up to a plain sentence, no chips", () => {
+    const html = renderHtml({ ...report, exceptions: [], agents: [] });
+    expect(html).toContain("No agent activity in this window.");
+    expect(html).not.toContain('class="badge"');
   });
 
   test("json: round-trips with schemaVersion", () => {
@@ -250,6 +270,58 @@ describe("renderers", () => {
     for (const layout of ["cards", "flat"] as const) {
       expect(cssRule(renderHtml(report, { layout }), "dl")).toContain("8rem minmax(0, 1fr)");
     }
+  });
+
+  test("html: cards layout summary shows a chevron affordance and hover cue", () => {
+    const html = renderHtml(report);
+    expect(cssRule(html, "details.card > summary::after")).toContain('"▸"');
+    expect(cssRule(html, "details.card[open] > summary::after")).toContain('"▾"');
+    expect(cssRule(html, "details.card > summary:hover")).toContain("background: #8881");
+  });
+
+  test("html: warning badge gold and error red meet AA contrast", () => {
+    const html = renderHtml(report);
+    expect(html).toContain("background:#8a6d00");
+    expect(html).not.toContain("#b8860b");
+    expect(cssRule(html, ".errors li")).toContain("light-dark(#c0392b, #e07b6c)");
+  });
+
+  test("html: cards layout narrows dl labels to 6rem uppercase; flat keeps 8rem", () => {
+    const html = renderHtml(report);
+    expect(cssRule(html, ".cards dl")).toContain("6rem minmax(0, 1fr)");
+    const dt = cssRule(html, ".cards dt");
+    expect(dt).toContain("font-size: .8rem");
+    expect(dt).toContain("text-transform: uppercase");
+    expect(renderHtml(report, { layout: "flat" })).not.toContain(".cards dl");
+  });
+
+  test("html: body max-width admits a third card column on wide screens", () => {
+    expect(cssRule(renderHtml(report), "body")).toContain("max-width: 80rem");
+  });
+
+  test("html: window and footer timestamps are human-readable UTC, full ISO in title", () => {
+    const html = renderHtml(report);
+    expect(html).toContain("Jul 7, 07:00 → Jul 8, 07:00 UTC");
+    expect(html).toContain('title="2026-07-07T07:00:00.000Z → 2026-07-08T07:00:00.000Z"');
+    expect(html).toContain("Generated Jul 8, 07:00 UTC");
+    expect(html).toContain('title="2026-07-08T07:00:00.000Z"');
+    // raw ISO strings live only in title attributes, never as visible text
+    expect(html).not.toContain(">2026-07-07T07:00:00.000Z");
+  });
+
+  test("html: standup blurb is upright with a quote-bar, not italic", () => {
+    const standup = cssRule(renderHtml(report), "details.card .standup");
+    expect(standup).not.toContain("italic");
+    expect(standup).toContain("border-left: 2px solid #8884");
+    expect(standup).toContain("opacity: .85");
+  });
+
+  test("html: exception-severity cards render open; info cards stay collapsed", () => {
+    const html = renderHtml(report); // one info agent, one warning agent
+    const open = html.match(/<details class="card"[^>]*\bopen\b/g) ?? [];
+    const all = html.match(/<details class="card"/g) ?? [];
+    expect(all.length).toBe(2);
+    expect(open.length).toBe(1);
   });
 
   test("html: flat card header wraps badges under long display names", () => {
