@@ -10,9 +10,10 @@ CHROME_PROFILE="Default" # Chrome profile directory, not display name
 
 # Run from a snapshot of main, never from the working tree: the checkout may
 # sit on any branch overnight (asl-91o — a report once silently ran stale v0.2
-# code). Fetch is best-effort so an offline morning still reports from the
-# local main; origin/main wins when available because PRs merge on GitHub.
-git -C "$REPO" fetch --quiet origin main || true
+# code). Fetch all refs (a bare `fetch origin main` may only update FETCH_HEAD
+# on some configs); best-effort so an offline morning still reports from the
+# local main. origin/main wins when available because PRs merge on GitHub.
+git -C "$REPO" fetch --quiet origin || true
 REF="main"
 if git -C "$REPO" rev-parse --verify --quiet refs/remotes/origin/main >/dev/null; then
   REF="origin/main"
@@ -21,12 +22,13 @@ fi
 SNAPSHOT="$(mktemp -d)"
 trap 'rm -rf "$SNAPSHOT"' EXIT
 git -C "$REPO" archive "$REF" | tar -x -C "$SNAPSHOT"
-# Single runtime dep — reuse the checkout's install rather than hitting the
-# network at 7:30. If main's lockfile ever diverges from the checkout's, bun
-# fails loudly (module not found) instead of silently running wrong code.
-ln -s "$REPO/node_modules" "$SNAPSHOT/node_modules"
 
 cd "$SNAPSHOT"
+# Install against the snapshot's own lockfile — fails loudly on any drift and
+# is served from bun's local cache in the steady state (offline-safe after the
+# first run). A symlink to the checkout's node_modules could silently run
+# version-drifted deps.
+"$BUN" install --frozen-lockfile --silent
 "$BUN" run src/cli.ts report --out "$REPO/reports"
 
 DAY="$(date +%F)"

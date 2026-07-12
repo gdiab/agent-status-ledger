@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseClaudeSession, scanClaudeCode } from "../src/connectors/claude-code";
+import { makeClip } from "../src/connectors/jsonl";
 
 const completed = readFileSync("fixtures/claude-code/session-completed.jsonl", "utf8");
 const errored = readFileSync("fixtures/claude-code/session-error.jsonl", "utf8");
@@ -59,7 +60,7 @@ describe("parseClaudeSession", () => {
 
   describe("user redactPatterns run before truncation (asl-f4k)", () => {
     const line = (o: unknown) => JSON.stringify(o);
-    const patterns = ["CORPSECRET_[A-Z_]+"];
+    const clip = makeClip(["CORPSECRET_[A-Z_]+"]);
     const secret = "CORPSECRET_" + "Z".repeat(60);
 
     test("tool input: pattern secret straddling the 80-char context slice never leaks a prefix", () => {
@@ -67,7 +68,7 @@ describe("parseClaudeSession", () => {
         line({ sessionId: "s", type: "assistant", timestamp: "2026-07-07T10:00:00Z", message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: `${"x".repeat(40)} ${secret}` } }] } }),
         line({ sessionId: "s", type: "user", timestamp: "2026-07-07T10:00:30Z", message: { content: [{ type: "tool_result", tool_use_id: "t1", is_error: true, content: "exit code 143" }] } }),
       ].join("\n");
-      const s = parseClaudeSession(text, "/w", undefined, patterns)!;
+      const s = parseClaudeSession(text, "/w", undefined, clip)!;
       expect(s.errors[0]).toContain("[REDACTED]");
       expect(s.errors[0]).not.toContain("CORPSECRET");
     });
@@ -75,7 +76,7 @@ describe("parseClaudeSession", () => {
     test("error body: pattern secret straddling the 200-char first-line slice never leaks a prefix", () => {
       const body = `${"y".repeat(150)} ${secret} trailing`;
       const text = line({ sessionId: "s", type: "user", timestamp: "2026-07-07T10:00:30Z", message: { content: [{ type: "tool_result", tool_use_id: "missing", is_error: true, content: body }] } });
-      const s = parseClaudeSession(text, "/w", undefined, patterns)!;
+      const s = parseClaudeSession(text, "/w", undefined, clip)!;
       expect(s.errors[0]).toContain("[REDACTED]");
       expect(s.errors[0]).not.toContain("CORPSECRET");
     });
@@ -180,16 +181,16 @@ describe("scanClaudeCode", () => {
     utimesSync(join(proj, "a.jsonl"), d, d);
     writeFileSync(join(proj, "skip.txt"), "ignore me");
     const now = new Date("2026-07-08T09:00:00.000Z");
-    const sessions = await scanClaudeCode({ since: new Date(now.getTime() - 86_400_000), now, rootDir: root });
+    const sessions = await scanClaudeCode({ since: new Date(now.getTime() - 86_400_000), now, rootDir: root , redactPatterns: [] });
     expect(sessions.length).toBe(1);
     expect(sessions[0]!.cwd).toBe("/work/demo");
     // out-of-window: since in the future relative to file mtimes
-    const none = await scanClaudeCode({ since: new Date(now.getTime() + 86_400_000), now, rootDir: root });
+    const none = await scanClaudeCode({ since: new Date(now.getTime() + 86_400_000), now, rootDir: root , redactPatterns: [] });
     expect(none.length).toBe(0);
   });
 
   test("missing rootDir returns empty, does not throw", async () => {
-    const sessions = await scanClaudeCode({ since: new Date(), now: new Date(), rootDir: "/nope/nothing" });
+    const sessions = await scanClaudeCode({ since: new Date(), now: new Date(), rootDir: "/nope/nothing" , redactPatterns: [] });
     expect(sessions).toEqual([]);
   });
 });

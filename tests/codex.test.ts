@@ -3,6 +3,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, utimesSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseCodexSession, scanCodex } from "../src/connectors/codex";
+import { makeClip } from "../src/connectors/jsonl";
 
 const completed = readFileSync("fixtures/codex/rollout-completed.jsonl", "utf8");
 const approval = readFileSync("fixtures/codex/rollout-approval.jsonl", "utf8");
@@ -45,7 +46,7 @@ describe("parseCodexSession", () => {
 
   describe("user redactPatterns run before truncation (asl-f4k)", () => {
     const line = (o: unknown) => JSON.stringify(o);
-    const patterns = ["CORPSECRET_[A-Z_]+"];
+    const clip = makeClip(["CORPSECRET_[A-Z_]+"]);
     const secret = "CORPSECRET_" + "Z".repeat(60);
     const meta = line({ type: "session_meta", timestamp: "2026-07-07T10:00:00Z", payload: { id: "c1", cwd: "/w" } });
 
@@ -54,7 +55,7 @@ describe("parseCodexSession", () => {
         meta,
         line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "error", message: `${"m".repeat(150)} ${secret} trailing` } }),
       ].join("\n");
-      const s = parseCodexSession(text, new Map(), undefined, patterns)!;
+      const s = parseCodexSession(text, new Map(), undefined, clip)!;
       expect(s.errors[0]).toContain("[REDACTED]");
       expect(s.errors[0]).not.toContain("CORPSECRET");
     });
@@ -65,7 +66,7 @@ describe("parseCodexSession", () => {
         line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "exec_command_begin", command: `${"x".repeat(60)} ${secret}` } }),
         line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "error", message: "build failed" } }),
       ].join("\n");
-      const s = parseCodexSession(text, new Map(), undefined, patterns)!;
+      const s = parseCodexSession(text, new Map(), undefined, clip)!;
       expect(s.errors[0]).toContain("[REDACTED]");
       expect(s.errors[0]).not.toContain("CORPSECRET");
     });
@@ -171,12 +172,12 @@ describe("scanCodex", () => {
     utimesSync(filePath, d, d);
     cpSync("fixtures/codex/session_index.jsonl", join(root, "session_index.jsonl"));
     const now = new Date("2026-07-08T09:00:00.000Z");
-    const sessions = await scanCodex({ since: new Date(now.getTime() - 86_400_000), now, rootDir: root });
+    const sessions = await scanCodex({ since: new Date(now.getTime() - 86_400_000), now, rootDir: root , redactPatterns: [] });
     expect(sessions.length).toBe(1);
     expect(sessions[0]!.title).toBe("Write launch blog post");
   });
 
   test("missing rootDir returns empty", async () => {
-    expect(await scanCodex({ since: new Date(), now: new Date(), rootDir: "/nope" })).toEqual([]);
+    expect(await scanCodex({ since: new Date(), now: new Date(), rootDir: "/nope" , redactPatterns: [] })).toEqual([]);
   });
 });

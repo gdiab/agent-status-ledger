@@ -3,24 +3,32 @@
 // — all healthy exploration. Reporting these as errors inflates the Blocked
 // narrative and can flip a productive session to failed (asl-4h6). Rules are
 // grounded in a 5-day sample of real is_error results (116 seen, 87 distinct).
+//
+// The bias is deliberate: fail toward alerting. A benign error we miss is one
+// noisy narrative line; a real failure we swallow is a missed morning alert.
+// So only unambiguous shapes are benign — anything compound or uncertain
+// stays an error.
 
 // Commands whose exit 1 conventionally means "nothing found", not "it broke".
-const SEARCHY = new Set(["grep", "rg", "find", "ls", "fd", "which", "test", "[", "stat", "diff", "cmp"]);
+const SEARCHY = new Set(["grep", "rg", "find", "ls", "fd", "which", "test", "[", "stat", "diff", "cmp", "cat", "head", "tail"]);
 
-// Exit-1 bodies that say "the thing you looked for isn't there".
-const NOT_FOUND = /No such file or directory|no matches found/i;
+// Anything that chains or substitutes commands makes the failing segment
+// ambiguous ("bun test && rg TODO" exits 1 from the tests, not rg) — never
+// benign. Pipes are fine: a pipeline's exit status is its last command's.
+const COMPOUND = /&&|\|\||;|\n|\$\(|`/;
 
-// First word of each command position in a (possibly compound) shell string —
-// "cd x && grep -rn foo | head" → cd, grep, head. Matching anywhere in the
-// string would misfire on arguments ("bun test" is not the test builtin).
-function commandWords(command: string): string[] {
-  return command
-    .split(/\|\||&&|;|\||\n|\$\(/)
-    .map((seg) => seg.trim().split(/\s+/, 1)[0] ?? "")
-    .filter(Boolean);
+export interface ToolUse {
+  name: string;
+  input: unknown;
 }
 
-export function isBenignToolError(toolName: string, input: unknown, body: string): boolean {
+function bashCommand(input: unknown): string {
+  if (typeof input !== "object" || input === null) return "";
+  const c = (input as { command?: unknown }).command;
+  return typeof c === "string" ? c : "";
+}
+
+export function isBenignToolError(tool: ToolUse | undefined, body: string): boolean {
   const b = body.trimStart();
   // Interactive steering: the human declined this call and the session moved on.
   if (b.startsWith("The user doesn't want to proceed")) return true;
@@ -28,11 +36,12 @@ export function isBenignToolError(toolName: string, input: unknown, body: string
   // self-corrected on the next turn, never a work blocker.
   if (b.startsWith("<tool_use_error>")) return true;
   // Exploratory read of a file that isn't there.
-  if (toolName === "Read" && b.startsWith("File does not exist")) return true;
-  if (toolName === "Bash" && /^Exit code 1\b/.test(b)) {
-    if (NOT_FOUND.test(b)) return true;
-    const command = typeof (input as any)?.command === "string" ? (input as any).command : "";
-    if (commandWords(command).some((w) => SEARCHY.has(w))) return true;
+  if (tool?.name === "Read" && b.startsWith("File does not exist")) return true;
+  if (tool?.name === "Bash" && /^Exit code 1\b/.test(b)) {
+    const command = bashCommand(tool.input);
+    if (!command || COMPOUND.test(command)) return false;
+    const words = command.split("|").map((seg) => seg.trim().split(/\s+/, 1)[0] ?? "");
+    return words.every((w) => SEARCHY.has(w));
   }
   return false;
 }
