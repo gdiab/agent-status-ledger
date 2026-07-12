@@ -53,8 +53,14 @@ function cardBody(a: AgentReport): string {
   ${errors ? `<h4>Errors</h4><ul class="errors">${errors}</ul>` : ""}`;
 }
 
+// A 3px severity-colored left edge on every card: scannable "who needs me"
+// signal without reading each badge. Inline style, same mechanism as badges.
+function severityEdge(a: AgentReport): string {
+  return ` style="border-left: 3px solid ${SEVERITY_COLOR[a.severity]}"`;
+}
+
 function flatCard(a: AgentReport): string {
-  return `<article class="card">
+  return `<article class="card"${severityEdge(a)}>
   <header>
     <h3>${esc(a.displayName)}</h3>
     ${badges(a)}
@@ -76,7 +82,7 @@ function rollupChips(report: Report): string {
 function standupCard(a: AgentReport): string {
   // Exception-severity detail must be visible without interaction (and in
   // print), so warning/urgent cards start open.
-  return `<details class="card"${a.severity === "info" ? "" : " open"}>
+  return `<details class="card"${severityEdge(a)}${a.severity === "info" ? "" : " open"}>
   <summary>
     <h3>${esc(a.displayName)} ${badges(a)}</h3>
     <span class="standup">${esc(a.narrative.standup)}</span>
@@ -94,12 +100,21 @@ export function renderHtml(report: Report, opts: { layout?: HtmlLayout } = {}): 
     ? report.exceptions.map((a) =>
         `<li><strong>${esc(a.displayName)}</strong> — ${esc(a.status)}: ${esc(a.narrative.recommendation)}</li>`).join("")
     : "<li>No exceptions — nothing needs you.</li>";
+  // Agents are already sorted exceptions-first; labeled sections make the
+  // split explicit, but only when both kinds exist — a homogeneous morning
+  // needs no triage headers.
+  const grid = (agents: AgentReport[]) => `<div class="cards">${agents.map(standupCard).join("\n")}</div>`;
+  const attention = report.agents.filter((a) => a.severity !== "info");
+  const fyi = report.agents.filter((a) => a.severity === "info");
   const agentCards = layout === "cards"
-    ? `<div class="cards">${report.agents.map(standupCard).join("\n")}</div>`
+    ? (attention.length && fyi.length
+        ? `<h3 class="group">Needs attention</h3>${grid(attention)}<h3 class="group">FYI</h3>${grid(fyi)}`
+        : grid(report.agents))
     : report.agents.map(flatCard).join("\n");
   const agentsSection = `<section><h2>All agents</h2>${agentCards}</section>`;
   const cardCss = layout === "cards" ? `
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); gap: 1rem; align-items: start; }
+.group { font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; opacity: .7; margin: 1.25rem 0 .5rem; }
 .cards .card { margin: 0; }
 .cards dl { grid-template-columns: 6rem minmax(0, 1fr); }
 .cards dt { font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; }

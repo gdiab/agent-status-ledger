@@ -225,21 +225,53 @@ describe("renderers", () => {
   test("html: default layout renders details/summary standup cards in a grid", () => {
     const html = renderHtml({ ...report, agents: [agent({})] });
     expect(html).toContain('<div class="cards">');
-    expect(html).toContain('<details class="card">');
-    expect(html).not.toContain('<article class="card">');
+    expect(html).toContain('<details class="card"');
+    expect(html).not.toContain('<article class="card"');
     expect(html).toContain(".cards {");
     // summary (card front) carries the blurb; full detail is behind it
     const summary = html.slice(html.indexOf("<summary>"), html.indexOf("</summary>"));
     expect(summary).toContain("I fixed the login bug and committed the fix.");
     expect(summary).toContain("w (claude-code)");
-    const card = html.slice(html.indexOf('<details class="card">'), html.indexOf("</details>"));
+    const card = html.slice(html.indexOf('<details class="card"'), html.indexOf("</details>"));
     expect(card).toContain("<dt>Worked on</dt>");
+  });
+
+  test("html: every card carries a severity-colored left edge in both layouts", () => {
+    for (const layout of ["cards", "flat"] as const) {
+      const html = renderHtml(report, { layout });
+      expect(html).toContain("border-left: 3px solid #8a6d00"); // warning card
+      expect(html).toContain("border-left: 3px solid #2d7a46"); // info card
+    }
+  });
+
+  test("html: cards layout splits needs-attention from FYI when both exist", () => {
+    const html = renderHtml(report); // one warning agent, one info agent
+    expect(html).toContain("Needs attention");
+    expect(html).toContain("FYI");
+    expect(html.indexOf("Needs attention")).toBeLessThan(html.indexOf("FYI"));
+    expect(html.match(/<div class="cards">/g)?.length).toBe(2);
+  });
+
+  test("html: no triage group labels when only one kind exists", () => {
+    const allInfo = renderHtml({ ...report, exceptions: [], agents: [agent({})] });
+    expect(allInfo).not.toContain("Needs attention");
+    expect(allInfo).not.toContain("FYI");
+    const allWarn = renderHtml({ ...report, agents: [blocked] });
+    expect(allWarn).not.toContain("Needs attention");
+    expect(allWarn).not.toContain("FYI");
+  });
+
+  test("html: flat layout keeps the severity edge but no triage grouping", () => {
+    const flat = renderHtml(report, { layout: "flat" });
+    expect(flat).toContain("border-left: 3px solid");
+    expect(flat).not.toContain("Needs attention");
+    expect(flat).not.toContain("FYI");
   });
 
   test("html: --layout flat renders the legacy article cards, no collapsible agents", () => {
     const html = renderHtml(report, { layout: "flat" });
-    expect(html).toContain('<article class="card">');
-    expect(html).not.toContain('<details class="card">');
+    expect(html).toContain('<article class="card"');
+    expect(html).not.toContain('<details class="card"');
     expect(html).toContain("<dt>Worked on</dt>");
     expect(html).toContain('<details class="legend">'); // legend stays collapsible
     expect(html).not.toContain(".cards {");
