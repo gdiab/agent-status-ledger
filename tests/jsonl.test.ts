@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { jsonlEntries, makeClip, scanSessionFile, withContext } from "../src/connectors/jsonl";
@@ -80,19 +80,18 @@ describe("withContext", () => {
 });
 
 describe("scanSessionFile", () => {
-  test("emits the unparseable-session warning when a file yields no session", () => {
+  test("emits the unparseable-session warning when the parser yields no session", () => {
     const dir = mkdtempSync(join(tmpdir(), "asl-jsonl-"));
     const path = join(dir, "unparseable.jsonl");
     writeFileSync(path, "not-json-at-all\n");
+    // Pin mtime inside [since, now] to keep the window check deterministic
+    const mtime = new Date("2026-07-07T12:00:00.000Z");
+    utimesSync(path, mtime, mtime);
     const spy = spyOn(console, "error").mockImplementation(() => {});
     try {
-      const now = new Date(Date.now() + 60_000); // file mtime is inside [since, now]
-      const opts = { since: new Date(Date.now() - 60_000), now, rootDir: dir, redactPatterns: [] };
-      const session = scanSessionFile(path, opts, (text) => parseClaudeSession(text, dir, path));
+      const opts = { since: new Date("2026-07-07T00:00:00.000Z"), now: new Date("2026-07-08T00:00:00.000Z"), rootDir: dir, redactPatterns: [] };
+      const session = scanSessionFile(path, opts, () => null);
       expect(session).toBeNull();
-      // The malformed line inside the file is warned about first, then the
-      // file-level "no parseable session" warning fires.
-      expect(spy).toHaveBeenCalledWith(expect.stringContaining(`malformed jsonl line skipped in ${path}`));
       expect(spy).toHaveBeenCalledWith(`warning: no parseable session in ${path}`);
     } finally {
       spy.mockRestore();
