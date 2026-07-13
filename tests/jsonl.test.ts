@@ -1,5 +1,8 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { jsonlEntries, makeClip, withContext } from "../src/connectors/jsonl";
+import { mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { jsonlEntries, makeClip, scanSessionFile, withContext } from "../src/connectors/jsonl";
 import { parseClaudeSession } from "../src/connectors/claude-code";
 
 describe("jsonlEntries", () => {
@@ -54,6 +57,11 @@ describe("withContext", () => {
     expect(withContext("boom", "Bash", undefined)).toBe("boom — while Bash");
   });
 
+  test("degenerate non-empty input like {} keeps the colon segment with the serialized form", () => {
+    expect(withContext("boom", "Bash", {})).toBe("boom — while Bash: {}");
+    expect(withContext("boom", "Bash", [])).toBe("boom — while Bash: []");
+  });
+
   test("redacts a secret before truncation even when it straddles the 80-char boundary", () => {
     const padding = "x".repeat(50);
     const token = "ghp_" + "A".repeat(36);
@@ -68,6 +76,26 @@ describe("withContext", () => {
     const out = withContext("boom", "Bash", `${padding} ${secret}`, makeClip(["CORPSECRET_[A-Z_]+"]));
     expect(out).toContain("[REDACTED]");
     expect(out).not.toContain("CORPSECRET");
+  });
+});
+
+describe("scanSessionFile", () => {
+  test("emits the unparseable-session warning when the parser yields no session", () => {
+    const dir = mkdtempSync(join(tmpdir(), "asl-jsonl-"));
+    const path = join(dir, "unparseable.jsonl");
+    writeFileSync(path, "not-json-at-all\n");
+    // Pin mtime inside [since, now] to keep the window check deterministic
+    const mtime = new Date("2026-07-07T12:00:00.000Z");
+    utimesSync(path, mtime, mtime);
+    const spy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const opts = { since: new Date("2026-07-07T00:00:00.000Z"), now: new Date("2026-07-08T00:00:00.000Z"), rootDir: dir, redactPatterns: [] };
+      const session = scanSessionFile(path, opts, () => null);
+      expect(session).toBeNull();
+      expect(spy).toHaveBeenCalledWith(`warning: no parseable session in ${path}`);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
