@@ -8,8 +8,8 @@ export interface ResolvedKey {
   source: string;
 }
 
-const SERVICE = "anthropic-api-key";
-const ACCOUNT = "asl";
+export const KEYCHAIN_SERVICE = "anthropic-api-key";
+export const KEYCHAIN_ACCOUNT = "asl";
 
 export function resolveApiKey(
   env: Record<string, string | undefined>,
@@ -18,8 +18,8 @@ export function resolveApiKey(
   const candidates: Array<[() => string | null | undefined, string]> = [
     [() => env.ASL_ANTHROPIC_API_KEY, "ASL_ANTHROPIC_API_KEY env var"],
     [() => env.ANTHROPIC_API_KEY, "ANTHROPIC_API_KEY env var"],
-    [() => keychain(SERVICE, ACCOUNT), `keychain ${SERVICE} (account: ${ACCOUNT})`],
-    [() => keychain(SERVICE), `keychain ${SERVICE} (any account)`],
+    [() => keychain(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT), `keychain ${KEYCHAIN_SERVICE} (account: ${KEYCHAIN_ACCOUNT})`],
+    [() => keychain(KEYCHAIN_SERVICE), `keychain ${KEYCHAIN_SERVICE} (any account)`],
   ];
   for (const [get, source] of candidates) {
     const key = get()?.trim();

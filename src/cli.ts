@@ -2,15 +2,41 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { loadConfig } from "./config";
+import { configPath, loadConfig } from "./config";
 import { buildReport } from "./report";
 import { renderMarkdown } from "./render/markdown";
 import { renderJson } from "./render/json";
 import { renderHtml, HTML_LAYOUTS, type HtmlLayout } from "./render/html";
 import { redact } from "./redact";
 import { resolveApiKey, macKeychainLookup } from "./apikey";
+import { formatDoctorReport, runDoctor, type Exec } from "./doctor";
+import { homedir } from "node:os";
 
-const USAGE = `usage: asl report [--since 24h] [--open] [--no-llm] [--out DIR] [--layout ${HTML_LAYOUTS.join("|")}]`;
+const USAGE = `usage: asl report [--since 24h] [--open] [--no-llm] [--out DIR] [--layout ${HTML_LAYOUTS.join("|")}]
+       asl doctor`;
+
+function runDoctorCli(): never {
+  const exec: Exec = (argv) => {
+    try {
+      const proc = Bun.spawnSync(argv, { stderr: "ignore" });
+      return { ok: proc.exitCode === 0, stdout: proc.stdout.toString() };
+    } catch {
+      return { ok: false, stdout: "" };
+    }
+  };
+  const cfgPath = configPath();
+  const results = runDoctor({
+    env: process.env,
+    keychain: macKeychainLookup,
+    exec,
+    platform: process.platform,
+    home: homedir(),
+    configPath: cfgPath,
+    config: loadConfig(cfgPath),
+  });
+  console.log(formatDoctorReport(results));
+  process.exit(results.every((r) => r.ok) ? 0 : 1);
+}
 
 function parseSince(s: string, now: Date): Date {
   const m = /^(\d+)([hd])$/.exec(s);
@@ -41,6 +67,7 @@ function parseCliArgs() {
 
 async function main() {
   const { values, positionals } = parseCliArgs();
+  if (positionals[0] === "doctor") runDoctorCli();
   if (positionals[0] !== "report") {
     console.error(USAGE);
     process.exit(2);
