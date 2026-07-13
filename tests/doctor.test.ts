@@ -16,6 +16,7 @@ import {
   type Exec,
 } from "../src/doctor";
 import type { KeychainLookup } from "../src/apikey";
+import { defaultConfig } from "../src/config";
 
 const execOk =
   (stdout: string): Exec =>
@@ -50,10 +51,12 @@ describe("checkLaunchdBunPath", () => {
     expect(checkLaunchdBunPath(bunPath).ok).toBe(true);
   });
 
-  test("fails with a symlink fix when missing", () => {
-    const r = checkLaunchdBunPath(join(tempDir(), "nope", "bun"));
+  test("fails with a symlink fix when missing, with the path quoted", () => {
+    const bunPath = join(tempDir(), "nope", "bun");
+    const r = checkLaunchdBunPath(bunPath);
     expect(r.ok).toBe(false);
-    expect(r.fix).toContain("ln -s");
+    expect(r.fix).toContain("ln -sf");
+    expect(r.fix).toContain(`"${bunPath}"`);
   });
 });
 
@@ -110,21 +113,29 @@ describe("checkPlistLoaded", () => {
 describe("checkConnectorDir", () => {
   test("passes for an existing readable directory", () => {
     const dir = tempDir();
-    const r = checkConnectorDir("claude-code", { enabled: true, rootDir: dir });
+    const r = checkConnectorDir("claude-code", "claude_code", { enabled: true, rootDir: dir });
     expect(r.ok).toBe(true);
     expect(r.detail).toContain(dir);
   });
 
-  test("fails for a missing directory with a hint", () => {
-    const r = checkConnectorDir("codex", { enabled: true, rootDir: join(tempDir(), "gone") });
+  test("fails for a missing directory with the explicit toml key in the hint", () => {
+    const r = checkConnectorDir("claude-code", "claude_code", { enabled: true, rootDir: join(tempDir(), "gone") });
     expect(r.ok).toBe(false);
-    expect(r.fix).toContain("root_dir");
+    expect(r.fix).toContain("connectors.claude_code.root_dir");
   });
 
   test("a disabled connector passes as skipped", () => {
-    const r = checkConnectorDir("codex", { enabled: false, rootDir: "/nope" });
+    const r = checkConnectorDir("codex", "codex", { enabled: false, rootDir: "/nope" });
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("disabled");
+  });
+
+  test("a probe dir different from root_dir is checked and reported", () => {
+    const root = tempDir(); // exists, but the probed subdir does not
+    const probe = join(root, "sessions");
+    const r = checkConnectorDir("codex", "codex", { enabled: true, rootDir: root }, probe);
+    expect(r.ok).toBe(false);
+    expect(r.detail).toContain(probe);
   });
 });
 
@@ -150,8 +161,13 @@ describe("checkConfigFile", () => {
   });
 });
 
+// Hermetic by construction: the injected config's connector roots live under
+// the fake home, so no check ever touches the developer's real machine.
 function fakeDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
   const home = tempDir();
+  const config = defaultConfig();
+  config.connectors.claudeCode.rootDir = join(home, ".claude", "projects");
+  config.connectors.codex.rootDir = join(home, ".codex");
   return {
     env: {},
     keychain: noKeychain,
@@ -159,6 +175,7 @@ function fakeDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
     platform: "darwin",
     home,
     configPath: join(home, "config.toml"),
+    config,
     ...overrides,
   };
 }
@@ -181,26 +198,44 @@ describe("runDoctor", () => {
     mkdirSync(join(home, "Library", "LaunchAgents"), { recursive: true });
     writeFileSync(join(home, "Library", "LaunchAgents", "com.gd.asl-report.plist"), "<plist/>");
     mkdirSync(join(home, ".claude", "projects"), { recursive: true });
-    mkdirSync(join(home, ".codex"), { recursive: true });
-    const configPath = join(home, "config.toml");
-    writeFileSync(
-      configPath,
-      [
-        "[connectors.claude_code]",
-        `root_dir = "${join(home, ".claude", "projects")}"`,
-        "[connectors.codex]",
-        `root_dir = "${join(home, ".codex")}"`,
-      ].join("\n"),
-    );
+    mkdirSync(join(home, ".codex", "sessions"), { recursive: true });
+    const config = defaultConfig();
+    config.connectors.claudeCode.rootDir = join(home, ".claude", "projects");
+    config.connectors.codex.rootDir = join(home, ".codex");
     const results = runDoctor(
       fakeDeps({
         home,
-        configPath,
+        config,
+        configPath: join(home, "config.toml"),
         env: { ANTHROPIC_API_KEY: "sk-x" },
         exec: execOk("1.2.3"),
       }),
     );
     expect(results.every((r) => r.ok)).toBe(true);
+  });
+
+  test("connector checks honor the injected config, not the real home", () => {
+    const home = tempDir();
+    const config = defaultConfig();
+    config.connectors.claudeCode.rootDir = join(home, "cc-logs");
+    config.connectors.codex.rootDir = join(home, "cx");
+    const results = runDoctor(fakeDeps({ home, config }));
+    const cc = results.find((r) => r.name === "claude-code logs")!;
+    expect(cc.ok).toBe(false);
+    expect(cc.detail).toContain(join(home, "cc-logs"));
+  });
+
+  test("codex logs check probes the sessions/ subdir the connector actually reads", () => {
+    const home = tempDir();
+    const config = defaultConfig();
+    config.connectors.claudeCode = { enabled: false, rootDir: "/unused" };
+    config.connectors.codex.rootDir = join(home, ".codex");
+    mkdirSync(join(home, ".codex"), { recursive: true }); // root exists, sessions/ missing
+    const before = runDoctor(fakeDeps({ home, config })).find((r) => r.name === "codex logs")!;
+    expect(before.ok).toBe(false);
+    mkdirSync(join(home, ".codex", "sessions"), { recursive: true });
+    const after = runDoctor(fakeDeps({ home, config })).find((r) => r.name === "codex logs")!;
+    expect(after.ok).toBe(true);
   });
 
   test("launchd checks are skipped off macOS", () => {

@@ -10,7 +10,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "smol-toml";
 import { KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, resolveApiKey, type KeychainLookup } from "./apikey";
-import { loadConfig, type ConnectorConfig } from "./config";
+import type { Config, ConnectorConfig } from "./config";
 
 export const LAUNCHD_LABEL = "com.gd.asl-report";
 
@@ -30,6 +30,7 @@ export interface DoctorDeps {
   platform: string;
   home: string;
   configPath: string;
+  config: Config;
 }
 
 export function checkBun(exec: Exec): CheckResult {
@@ -53,7 +54,7 @@ export function checkLaunchdBunPath(bunPath: string): CheckResult {
         name,
         ok: false,
         detail: `${bunPath} missing — the launchd job hardcodes this path`,
-        fix: `mkdir -p "$(dirname ${bunPath})" && ln -s "$(which bun)" ${bunPath}`,
+        fix: `mkdir -p "$(dirname "${bunPath}")" && ln -sf "$(which bun)" "${bunPath}"`,
       };
 }
 
@@ -95,18 +96,26 @@ export function checkPlistLoaded(exec: Exec, plistPath: string): CheckResult {
       };
 }
 
-export function checkConnectorDir(label: string, conn: ConnectorConfig): CheckResult {
+// probeDir is the directory the connector actually reads, when that differs
+// from root_dir (codex scans root_dir/sessions and silently returns nothing
+// without it — a green check on root_dir alone would hide exactly that).
+export function checkConnectorDir(
+  label: string,
+  tomlKey: string,
+  conn: ConnectorConfig,
+  probeDir: string = conn.rootDir,
+): CheckResult {
   const name = `${label} logs`;
   if (!conn.enabled) return { name, ok: true, detail: "disabled in config — skipped" };
   try {
-    readdirSync(conn.rootDir); // exists AND readable
-    return { name, ok: true, detail: conn.rootDir };
+    readdirSync(probeDir); // exists AND readable
+    return { name, ok: true, detail: probeDir };
   } catch (e) {
     return {
       name,
       ok: false,
-      detail: `${conn.rootDir} is missing or unreadable (${(e as NodeJS.ErrnoException)?.code ?? e})`,
-      fix: `run ${label} at least once to create it, or point connectors.${label.replace(/-/g, "_")}.root_dir in ~/.config/asl/config.toml at the right place`,
+      detail: `${probeDir} is missing or unreadable (${(e as NodeJS.ErrnoException)?.code ?? e})`,
+      fix: `run ${label} at least once to create it, or point connectors.${tomlKey}.root_dir in ~/.config/asl/config.toml at the right place`,
     };
   }
 }
@@ -135,10 +144,7 @@ export function runDoctor(deps: DoctorDeps): CheckResult[] {
   const mac = deps.platform === "darwin";
   const plistPath = join(deps.home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`);
   const launchdBun = join(deps.home, ".bun", "bin", "bun");
-  // loadConfig never throws (bad TOML falls back to defaults with a warning),
-  // so connector checks always have a config; checkConfigFile reports the
-  // parse problem itself.
-  const config = loadConfig(deps.configPath);
+  const { connectors } = deps.config;
   return [
     checkBun(deps.exec),
     mac ? checkLaunchdBunPath(launchdBun) : skipped("bun at launchd path"),
@@ -146,8 +152,8 @@ export function runDoctor(deps: DoctorDeps): CheckResult[] {
     mac ? checkPlistInstalled(plistPath) : skipped("launchd plist installed"),
     mac ? checkPlistLoaded(deps.exec, plistPath) : skipped("launchd job loaded"),
     checkConfigFile(deps.configPath),
-    checkConnectorDir("claude-code", config.connectors.claudeCode),
-    checkConnectorDir("codex", config.connectors.codex),
+    checkConnectorDir("claude-code", "claude_code", connectors.claudeCode),
+    checkConnectorDir("codex", "codex", connectors.codex, join(connectors.codex.rootDir, "sessions")),
   ];
 }
 

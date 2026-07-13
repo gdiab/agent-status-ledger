@@ -24,7 +24,7 @@ curl -fsSL https://bun.sh/install | bash
 ### 2. bun at launchd path (`~/.bun/bin/bun`)
 launchd provides no shell PATH, so `scripts/morning-report.sh` hardcodes `$HOME/.bun/bin/bun`. The official installer puts bun there. If bun came from Homebrew:
 ```bash
-mkdir -p ~/.bun/bin && ln -s "$(which bun)" ~/.bun/bin/bun
+mkdir -p ~/.bun/bin && ln -sf "$(which bun)" ~/.bun/bin/bun
 ```
 
 ### 3. Anthropic API key
@@ -63,7 +63,7 @@ Optional; defaults apply when absent. A TOML parse error fails the check — fix
 
 ### 7–8. connector log directories
 - claude-code: `~/.claude/projects` — created by running Claude Code once.
-- codex: `~/.codex` — created by running Codex once.
+- codex: `~/.codex/sessions` — the connector reads the `sessions/` subdirectory, created the first time Codex runs a session (a bare `~/.codex` from install alone is not enough).
 
 If logs live elsewhere, override in `~/.config/asl/config.toml`:
 ```toml

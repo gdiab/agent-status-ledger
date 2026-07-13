@@ -24,13 +24,15 @@ function runDoctorCli(): never {
       return { ok: false, stdout: "" };
     }
   };
+  const cfgPath = configPath();
   const results = runDoctor({
     env: process.env,
     keychain: macKeychainLookup,
     exec,
     platform: process.platform,
     home: homedir(),
-    configPath: configPath(),
+    configPath: cfgPath,
+    config: loadConfig(cfgPath),
   });
   console.log(formatDoctorReport(results));
   process.exit(results.every((r) => r.ok) ? 0 : 1);
@@ -64,8 +66,8 @@ function parseCliArgs() {
 }
 
 async function main() {
-  if (Bun.argv[2] === "doctor") runDoctorCli();
   const { values, positionals } = parseCliArgs();
+  if (positionals[0] === "doctor") runDoctorCli();
   if (positionals[0] !== "report") {
     console.error(USAGE);
     process.exit(2);
