@@ -518,6 +518,38 @@ describe("renderers", () => {
     expect(html).not.toContain("<x>");
   });
 
+  test("markdown: agent trends render as a Trend fact line; absent field renders nothing", () => {
+    const a = agent({ status: "silent", severity: "urgent", trends: ["also silent yesterday", "0 commits vs 3 yesterday (-3)"] });
+    const md = renderMarkdown({ ...report, agents: [a] });
+    expect(md).toContain("- Trend: also silent yesterday; 0 commits vs 3 yesterday (-3)");
+    expect(renderMarkdown(report)).not.toContain("- Trend:");
+  });
+
+  test("markdown: report-level trends line sits under the rollup", () => {
+    const md = renderMarkdown({ ...report, trends: ["2 commits vs 5 yesterday (-3)"] });
+    expect(md).toContain("Trends: 2 commits vs 5 yesterday (-3)");
+    expect(md.indexOf("2 agents:")).toBeLessThan(md.indexOf("Trends:"));
+    expect(md.indexOf("Trends:")).toBeLessThan(md.indexOf("## Exceptions"));
+    expect(renderMarkdown(report)).not.toContain("Trends:");
+  });
+
+  test("html: agent trends render a Trend row in both layouts; absent renders nothing", () => {
+    const a = agent({ trends: ["1 recurring error (also seen yesterday)"] });
+    for (const layout of ["cards", "flat"] as const) {
+      const html = renderHtml({ ...report, agents: [a] }, { layout });
+      expect(html).toContain("<dt>Trend</dt><dd>1 recurring error (also seen yesterday)</dd>");
+      expect(renderHtml(report, { layout })).not.toContain("<dt>Trend</dt>");
+    }
+  });
+
+  test("html: report-level trends line sits under the rollup, escaped", () => {
+    const html = renderHtml({ ...report, trends: ["2 commits vs 5 yesterday (-3)", "<x>"] });
+    expect(html).toContain("Trends: 2 commits vs 5 yesterday (-3); &lt;x&gt;");
+    expect(html.indexOf('class="rollup"')).toBeLessThan(html.indexOf("Trends:"));
+    expect(html.indexOf("Trends:")).toBeLessThan(html.indexOf('<details class="legend">'));
+    expect(renderHtml(report)).not.toContain("Trends:");
+  });
+
   test("html: standup blurb is escaped", () => {
     const a = agent({ narrative: { ...agent({}).narrative, standup: "I <b>bolded</b> things." } });
     const html = renderHtml({ ...report, agents: [a] });

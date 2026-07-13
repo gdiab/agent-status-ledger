@@ -21,6 +21,8 @@ function agentSection(a: AgentReport): string {
     `- Evidence: ${a.evidence}`,
     `- Workdir: \`${a.workdir}\``,
     `- Sessions: ${a.facts.sessionCount} (${a.facts.firstActivity} → ${a.facts.lastActivity})`,
+    // Cross-day trend annotations (src/trends.ts); absent = no history, no line.
+    ...(a.trends?.length ? [`- Trend: ${a.trends.join("; ")}`] : []),
     "",
     `**Worked on:** ${a.narrative.workedOn}`,
     `**Completed:** ${a.narrative.completed}`,
@@ -59,6 +61,7 @@ export function renderMarkdown(report: Report): string {
     "",
     rollupLine(report),
     "",
+    ...(report.trends?.length ? [`Trends: ${report.trends.join("; ")}`, ""] : []),
     "## Exceptions",
     "",
   ];

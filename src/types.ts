@@ -101,6 +101,11 @@ export interface AgentReport {
   narrative: Narrative;
   narrativeSource: "llm" | "template";
   commits: CommitEvidence[];
+  // Cross-day trend annotations diffed against the previous day's report
+  // (src/trends.ts): status streaks, commit velocity, recurring errors.
+  // Additive + optional, absent when empty or when no history exists —
+  // schemaVersion stays 1 (same contract as Report.trivialProfiles).
+  trends?: string[];
 }
 
 export interface Report {
@@ -114,6 +119,9 @@ export interface Report {
   // sessions, nothing touched/produced/errored). Additive + optional:
   // schemaVersion stays 1. Absent when empty.
   trivialProfiles?: string[];
+  // Report-level trend annotations (total commit velocity vs the previous
+  // report). Additive + optional like trivialProfiles; absent when empty.
+  trends?: string[];
 }
 
 export interface Thresholds {
