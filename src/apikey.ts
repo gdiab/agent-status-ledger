@@ -8,8 +8,10 @@ export interface ResolvedKey {
   source: string;
 }
 
-const SERVICE = "anthropic-api-key";
-const ACCOUNT = "asl";
+export const KEYCHAIN_SERVICE = "anthropic-api-key";
+export const KEYCHAIN_ACCOUNT = "asl";
+const SERVICE = KEYCHAIN_SERVICE;
+const ACCOUNT = KEYCHAIN_ACCOUNT;
 
 export function resolveApiKey(
   env: Record<string, string | undefined>,
