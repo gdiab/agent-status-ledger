@@ -82,6 +82,8 @@ function cardBody(a: AgentReport): string {
       ? [`<dd class="filler">Nothing completed, in progress, or blocked.</dd>`]
       : kept.map(([label, text]) => `<dt>${label}</dt><dd>${esc(text)}</dd>`)),
     ...(shows(next) ? [`<dt>Next</dt><dd>${esc(next[1])}</dd>`] : []),
+    // Cross-day trend annotations (src/trends.ts); absent = no history, no row.
+    ...(a.trends?.length ? [`<dt>Trend</dt><dd>${esc(a.trends.join("; "))}</dd>`] : []),
   ];
   return `<dl>
     ${rows.join("\n    ")}
@@ -199,7 +201,7 @@ code { font-size: .85em; }
 <h1>Agent Standup — ${esc(day)}</h1>
 <p class="window" title="${esc(report.windowStart)} → ${esc(report.windowEnd)}">${esc(fmtUtc(report.windowStart))} → ${esc(fmtUtc(report.windowEnd))} UTC</p>
 ${rollupChips(report)}
-<details class="legend"><summary>Legend</summary>
+${report.trends?.length ? `<p class="window">Trends: ${esc(report.trends.join("; "))}</p>\n` : ""}<details class="legend"><summary>Legend</summary>
 <h4>Statuses</h4><ul>${(Object.entries(STATUS_HELP)).map(([k, v]) => `<li><strong>${esc(k)}</strong> — ${esc(v)}</li>`).join("")}</ul>
 <h4>Severity</h4><ul>${(Object.entries(SEVERITY_HELP)).map(([k, v]) => `<li><strong>${esc(k)}</strong> — ${esc(v)}</li>`).join("")}</ul>
 <h4>Evidence</h4><ul>${(Object.entries(EVIDENCE_HELP)).map(([k, v]) => `<li><strong>${esc(k.replace("_", " "))}</strong> — ${esc(v)}</li>`).join("")}</ul>

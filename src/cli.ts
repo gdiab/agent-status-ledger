@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { configPath, loadConfig } from "./config";
 import { buildReport } from "./report";
+import { annotateTrends, loadPreviousReport } from "./trends";
 import { renderMarkdown } from "./render/markdown";
 import { renderJson } from "./render/json";
 import { renderHtml, HTML_LAYOUTS, type HtmlLayout } from "./render/html";
@@ -102,10 +103,14 @@ async function main() {
     }
   }
 
-  const report = await buildReport({ since, now, config, useLlm, apiKey });
+  // Cross-day trends: diff against the most recent prior report JSON in the
+  // reports dir (the loader's strictly-older filter excludes today's file).
+  // No usable history → annotateTrends is a no-op and output is unchanged.
+  const day = now.toISOString().slice(0, 10);
+  const previous = await loadPreviousReport(config.reportsDir, day);
+  const report = annotateTrends(await buildReport({ since, now, config, useLlm, apiKey }), previous);
 
   mkdirSync(config.reportsDir, { recursive: true });
-  const day = now.toISOString().slice(0, 10);
   const base = join(config.reportsDir, day);
   const md = redact(renderMarkdown(report), config.redactPatterns);
   const json = redact(renderJson(report), config.redactPatterns);
