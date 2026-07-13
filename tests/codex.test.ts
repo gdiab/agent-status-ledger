@@ -44,6 +44,52 @@ describe("parseCodexSession", () => {
     expect(parseCodexSession(text, new Map())!.errors[0]).toBe("build failed — while exec: npm run build");
   });
 
+  test("error before any exec command yields the bare message with no exec context", () => {
+    const line = (o: unknown) => JSON.stringify(o);
+    const text = [
+      line({ type: "session_meta", timestamp: "2026-07-07T10:00:00Z", payload: { id: "c1", cwd: "/w" } }),
+      line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "error", message: "auth token expired" } }),
+    ].join("\n");
+    const s = parseCodexSession(text, new Map())!;
+    expect(s.errors[0]).toBe("auth token expired");
+    expect(s.errors[0]).not.toContain("— while");
+  });
+
+  describe("error and stream_error events", () => {
+    const line = (o: unknown) => JSON.stringify(o);
+    const meta = line({ type: "session_meta", timestamp: "2026-07-07T10:00:00Z", payload: { id: "c1", cwd: "/w" } });
+    const parse = (rest: string[]) => parseCodexSession([meta, ...rest].join("\n"), new Map())!;
+
+    test("error records a failed event and clears awaitingUser", () => {
+      const s = parse([
+        line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "agent_message" } }),
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "error", message: "boom" } }),
+      ]);
+      expect(s.events.at(-1)!.type).toBe("failed");
+      expect(s.events.at(-1)!.summary).toBe("boom");
+      expect(s.awaitingUser).toBe(false);
+    });
+
+    test("stream_error records a failed event and clears midWork", () => {
+      const s = parse([
+        line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "task_started" } }),
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "stream_error", message: "connection reset" } }),
+      ]);
+      expect(s.events.at(-1)!.type).toBe("failed");
+      expect(s.events.at(-1)!.summary).toBe("connection reset");
+      expect(s.errors).toEqual(["connection reset"]);
+      expect(s.midWork).toBe(false);
+      expect(s.awaitingUser).toBe(false);
+    });
+
+    test("error with no message falls back to the literal 'error'", () => {
+      const s = parse([
+        line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "error" } }),
+      ]);
+      expect(s.errors).toEqual(["error"]);
+    });
+  });
+
   describe("user redactPatterns run before truncation (asl-f4k)", () => {
     const line = (o: unknown) => JSON.stringify(o);
     const clip = makeClip(["CORPSECRET_[A-Z_]+"]);
@@ -120,6 +166,20 @@ describe("parseCodexSession", () => {
         line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "task_started" } }),
         line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "agent_message" } }),
         line({ type: "event_msg", timestamp: "2026-07-07T10:03:00Z", payload: { type: "exec_command_begin", command: "ls" } }),
+      ]).awaitingUser).toBe(false);
+    });
+
+    test("false when last event is exec_approval_request (agent waits on approval, not chat)", () => {
+      expect(parse([
+        line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "agent_message" } }),
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "exec_approval_request", command: "terraform apply" } }),
+      ]).awaitingUser).toBe(false);
+    });
+
+    test("false when last event is apply_patch_approval_request", () => {
+      expect(parse([
+        line({ type: "event_msg", timestamp: "2026-07-07T10:01:00Z", payload: { type: "agent_message" } }),
+        line({ type: "event_msg", timestamp: "2026-07-07T10:02:00Z", payload: { type: "apply_patch_approval_request" } }),
       ]).awaitingUser).toBe(false);
     });
 

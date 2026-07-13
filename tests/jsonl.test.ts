@@ -1,5 +1,8 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { jsonlEntries, makeClip, withContext } from "../src/connectors/jsonl";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { jsonlEntries, makeClip, scanSessionFile, withContext } from "../src/connectors/jsonl";
 import { parseClaudeSession } from "../src/connectors/claude-code";
 
 describe("jsonlEntries", () => {
@@ -54,6 +57,11 @@ describe("withContext", () => {
     expect(withContext("boom", "Bash", undefined)).toBe("boom — while Bash");
   });
 
+  test("degenerate non-empty input like {} keeps the colon segment with the serialized form", () => {
+    expect(withContext("boom", "Bash", {})).toBe("boom — while Bash: {}");
+    expect(withContext("boom", "Bash", [])).toBe("boom — while Bash: []");
+  });
+
   test("redacts a secret before truncation even when it straddles the 80-char boundary", () => {
     const padding = "x".repeat(50);
     const token = "ghp_" + "A".repeat(36);
@@ -68,6 +76,27 @@ describe("withContext", () => {
     const out = withContext("boom", "Bash", `${padding} ${secret}`, makeClip(["CORPSECRET_[A-Z_]+"]));
     expect(out).toContain("[REDACTED]");
     expect(out).not.toContain("CORPSECRET");
+  });
+});
+
+describe("scanSessionFile", () => {
+  test("emits the unparseable-session warning when a file yields no session", () => {
+    const dir = mkdtempSync(join(tmpdir(), "asl-jsonl-"));
+    const path = join(dir, "unparseable.jsonl");
+    writeFileSync(path, "not-json-at-all\n");
+    const spy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const now = new Date(Date.now() + 60_000); // file mtime is inside [since, now]
+      const opts = { since: new Date(Date.now() - 60_000), now, rootDir: dir, redactPatterns: [] };
+      const session = scanSessionFile(path, opts, (text) => parseClaudeSession(text, dir, path));
+      expect(session).toBeNull();
+      // The malformed line inside the file is warned about first, then the
+      // file-level "no parseable session" warning fires.
+      expect(spy).toHaveBeenCalledWith(expect.stringContaining(`malformed jsonl line skipped in ${path}`));
+      expect(spy).toHaveBeenCalledWith(`warning: no parseable session in ${path}`);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
