@@ -4,7 +4,7 @@ import { scanClaudeCode } from "./connectors/claude-code";
 import { scanCodex } from "./connectors/codex";
 import { resolveProfiles } from "./resolver";
 import { attributeCommits, listCommits } from "./git";
-import { inferStatus } from "./status";
+import { EXCEPTION_STATUSES, inferStatus } from "./status";
 import { buildFactSheet, generateNarrative, templateNarrative } from "./narrative";
 import { redact, redactFacts } from "./redact";
 
@@ -18,7 +18,6 @@ export interface BuildReportOptions {
 }
 
 const SEVERITY_ORDER = { urgent: 0, warning: 1, info: 2 } as const;
-const EXCEPTION_STATUSES = new Set(["blocked", "failed", "silent", "needs_human"]);
 
 // Per-profile work (git log + LLM narrative) is independent across profiles;
 // run it concurrently, capped so a many-agent morning doesn't burst-hit the

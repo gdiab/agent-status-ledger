@@ -11,6 +11,13 @@ export const STATUS_SEVERITY: Record<Status, Severity> = {
   active: "info", idle: "info", completed: "info",
 };
 
+// Statuses that demand attention (severity above info). Derived from
+// STATUS_SEVERITY so a new Status can't silently miss the exception filter
+// or the trend-streak set — one partition, defined once.
+export const EXCEPTION_STATUSES: ReadonlySet<Status> = new Set(
+  (Object.keys(STATUS_SEVERITY) as Status[]).filter((s) => STATUS_SEVERITY[s] !== "info"),
+);
+
 function lastOf(events: AgentEvent[], type: AgentEvent["type"]): AgentEvent | undefined {
   for (let i = events.length - 1; i >= 0; i--) if (events[i]!.type === type) return events[i];
   return undefined;

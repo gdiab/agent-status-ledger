@@ -1,6 +1,8 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentReport, Report, Status } from "./types";
+import type { AgentReport, Report } from "./types";
+import { EXCEPTION_STATUSES } from "./status";
+import { plural } from "./render/rollup";
 
 // First cut of cross-day trends (asl-9jn): diff today's report against the
 // single most recent prior report on disk. Three annotations only — status
@@ -8,11 +10,9 @@ import type { AgentReport, Report, Status } from "./types";
 // prior report we can prove exactly a 2-day streak, so the wording claims no
 // more than that ("also silent yesterday", never "since Tuesday").
 
-const NOTEWORTHY_STREAK_STATUSES = new Set<Status>(["silent", "blocked", "failed", "needs_human"]);
 const DAY_MS = 86_400_000;
 const REPORT_FILE = /^(\d{4}-\d{2}-\d{2})\.json$/;
 
-const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 const attributedCount = (a: AgentReport) => a.commits.filter((c) => c.attributed).length;
 
@@ -27,7 +27,7 @@ function previousLabel(currentEnd: string, previousEnd: string): string {
 
 function agentTrends(today: AgentReport, prev: AgentReport, label: string): string[] {
   const trends: string[] = [];
-  if (NOTEWORTHY_STREAK_STATUSES.has(today.status) && prev.status === today.status) {
+  if (EXCEPTION_STATUSES.has(today.status) && prev.status === today.status) {
     trends.push(`also ${today.status} ${label}`);
   }
   const commits = attributedCount(today);
@@ -51,13 +51,11 @@ export function annotateTrends(report: Report, previous: Report | undefined): Re
   const label = previousLabel(report.windowEnd, previous.windowEnd);
   const prevById = new Map(previous.agents.map((a) => [a.profileId, a]));
 
-  const annotated = new Map<string, AgentReport>(
-    report.agents.map((a) => {
-      const prev = prevById.get(a.profileId);
-      const trends = prev ? agentTrends(a, prev, label) : [];
-      return [a.profileId, trends.length ? { ...a, trends } : a];
-    }),
-  );
+  const agents = report.agents.map((a) => {
+    const prev = prevById.get(a.profileId);
+    const trends = prev ? agentTrends(a, prev, label) : [];
+    return trends.length ? { ...a, trends } : a;
+  });
 
   const total = report.agents.reduce((n, a) => n + attributedCount(a), 0);
   const prevTotal = previous.agents.reduce((n, a) => n + attributedCount(a), 0);
@@ -66,8 +64,11 @@ export function annotateTrends(report: Report, previous: Report | undefined): Re
 
   return {
     ...report,
-    agents: report.agents.map((a) => annotated.get(a.profileId) ?? a),
-    exceptions: report.exceptions.map((a) => annotated.get(a.profileId) ?? a),
+    agents,
+    // Exceptions are by construction agents.filter(EXCEPTION_STATUSES) in the
+    // same order (report.ts); rebuilding from the annotated array keeps the
+    // objects shared between the two lists without any bookkeeping.
+    exceptions: agents.filter((a) => EXCEPTION_STATUSES.has(a.status)),
     ...(reportTrends.length ? { trends: reportTrends } : {}),
   };
 }
@@ -91,16 +92,32 @@ export async function loadPreviousReport(reportsDir: string, currentDay: string)
   if (priorDay === undefined) return undefined;
   try {
     const parsed: unknown = JSON.parse(await Bun.file(join(reportsDir, `${priorDay}.json`)).text());
-    if (
-      typeof parsed !== "object" || parsed === null ||
-      (parsed as Report).schemaVersion !== 1 ||
-      !Array.isArray((parsed as Report).agents) ||
-      typeof (parsed as Report).windowEnd !== "string"
-    ) {
-      return undefined;
-    }
-    return parsed as Report;
+    return isUsablePrior(parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }
+}
+
+// Validates exactly the fields annotateTrends reads off the prior report —
+// a truncated or hand-edited history file must degrade to "no trends", never
+// crash today's report. windowEnd must be ISO-date-shaped because its date
+// slice becomes the trend label and reaches markdown unescaped.
+function isUsablePrior(parsed: unknown): parsed is Report {
+  if (typeof parsed !== "object" || parsed === null) return false;
+  const r = parsed as Report;
+  return (
+    r.schemaVersion === 1 &&
+    typeof r.windowEnd === "string" &&
+    /^\d{4}-\d{2}-\d{2}T/.test(r.windowEnd) &&
+    Array.isArray(r.agents) &&
+    r.agents.every(
+      (a) =>
+        typeof a === "object" && a !== null &&
+        typeof a.profileId === "string" &&
+        typeof a.status === "string" &&
+        Array.isArray(a.commits) &&
+        a.commits.every((c) => typeof c === "object" && c !== null) &&
+        Array.isArray(a.facts?.errors),
+    )
+  );
 }

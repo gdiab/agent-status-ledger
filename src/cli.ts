@@ -104,7 +104,7 @@ async function main() {
   }
 
   // Cross-day trends: diff against the most recent prior report JSON in the
-  // reports dir (read before mkdir/write so today's own file can't match).
+  // reports dir (the loader's strictly-older filter excludes today's file).
   // No usable history → annotateTrends is a no-op and output is unchanged.
   const day = now.toISOString().slice(0, 10);
   const previous = await loadPreviousReport(config.reportsDir, day);

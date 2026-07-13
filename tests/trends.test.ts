@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentReport, CommitEvidence, Report } from "../src/types";
 import { annotateTrends, loadPreviousReport } from "../src/trends";
+import { EXCEPTION_STATUSES } from "../src/status";
 
 function commit(i: number, attributed = true): CommitEvidence {
   return { sha: `${i}bc1234abcdefghijklmnopqrstuvwxyz123456`, authorDate: "2026-07-07T09:20:00.000Z", subject: `commit ${i}`, attributed };
@@ -31,7 +32,7 @@ function makeReport(agents: AgentReport[], over: Partial<Report> = {}): Report {
     generatedAt: "2026-07-08T07:00:00.000Z",
     windowStart: "2026-07-07T07:00:00.000Z",
     windowEnd: "2026-07-08T07:00:00.000Z",
-    exceptions: agents.filter((a) => ["blocked", "failed", "silent", "needs_human"].includes(a.status)),
+    exceptions: agents.filter((a) => EXCEPTION_STATUSES.has(a.status)),
     agents,
     ...over,
   };
@@ -241,6 +242,30 @@ describe("loadPreviousReport", () => {
   test("malformed report shape (no agents array) yields undefined", async () => {
     const d = dir();
     writeFileSync(join(d, "2026-07-07.json"), JSON.stringify({ schemaVersion: 1 }));
+    expect(await loadPreviousReport(d, DAY)).toBeUndefined();
+  });
+
+  test("malformed agent entries (missing commits/facts) yield undefined — trends must never crash the report", async () => {
+    const d = dir();
+    writeFileSync(join(d, "2026-07-07.json"), JSON.stringify({
+      schemaVersion: 1,
+      windowEnd: "2026-07-07T07:00:00.000Z",
+      agents: [{ profileId: "claude-code:/w", status: "silent" }],
+    }));
+    expect(await loadPreviousReport(d, DAY)).toBeUndefined();
+  });
+
+  test("a null entry in an agent's commits yields undefined", async () => {
+    const d = dir();
+    const report = prevReport([agent({})]);
+    (report.agents[0]!.commits as unknown[]).push(null);
+    writeFileSync(join(d, "2026-07-07.json"), JSON.stringify(report));
+    expect(await loadPreviousReport(d, DAY)).toBeUndefined();
+  });
+
+  test("a windowEnd that is not ISO-date-shaped yields undefined (its date slice reaches markdown)", async () => {
+    const d = dir();
+    writeReport(d, "2026-07-07", { windowEnd: "<script>x" });
     expect(await loadPreviousReport(d, DAY)).toBeUndefined();
   });
 
