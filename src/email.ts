@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { KeychainLookup } from "./apikey";
+import type { EmailConfig } from "./config";
 
 export const SMTP_KEYCHAIN_SERVICE = "gmail-app-password";
 export const SMTP_KEYCHAIN_ACCOUNT = "asl";
@@ -161,4 +162,53 @@ export function sendEmail(
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+export interface ReportEmailDeps {
+  env: Record<string, string | undefined>;
+  keychain: KeychainLookup;
+  exec: EmailExec;
+  now: Date;
+}
+
+// One-call orchestration for the CLI: resolve password → build MIME → send.
+// Always returns a printable one-liner; the caller decides log vs warn.
+export function sendReportEmail(
+  email: EmailConfig,
+  subject: string,
+  text: string,
+  html: string,
+  deps: ReportEmailDeps,
+): { ok: boolean; message: string } {
+  const resolved = resolveSmtpPassword(deps.env, deps.keychain);
+  if (!resolved) {
+    return {
+      ok: false,
+      message:
+        "email: no SMTP password — set ASL_SMTP_PASSWORD or run: " +
+        `security add-generic-password -s ${SMTP_KEYCHAIN_SERVICE} -a ${SMTP_KEYCHAIN_ACCOUNT} -w "<gmail app password>"`,
+    };
+  }
+  const stamp = deps.now.getTime();
+  const mime = buildMimeMessage({
+    from: email.from,
+    to: email.to,
+    subject,
+    text,
+    html,
+    date: deps.now,
+    messageId: `${stamp}.asl@${email.smtpHost}`,
+    // "=_" can never occur in quoted-printable output ("=" is only ever
+    // followed by hex digits or a soft break), so this boundary is safe.
+    boundary: `=_asl-${stamp.toString(36)}`,
+  });
+  const r = sendEmail(
+    { host: email.smtpHost, port: email.smtpPort, from: email.from, to: email.to },
+    resolved.password,
+    mime,
+    deps.exec,
+  );
+  return r.ok
+    ? { ok: true, message: `emailed report to ${email.to} (password from ${resolved.source})` }
+    : { ok: false, message: `email: send to ${email.to} failed — ${r.error}` };
 }

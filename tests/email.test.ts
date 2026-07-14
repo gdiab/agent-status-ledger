@@ -198,3 +198,50 @@ describe("sendEmail", () => {
   });
 });
 
+import type { EmailConfig } from "../src/config";
+import { sendReportEmail } from "../src/email";
+
+const EMAIL_CFG: EmailConfig = {
+  to: "gd@example.com", from: "gd@example.com", smtpHost: "smtp.gmail.com", smtpPort: 465,
+};
+const NOW = new Date("2026-07-13T14:30:00Z");
+
+describe("sendReportEmail", () => {
+  test("missing password returns the provisioning hint without invoking exec", () => {
+    let called = false;
+    const r = sendReportEmail(EMAIL_CFG, "subj", "text", "<p>html</p>", {
+      env: {}, keychain: noKeychain, now: NOW,
+      exec: () => { called = true; return { ok: true, stderr: "" }; },
+    });
+    expect(called).toBe(false);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("security add-generic-password -s gmail-app-password -a asl");
+  });
+
+  test("sends a mime message containing subject and both parts", () => {
+    let eml = "";
+    const r = sendReportEmail(EMAIL_CFG, "ASL 2026-07-13: 1 blocked", "text body", "<p>html body</p>", {
+      env: { ASL_SMTP_PASSWORD: "p" }, keychain: noKeychain, now: NOW,
+      exec: (argv) => {
+        eml = readFileSync(argv[argv.indexOf("-T") + 1]!, "utf8");
+        return { ok: true, stderr: "" };
+      },
+    });
+    expect(r.ok).toBe(true);
+    expect(r.message).toContain("gd@example.com");
+    expect(eml).toContain("Subject: ASL 2026-07-13: 1 blocked");
+    expect(eml).toContain("text body");
+    expect(eml).toContain("<p>html body</p>");
+    expect(eml).toContain("multipart/alternative");
+  });
+
+  test("send failure surfaces the curl error in the message", () => {
+    const r = sendReportEmail(EMAIL_CFG, "s", "t", "h", {
+      env: { ASL_SMTP_PASSWORD: "p" }, keychain: noKeychain, now: NOW,
+      exec: () => ({ ok: false, stderr: "curl: (67) Login denied" }),
+    });
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("Login denied");
+  });
+});
+
