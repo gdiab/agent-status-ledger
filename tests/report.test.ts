@@ -141,9 +141,7 @@ describe("buildReport", () => {
       calls++;
       return {
         ok: true,
-        stdout: JSON.stringify({
-          sessions: [{ session_id: "x", confidence: 1, timestamp: "t", files_touched: ["anything"] }],
-        }),
+        stdout: JSON.stringify({ sessions: [{ session_id: "deadbeef", confidence: 325.0 }] }),
         stderr: "",
       };
     };
@@ -156,6 +154,76 @@ describe("buildReport", () => {
     expect(agent.evidenceCitation).toBeUndefined();
     // gate is on evidence level, not on whether exec would have matched
     expect(calls).toBe(0);
+  });
+
+  // End-to-end through the real pipeline: a session with no file edits and no
+  // commits infers claimed_only, and the connector keys off its harness
+  // session UUID (which ASL always has) — not facts.filesTouched (which is
+  // guaranteed empty exactly when the claimed_only gate opens).
+  test("engram enrichment upgrades a real claimed_only profile via its session UUID, and stays claimed_only on failure", async () => {
+    const world = mkdtempSync(join(tmpdir(), "asl-report-"));
+    const ccRoot = join(world, "claude-projects");
+    const dir = join(ccRoot, "-work-p0");
+    mkdirSync(dir, { recursive: true });
+    const f = join(dir, "s.jsonl");
+    // Long enough not to be trivial; no file edits → evidence claimed_only.
+    writeFileSync(f, [
+      JSON.stringify({
+        type: "user", timestamp: "2026-07-07T12:00:00.000Z", cwd: "/work/p0",
+        sessionId: "cc-p0", message: { role: "user", content: "task" },
+      }),
+      JSON.stringify({
+        type: "assistant", timestamp: "2026-07-07T12:05:00.000Z", cwd: "/work/p0",
+        sessionId: "cc-p0", message: { role: "assistant", content: "done" },
+      }),
+    ].join("\n") + "\n");
+    utimesSync(f, MTIME, MTIME);
+
+    const config = defaultConfig();
+    config.connectors.claudeCode.rootDir = ccRoot;
+    config.connectors.codex.enabled = false;
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+
+    const matchExec: Exec = (argv) => {
+      if (argv[1] === "grep" && argv[2] === "cc-p0") {
+        return {
+          ok: true,
+          stdout: JSON.stringify({ sessions: [{ session_id: "engram-sid-1", confidence: 12.0 }] }),
+          stderr: "",
+        };
+      }
+      if (argv[1] === "peek" && argv[2] === "engram-sid-1") {
+        return {
+          ok: true,
+          stdout: JSON.stringify({
+            session: {
+              content: [{
+                line: 1,
+                text: JSON.stringify({
+                  file: "/work/p0/src/app.ts", k: "code.edit",
+                  source: { harness: "claude-code", session_id: "cc-p0" }, t: "t",
+                }),
+              }],
+            },
+          }),
+          stderr: "",
+        };
+      }
+      return { ok: true, stdout: JSON.stringify({ error: "no_results" }), stderr: "" };
+    };
+
+    const upgraded = await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: matchExec });
+    const agent = upgraded.agents.find((a) => a.workdir === "/work/p0")!;
+    expect(agent.evidence).toBe("partially_proven");
+    expect(agent.evidenceCitation).toContain("engram-sid-1");
+    expect(agent.evidenceCitation).toContain("/work/p0/src/app.ts");
+
+    // Every failure path leaves the inferred level untouched.
+    const failingExec: Exec = () => ({ ok: false, stdout: "", stderr: "engram: not found" });
+    const untouched = await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: failingExec });
+    const agent2 = untouched.agents.find((a) => a.workdir === "/work/p0")!;
+    expect(agent2.evidence).toBe("claimed_only");
+    expect(agent2.evidenceCitation).toBeUndefined();
   });
 });
 
@@ -212,35 +280,54 @@ describe("isTrivialProfile", () => {
 });
 
 // applyEngramEnrichment is the exact function report.ts's per-profile loop
-// calls after inferStatus. It operates on plain values (not a scanned
-// AgentProfile) so it's tested directly here rather than only through a full
-// buildReport run — see also the "engram enrichment never touches an
-// already-proven report" buildReport-level test above, which covers the same
-// gate end-to-end through the real connector pipeline.
-//
-// Deviation note: under inferStatus's current formula (src/status.ts),
-// evidence is "claimed_only" if and only if no session in the profile has
-// any filesTouched — so a real buildReport run can never simultaneously
-// produce evidence: "claimed_only" and a non-empty facts.filesTouched. That
-// makes the claimed_only -> partially_proven upgrade path untestable through
-// the full pipeline today; it's still real, live code (forward-compatible
-// with any future FactSheet file source, e.g. commit-changed-files), so it's
-// tested directly against applyEngramEnrichment instead.
+// calls after inferStatus. It operates on the profile's harness session
+// UUIDs (RawSession.sessionId — always present, even when file-history
+// detection found nothing, which is exactly the claimed_only case) so it's
+// tested directly here on plain values — see also the "engram enrichment
+// never touches an already-proven report" buildReport-level test above,
+// which covers the same gate end-to-end through the real connector pipeline.
 describe("applyEngramEnrichment", () => {
   const enabledEngram = { enabled: true, binaryPath: "/fake/engram" };
   const disabledEngram = { enabled: false, binaryPath: "/fake/engram" };
-  const FILE = "/repo/src/thing.ts";
+  const UUID = "989533ee-ec57-4ac9-b510-9d6cb8b1b969";
+  const ENGRAM_SID = "cbe8ebd4deadbeef";
 
-  const matchExec: Exec = () => ({
-    ok: true,
-    stdout: JSON.stringify({
-      sessions: [{ session_id: "s1", confidence: 0.9, timestamp: "2026-07-07T10:00:00Z", files_touched: [FILE] }],
-    }),
-    stderr: "",
-  });
+  // grep→peek mock: any grep returns one candidate; its peek carries a
+  // code.edit event whose source.session_id echoes the grepped UUID, so
+  // whichever session UUID is queried, the guard passes.
+  const matchExec: Exec = (argv) => {
+    if (argv[1] === "grep") {
+      return {
+        ok: true,
+        stdout: JSON.stringify({ sessions: [{ session_id: ENGRAM_SID, confidence: 325.0 }] }),
+        stderr: "",
+      };
+    }
+    // peek — bind the emitted event to the most recently grepped UUID via a
+    // static event on the known UUID (tests only query UUID here).
+    return {
+      ok: true,
+      stdout: JSON.stringify({
+        session: {
+          content: [
+            {
+              line: 1,
+              text: JSON.stringify({
+                file: "/repo/src/thing.ts",
+                k: "code.edit",
+                source: { harness: "claude-code", session_id: UUID },
+                t: "t",
+              }),
+            },
+          ],
+        },
+      }),
+      stderr: "",
+    };
+  };
   const noMatchExec: Exec = () => ({
     ok: true,
-    stdout: JSON.stringify({ error: "no_results", query: FILE }),
+    stdout: JSON.stringify({ error: "no_results", query: UUID }),
     stderr: "",
   });
   const throwingExec: Exec = () => {
@@ -249,62 +336,83 @@ describe("applyEngramEnrichment", () => {
 
   for (const evidence of ["proven", "partially_proven", "unknown"] as EvidenceLevel[]) {
     test(`leaves ${evidence} untouched even on a match — only claimed_only is eligible`, async () => {
-      const r = await applyEngramEnrichment(evidence, [FILE], enabledEngram, matchExec);
+      const r = await applyEngramEnrichment(evidence, [UUID], enabledEngram, matchExec);
       expect(r.evidence).toBe(evidence);
       expect(r.evidenceCitation).toBeUndefined();
     });
   }
 
   test("leaves claimed_only untouched when the connector is disabled, even on a match", async () => {
-    const r = await applyEngramEnrichment("claimed_only", [FILE], disabledEngram, matchExec);
+    const r = await applyEngramEnrichment("claimed_only", [UUID], disabledEngram, matchExec);
     expect(r.evidence).toBe("claimed_only");
     expect(r.evidenceCitation).toBeUndefined();
   });
 
   test("leaves claimed_only untouched when no exec seam was supplied", async () => {
-    const r = await applyEngramEnrichment("claimed_only", [FILE], enabledEngram, undefined);
+    const r = await applyEngramEnrichment("claimed_only", [UUID], enabledEngram, undefined);
     expect(r.evidence).toBe("claimed_only");
   });
 
-  test("leaves claimed_only untouched when there are no files to check", async () => {
+  test("leaves claimed_only untouched when there are no session ids to check", async () => {
     const r = await applyEngramEnrichment("claimed_only", [], enabledEngram, matchExec);
     expect(r.evidence).toBe("claimed_only");
   });
 
   test("leaves claimed_only untouched when engram finds no match", async () => {
-    const r = await applyEngramEnrichment("claimed_only", [FILE], enabledEngram, noMatchExec);
+    const r = await applyEngramEnrichment("claimed_only", [UUID], enabledEngram, noMatchExec);
     expect(r.evidence).toBe("claimed_only");
   });
 
   test("leaves claimed_only untouched, fail-soft, when exec throws", async () => {
-    const r = await applyEngramEnrichment("claimed_only", [FILE], enabledEngram, throwingExec);
+    const r = await applyEngramEnrichment("claimed_only", [UUID], enabledEngram, throwingExec);
     expect(r.evidence).toBe("claimed_only");
   });
 
   test("upgrades claimed_only to partially_proven with a citation on a real match", async () => {
-    const r = await applyEngramEnrichment("claimed_only", [FILE], enabledEngram, matchExec);
+    const r = await applyEngramEnrichment("claimed_only", [UUID], enabledEngram, matchExec);
     expect(r.evidence).toBe("partially_proven");
-    expect(r.evidenceCitation).toContain("s1");
+    expect(r.evidenceCitation).toContain(ENGRAM_SID);
+    expect(r.evidenceCitation).toContain("/repo/src/thing.ts");
   });
 
-  test("stops at the first matching file and doesn't keep querying afterward", async () => {
-    let calls: string[] = [];
+  test("stops at the first matching session and doesn't keep querying afterward", async () => {
+    const otherA = "aaaaaaaa-0000-0000-0000-000000000000";
+    const otherB = "bbbbbbbb-0000-0000-0000-000000000000";
+    const grepped: string[] = [];
     const exec: Exec = (argv) => {
-      calls.push(argv[argv.length - 1]!);
-      const file = argv[argv.length - 1];
-      const matches = file === FILE;
+      if (argv[1] === "grep") {
+        grepped.push(argv[2]!);
+        if (argv[2] !== UUID) {
+          return { ok: true, stdout: JSON.stringify({ error: "no_results" }), stderr: "" };
+        }
+        return {
+          ok: true,
+          stdout: JSON.stringify({ sessions: [{ session_id: ENGRAM_SID, confidence: 42.0 }] }),
+          stderr: "",
+        };
+      }
       return {
         ok: true,
         stdout: JSON.stringify({
-          sessions: matches
-            ? [{ session_id: "s1", confidence: 0.9, timestamp: "t", files_touched: [FILE] }]
-            : [],
+          session: {
+            content: [
+              {
+                line: 1,
+                text: JSON.stringify({
+                  file: "/repo/src/x.ts",
+                  k: "code.edit",
+                  source: { harness: "claude-code", session_id: UUID },
+                  t: "t",
+                }),
+              },
+            ],
+          },
         }),
         stderr: "",
       };
     };
-    const r = await applyEngramEnrichment("claimed_only", ["/other/a.ts", FILE, "/other/b.ts"], enabledEngram, exec);
+    const r = await applyEngramEnrichment("claimed_only", [otherA, UUID, otherB], enabledEngram, exec);
     expect(r.evidence).toBe("partially_proven");
-    expect(calls).toEqual(["/other/a.ts", FILE]); // never reaches /other/b.ts
+    expect(grepped).toEqual([otherA, UUID]); // never greps otherB
   });
 });

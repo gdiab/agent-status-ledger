@@ -68,16 +68,21 @@ export function isTrivialProfile(profile: AgentProfile, commits: CommitEvidence[
 // reports. Any failure (missing binary, malformed response, no qualifying
 // match, or a thrown error) leaves evidence exactly as inferStatus returned
 // it, mirroring sendReportEmail's never-throws contract (asl-533).
+//
+// Keyed off the profile's harness session UUIDs (RawSession.sessionId),
+// which ASL always has — deliberately NOT facts.filesTouched, which under
+// inferStatus's formula is guaranteed empty exactly when evidence is
+// claimed_only (that's what claimed_only means: no observed file activity).
 export async function applyEngramEnrichment(
   evidence: EvidenceLevel,
-  filesTouched: string[],
+  sessionIds: string[],
   engramConfig: Config["connectors"]["engram"],
   exec: Exec | undefined,
 ): Promise<{ evidence: EvidenceLevel; evidenceCitation?: string }> {
   if (evidence !== "claimed_only" || !engramConfig.enabled || !exec) return { evidence };
   try {
-    for (const file of filesTouched) {
-      const result = await upgradeEvidence(file, engramConfig.binaryPath, exec);
+    for (const sessionId of sessionIds) {
+      const result = await upgradeEvidence(sessionId, engramConfig.binaryPath, exec);
       if (result.matched) return { evidence: "partially_proven", evidenceCitation: result.citation };
     }
   } catch {
@@ -112,7 +117,7 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
     const { status, severity, evidence: inferredEvidence } = inferStatus(profile, rawCommits, now, config.thresholds);
     const facts = redactFacts(buildFactSheet(profile, commits), config.redactPatterns);
     const { evidence, evidenceCitation } = await applyEngramEnrichment(
-      inferredEvidence, facts.filesTouched, config.connectors.engram, opts.engramExec,
+      inferredEvidence, profile.sessions.map((s) => s.sessionId), config.connectors.engram, opts.engramExec,
     );
     const { narrative, source } = opts.useLlm
       ? await generateNarrative(facts, status, { model: config.model, apiKey: opts.apiKey, fetchFn: opts.fetchFn })
