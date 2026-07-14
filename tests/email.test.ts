@@ -59,6 +59,12 @@ describe("quotedPrintable", () => {
     expect(quotedPrintable("a\t\nb")).toBe("a=09\r\nb");
   });
 
+  test("trailing space at the wrap boundary still keeps lines within 76 chars", () => {
+    const encoded = quotedPrintable("x".repeat(74) + " \ny");
+    for (const line of encoded.split("\r\n")) expect(line.length).toBeLessThanOrEqual(76);
+    expect(encoded).toBe(`${"x".repeat(74)}=\r\n=20\r\ny`);
+  });
+
   test("soft-wraps so no line exceeds 76 characters", () => {
     const encoded = quotedPrintable("x".repeat(200));
     for (const line of encoded.split("\r\n")) expect(line.length).toBeLessThanOrEqual(76);

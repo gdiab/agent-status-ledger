@@ -36,8 +36,15 @@ export function quotedPrintable(s: string): string {
   const lines: string[] = [];
   let line = "";
   const endLine = () => {
-    if (line.endsWith(" ")) line = `${line.slice(0, -1)}=20`;
-    else if (line.endsWith("\t")) line = `${line.slice(0, -1)}=09`;
+    if (line.endsWith(" ") || line.endsWith("\t")) {
+      const enc = line.endsWith(" ") ? "=20" : "=09";
+      line = line.slice(0, -1);
+      if (line.length + enc.length > 76) {
+        lines.push(`${line}=`); // soft break before the encoded trailing whitespace
+        line = "";
+      }
+      line += enc;
+    }
     lines.push(line);
     line = "";
   };
