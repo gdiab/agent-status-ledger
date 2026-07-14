@@ -1,6 +1,9 @@
 // Email delivery of the morning report (asl-533): Gmail SMTP via the system
 // curl. Same keychain convention as src/apikey.ts — one service name shared
 // across projects, account = project name. Code never writes to the keychain.
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { KeychainLookup } from "./apikey";
 
 export const SMTP_KEYCHAIN_SERVICE = "gmail-app-password";
@@ -118,4 +121,44 @@ export function buildMimeMessage(m: MimeInput): string {
     `--${m.boundary}--`,
     "",
   ].join("\r\n");
+}
+
+// Doctor's Exec discards stderr; curl reports SMTP failures there, so email
+// gets its own seam shape.
+export type EmailExec = (argv: string[]) => { ok: boolean; stderr: string };
+
+export interface SmtpTarget {
+  host: string;
+  port: number;
+  from: string;
+  to: string;
+}
+
+// Shells out to the system curl (macOS builds include smtps). The password
+// rides in a mode-600 curl config file, not argv, so it never shows in ps.
+export function sendEmail(
+  target: SmtpTarget,
+  password: string,
+  mime: string,
+  exec: EmailExec,
+): { ok: boolean; error?: string } {
+  const dir = mkdtempSync(join(tmpdir(), "asl-email-")); // mkdtemp dirs are mode 700
+  try {
+    const cfgPath = join(dir, "curl.cfg");
+    const emlPath = join(dir, "message.eml");
+    const cred = `${target.from}:${password}`.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+    writeFileSync(cfgPath, `user = "${cred}"\n`, { mode: 0o600 });
+    writeFileSync(emlPath, mime, { mode: 0o600 });
+    const r = exec([
+      "curl", "-sS",
+      "--url", `smtps://${target.host}:${target.port}`,
+      "--mail-from", target.from,
+      "--mail-rcpt", target.to,
+      "-K", cfgPath,
+      "-T", emlPath,
+    ]);
+    return r.ok ? { ok: true } : { ok: false, error: r.stderr.trim() || "curl failed" };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
 import type { KeychainLookup } from "../src/apikey";
-import { buildMimeMessage, encodeHeaderValue, quotedPrintable, resolveSmtpPassword } from "../src/email";
+import { buildMimeMessage, encodeHeaderValue, quotedPrintable, resolveSmtpPassword, sendEmail, type EmailExec } from "../src/email";
 
 const noKeychain: KeychainLookup = () => null;
 function fakeKeychain(entries: Record<string, string>): KeychainLookup {
@@ -128,6 +129,72 @@ describe("buildMimeMessage", () => {
     const msg = buildMimeMessage(input);
     expect(msg.includes("\n")).toBe(true);
     expect(msg.replaceAll("\r\n", "").includes("\n")).toBe(false);
+  });
+});
+
+const TARGET = { host: "smtp.gmail.com", port: 465, from: "gd@example.com", to: "gd@example.com" };
+
+describe("sendEmail", () => {
+  test("invokes curl with smtps url, envelope args, and temp files — password not in argv", () => {
+    let seen: { argv: string[]; cfg: string; eml: string } | null = null;
+    const exec: EmailExec = (argv) => {
+      const cfgPath = argv[argv.indexOf("-K") + 1]!;
+      const emlPath = argv[argv.indexOf("-T") + 1]!;
+      seen = { argv, cfg: readFileSync(cfgPath, "utf8"), eml: readFileSync(emlPath, "utf8") };
+      return { ok: true, stderr: "" };
+    };
+    const r = sendEmail(TARGET, "app-pass", "MIME BODY", exec);
+    expect(r).toEqual({ ok: true });
+    expect(seen!.argv.slice(0, 4)).toEqual(["curl", "-sS", "--url", "smtps://smtp.gmail.com:465"]);
+    expect(seen!.argv).toContain("--mail-from");
+    expect(seen!.argv).toContain("--mail-rcpt");
+    expect(seen!.argv.join(" ")).not.toContain("app-pass");
+    expect(seen!.cfg).toBe('user = "gd@example.com:app-pass"\n');
+    expect(seen!.eml).toBe("MIME BODY");
+  });
+
+  test("escapes quotes and backslashes in the curl config credential", () => {
+    let cfg = "";
+    const exec: EmailExec = (argv) => {
+      cfg = readFileSync(argv[argv.indexOf("-K") + 1]!, "utf8");
+      return { ok: true, stderr: "" };
+    };
+    sendEmail(TARGET, 'p"w\\d', "m", exec);
+    expect(cfg).toBe('user = "gd@example.com:p\\"w\\\\d"\n');
+  });
+
+  test("cleans up the temp dir on success and on failure", () => {
+    const dirs: string[] = [];
+    const capture =
+      (ok: boolean): EmailExec =>
+      (argv) => {
+        dirs.push(argv[argv.indexOf("-K") + 1]!);
+        return { ok, stderr: ok ? "" : "curl: (67) auth failed" };
+      };
+    sendEmail(TARGET, "p", "m", capture(true));
+    sendEmail(TARGET, "p", "m", capture(false));
+    for (const d of dirs) expect(existsSync(d)).toBe(false);
+  });
+
+  test("cleans up even when exec throws", () => {
+    let cfgPath = "";
+    expect(() =>
+      sendEmail(TARGET, "p", "m", (argv) => {
+        cfgPath = argv[argv.indexOf("-K") + 1]!;
+        throw new Error("boom");
+      }),
+    ).toThrow("boom");
+    expect(existsSync(cfgPath)).toBe(false);
+  });
+
+  test("returns curl stderr as the error on failure", () => {
+    const exec: EmailExec = () => ({ ok: false, stderr: "curl: (67) Login denied\n" });
+    expect(sendEmail(TARGET, "p", "m", exec)).toEqual({ ok: false, error: "curl: (67) Login denied" });
+  });
+
+  test("falls back to a generic error when stderr is empty", () => {
+    const exec: EmailExec = () => ({ ok: false, stderr: "" });
+    expect(sendEmail(TARGET, "p", "m", exec)).toEqual({ ok: false, error: "curl failed" });
   });
 });
 
