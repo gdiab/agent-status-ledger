@@ -263,6 +263,17 @@ describe("buildReport", () => {
     const agent2 = untouched.agents.find((a) => a.workdir === "/work/p0")!;
     expect(agent2.evidence).toBe("claimed_only");
     expect(agent2.evidenceCitation).toBeUndefined();
+
+    // Defense in depth (same contract as commit subjects / facts): the
+    // citation is assembled from Engram-derived file paths, and a
+    // secret-bearing path must be redacted at the model layer, not left for
+    // the CLI's final render pass.
+    config.redactPatterns = ["app\\.ts"];
+    const redacted = await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: matchExec });
+    const agent3 = redacted.agents.find((a) => a.workdir === "/work/p0")!;
+    expect(agent3.evidence).toBe("partially_proven");
+    expect(agent3.evidenceCitation).toContain("[REDACTED]");
+    expect(agent3.evidenceCitation).not.toContain("app.ts");
   });
 });
 

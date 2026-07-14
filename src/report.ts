@@ -131,9 +131,14 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
     const sessionIdsNewestFirst = [...profile.sessions]
       .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
       .map((s) => s.sessionId);
-    const { evidence, evidenceCitation } = await applyEngramEnrichment(
+    const { evidence, evidenceCitation: rawCitation } = await applyEngramEnrichment(
       inferredEvidence, sessionIdsNewestFirst, config.connectors.engram, opts.engramExec,
     );
+    // Same defense-in-depth contract as commit subjects and facts above: the
+    // citation is assembled from Engram-derived file paths, which can carry
+    // secrets (e.g. a filename containing a key) — redact at the model layer
+    // so every consumer of buildReport() gets a scrubbed report object.
+    const evidenceCitation = rawCitation ? redact(rawCitation, config.redactPatterns) : undefined;
     const { narrative, source } = opts.useLlm
       ? await generateNarrative(facts, status, { model: config.model, apiKey: opts.apiKey, fetchFn: opts.fetchFn })
       : { narrative: templateNarrative(facts, status), source: "template" as const };
