@@ -4,13 +4,13 @@ import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 import { STATUS_SEVERITY } from "../status";
 import { FILLER_BLOCKED, FILLER_COMPLETED, FILLER_IN_PROGRESS, FILLER_RECOMMENDATION } from "../narrative";
 
-function esc(s: string): string {
+export function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 // warning is #8a6d00, not the classic #b8860b: white-on-#b8860b is 3.25:1,
 // below AA for badge-size text.
-const SEVERITY_COLOR: Record<Severity, string> = { urgent: "#c0392b", warning: "#8a6d00", info: "#2d7a46" };
+export const SEVERITY_COLOR: Record<Severity, string> = { urgent: "#c0392b", warning: "#8a6d00", info: "#2d7a46" };
 // #c0392b on the dark canvas is 3.20:1; the page opts into color-scheme
 // light dark, so error red must adapt per scheme.
 const ERROR_RED = "light-dark(#c0392b, #e07b6c)";
