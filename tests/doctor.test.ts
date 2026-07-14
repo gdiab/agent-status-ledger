@@ -183,7 +183,7 @@ function fakeDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
 describe("runDoctor", () => {
   test("never throws even when everything is missing, and reports all checks", () => {
     const results = runDoctor(fakeDeps());
-    expect(results.length).toBe(8);
+    expect(results.length).toBe(10);
     for (const r of results) {
       expect(typeof r.name).toBe("string");
       expect(typeof r.detail).toBe("string");
@@ -259,5 +259,74 @@ describe("formatDoctorReport", () => {
     expect(out).toContain("FAIL");
     expect(out).toContain("fix: security add-generic-password ...");
     expect(out).toContain("1/2 checks passed");
+  });
+});
+
+import { checkEmailConfig, checkEmailPassword } from "../src/doctor";
+import type { EmailConfig } from "../src/config";
+
+const email: EmailConfig = {
+  to: "gd@example.com", from: "gd@example.com", smtpHost: "smtp.gmail.com", smtpPort: 465,
+};
+
+describe("checkEmailConfig", () => {
+  test("skips when email is not configured", () => {
+    const r = checkEmailConfig(undefined);
+    expect(r.ok).toBe(true);
+    expect(r.detail).toContain("not configured");
+  });
+
+  test("passes and shows the route for a valid config", () => {
+    const r = checkEmailConfig(email);
+    expect(r.ok).toBe(true);
+    expect(r.detail).toContain("smtp.gmail.com:465");
+  });
+
+  test("fails on implausible addresses and bad port", () => {
+    expect(checkEmailConfig({ ...email, to: "not-an-address" }).ok).toBe(false);
+    expect(checkEmailConfig({ ...email, from: "also bad" }).ok).toBe(false);
+    expect(checkEmailConfig({ ...email, smtpPort: 0 }).ok).toBe(false);
+  });
+});
+
+describe("checkEmailPassword", () => {
+  test("skips when email is not configured", () => {
+    const r = checkEmailPassword({}, noKeychain, false);
+    expect(r.ok).toBe(true);
+    expect(r.detail).toContain("not configured");
+  });
+
+  test("passes when the keychain has the app password", () => {
+    const keychain: KeychainLookup = (s, a) =>
+      s === "gmail-app-password" && a === "asl" ? "pass" : null;
+    const r = checkEmailPassword({}, keychain, true);
+    expect(r.ok).toBe(true);
+    expect(r.detail).toContain("keychain");
+  });
+
+  test("fails with the add-generic-password hint when missing", () => {
+    const r = checkEmailPassword({}, noKeychain, true);
+    expect(r.ok).toBe(false);
+    expect(r.fix).toContain("security add-generic-password -s gmail-app-password -a asl");
+  });
+});
+
+describe("runDoctor email wiring", () => {
+  test("includes both email checks when configured", () => {
+    const config = { ...defaultConfig(), email };
+    const results = runDoctor(fakeDeps({ config }));
+    const names = results.map((r) => r.name);
+    expect(names).toContain("email config");
+    expect(names).toContain("gmail app password");
+  });
+
+  test("email checks report skipped when unconfigured", () => {
+    const results = runDoctor(fakeDeps({ config: defaultConfig() }));
+    const emailChecks = results.filter((r) => r.name === "email config" || r.name === "gmail app password");
+    expect(emailChecks).toHaveLength(2);
+    for (const r of emailChecks) {
+      expect(r.ok).toBe(true);
+      expect(r.detail).toContain("not configured");
+    }
   });
 });

@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { parse } from "smol-toml";
 import { KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, resolveApiKey, type KeychainLookup } from "./apikey";
 import type { Config, ConnectorConfig } from "./config";
+import { resolveSmtpPassword, SMTP_KEYCHAIN_ACCOUNT, SMTP_KEYCHAIN_SERVICE } from "./email";
 
 export const LAUNCHD_LABEL = "com.gd.asl-report";
 
@@ -138,6 +139,42 @@ export function checkConfigFile(configPath: string): CheckResult {
   }
 }
 
+const ADDRESS_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function checkEmailConfig(email: Config["email"]): CheckResult {
+  const name = "email config";
+  if (!email) return { name, ok: true, detail: "email not configured — skipped" };
+  const configHint = "fix the [email] section in ~/.config/asl/config.toml";
+  if (!ADDRESS_SHAPE.test(email.to)) {
+    return { name, ok: false, detail: `email.to "${email.to}" does not look like an address`, fix: configHint };
+  }
+  if (!ADDRESS_SHAPE.test(email.from)) {
+    return { name, ok: false, detail: `email.from "${email.from}" does not look like an address`, fix: configHint };
+  }
+  if (!Number.isInteger(email.smtpPort) || email.smtpPort < 1 || email.smtpPort > 65535) {
+    return { name, ok: false, detail: `smtp_port ${email.smtpPort} is not a valid port`, fix: configHint };
+  }
+  return { name, ok: true, detail: `${email.from} → ${email.to} via ${email.smtpHost}:${email.smtpPort}` };
+}
+
+export function checkEmailPassword(
+  env: Record<string, string | undefined>,
+  keychain: KeychainLookup,
+  configured: boolean,
+): CheckResult {
+  const name = "gmail app password";
+  if (!configured) return { name, ok: true, detail: "email not configured — skipped" };
+  const resolved = resolveSmtpPassword(env, keychain);
+  return resolved
+    ? { name, ok: true, detail: `found via ${resolved.source}` }
+    : {
+        name,
+        ok: false,
+        detail: "not found in env (ASL_SMTP_PASSWORD) or keychain",
+        fix: `security add-generic-password -s ${SMTP_KEYCHAIN_SERVICE} -a ${SMTP_KEYCHAIN_ACCOUNT} -w "<gmail app password>"`,
+      };
+}
+
 const skipped = (name: string): CheckResult => ({ name, ok: true, detail: "skipped — not macOS" });
 
 export function runDoctor(deps: DoctorDeps): CheckResult[] {
@@ -152,6 +189,8 @@ export function runDoctor(deps: DoctorDeps): CheckResult[] {
     mac ? checkPlistInstalled(plistPath) : skipped("launchd plist installed"),
     mac ? checkPlistLoaded(deps.exec, plistPath) : skipped("launchd job loaded"),
     checkConfigFile(deps.configPath),
+    checkEmailConfig(deps.config.email),
+    checkEmailPassword(deps.env, deps.keychain, !!deps.config.email),
     checkConnectorDir("claude-code", "claude_code", connectors.claudeCode),
     checkConnectorDir("codex", "codex", connectors.codex, join(connectors.codex.rootDir, "sessions")),
   ];
