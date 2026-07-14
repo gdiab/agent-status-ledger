@@ -397,6 +397,21 @@ Why this works:
 - Artifacts are inspectable.
 - No fragile web scraping is required.
 
+### Candidate ingestion substrate: Engram (added 2026-07-14)
+
+[Engram](https://github.com/clickety-clacks/engram) (Mike Manzano, Rust, Apache 2.0) is a provenance index for agent-driven work that already implements most of the Class 1 collection layer. It parses harness session logs into normalized, immutable event tapes and fingerprints them into SQLite.
+
+Overlap with this PRD:
+
+- **Adapters already built and fixture-tested** for Claude Code, Codex CLI, OpenClaw, Cursor, Gemini CLI, and OpenCode — the same sources budgeted for weeks 2 and 4 of the build plan.
+- **Harness-independent event contract** (`msg.in/out`, `tool.call/result`, `code.read/edit`, `meta`) that maps cleanly onto this PRD's Event model, with explicit per-ingest coverage grades (`full|partial|none`) that map onto evidence levels.
+- **`engram watch`** is a continuous local collector over harness transcript directories.
+- **Dispatch markers** (`<engram-src id="<uuid>"/>` prepended to handoff prompts) give deterministic orchestrator-to-subagent run lineage — stronger than timestamp/repo correlation for attaching runs to agent profiles.
+
+Division of labor if adopted: Engram stays the evidence index (it deliberately does no status inference, summarization, or delivery); this product remains the reporting layer that consumes it. Engram's fingerprint matching could also mechanically upgrade "claimed only" completions to "partially proven" by matching claim text to actual code-edit events in the same tape.
+
+Decision needed before week 2 connector work: consume Engram tapes as the normalized event source vs. write our own parsers. Risks to weigh: early-stage project (v0.2.x, single maintainer), partial Codex coverage (generic shell edits are a known gap), build-from-source install. The dispatch-marker convention is worth adopting in orchestrated dispatches regardless of this decision — it is plain text in a prompt and costs nothing.
+
 ### Class 2: Export/import collectors
 
 These make web/app agents feasible without brittle scraping.
