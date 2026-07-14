@@ -161,7 +161,7 @@ describe("buildReport", () => {
     const ccRoot = join(world, "claude-projects");
     const dir = join(ccRoot, "-work-p0");
     mkdirSync(dir, { recursive: true });
-    // Two sessions in the same cwd: cc-old starts at 11:00, cc-new at 12:00.
+    // Two sessions in the same cwd: the aaaa... session starts at 11:00, the bbbb... session at 12:00.
     const mkSession = (name: string, sessionId: string, hour: string) => {
       const f = join(dir, name);
       writeFileSync(f, [
@@ -176,8 +176,8 @@ describe("buildReport", () => {
       ].join("\n") + "\n");
       utimesSync(f, MTIME, MTIME);
     };
-    mkSession("old.jsonl", "cc-old", "11");
-    mkSession("new.jsonl", "cc-new", "12");
+    mkSession("old.jsonl", "aaaa0000-0000-4000-8000-00000000000a", "11");
+    mkSession("new.jsonl", "bbbb0000-0000-4000-8000-00000000000b", "12");
 
     const config = defaultConfig();
     config.connectors.claudeCode.rootDir = ccRoot;
@@ -192,7 +192,7 @@ describe("buildReport", () => {
     await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: spy });
     // Newest first: recent sessions are the ones most likely to be in the
     // index and most relevant to today's report.
-    expect(grepped).toEqual(["cc-new", "cc-old"]);
+    expect(grepped).toEqual(["bbbb0000-0000-4000-8000-00000000000b", "aaaa0000-0000-4000-8000-00000000000a"]);
   });
 
   // End-to-end through the real pipeline: a session with no file edits and no
@@ -209,11 +209,11 @@ describe("buildReport", () => {
     writeFileSync(f, [
       JSON.stringify({
         type: "user", timestamp: "2026-07-07T12:00:00.000Z", cwd: "/work/p0",
-        sessionId: "cc-p0", message: { role: "user", content: "task" },
+        sessionId: "cccc0000-0000-4000-8000-00000000000c", message: { role: "user", content: "task" },
       }),
       JSON.stringify({
         type: "assistant", timestamp: "2026-07-07T12:05:00.000Z", cwd: "/work/p0",
-        sessionId: "cc-p0", message: { role: "assistant", content: "done" },
+        sessionId: "cccc0000-0000-4000-8000-00000000000c", message: { role: "assistant", content: "done" },
       }),
     ].join("\n") + "\n");
     utimesSync(f, MTIME, MTIME);
@@ -224,14 +224,14 @@ describe("buildReport", () => {
     config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
 
     const matchExec: Exec = (argv) => {
-      if (argv[1] === "grep" && argv[2] === "cc-p0") {
+      if (argv[1] === "grep" && argv[2] === "cccc0000-0000-4000-8000-00000000000c") {
         return {
           ok: true,
-          stdout: JSON.stringify({ sessions: [{ session_id: "engram-sid-1", confidence: 12.0 }] }),
+          stdout: JSON.stringify({ sessions: [{ session_id: "e1e1e1e1e1e1e1e1", confidence: 12.0 }] }),
           stderr: "",
         };
       }
-      if (argv[1] === "peek" && argv[2] === "engram-sid-1") {
+      if (argv[1] === "peek" && argv[2] === "e1e1e1e1e1e1e1e1") {
         return {
           ok: true,
           stdout: JSON.stringify({
@@ -240,7 +240,7 @@ describe("buildReport", () => {
                 line: 1,
                 text: JSON.stringify({
                   file: "/work/p0/src/app.ts", k: "code.edit",
-                  source: { harness: "claude-code", session_id: "cc-p0" }, t: "t",
+                  source: { harness: "claude-code", session_id: "cccc0000-0000-4000-8000-00000000000c" }, t: "t",
                 }),
               }],
             },
@@ -254,7 +254,7 @@ describe("buildReport", () => {
     const upgraded = await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: matchExec });
     const agent = upgraded.agents.find((a) => a.workdir === "/work/p0")!;
     expect(agent.evidence).toBe("partially_proven");
-    expect(agent.evidenceCitation).toContain("engram-sid-1");
+    expect(agent.evidenceCitation).toContain("e1e1e1e1e1e1e1e1");
     expect(agent.evidenceCitation).toContain("/work/p0/src/app.ts");
 
     // Every failure path leaves the inferred level untouched.

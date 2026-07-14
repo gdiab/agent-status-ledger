@@ -45,6 +45,15 @@ export const ENGRAM_TIMEOUT_MS = 5_000;
 const MAX_GREP_CANDIDATES = 3;
 const MAX_SESSIONS_PER_PROFILE = 5;
 
+// Session ids reach argv from two untrusted sources: harness transcripts
+// (RawSession.sessionId is parsed from log files) and engram's own grep
+// output. Allowlist, don't blocklist: Claude Code/Codex session ids are
+// UUIDs and engram session ids are 64-char hex hashes — both fit a plain
+// hex-and-dashes shape. Anything else (option-looking strings like
+// "--help", shell metacharacters, empty) is rejected before any exec, so a
+// hostile id can never become an engram CLI option.
+const SESSION_ID_SHAPE = /^[0-9a-fA-F-]{8,64}$/;
+
 export interface UpgradeResult {
   matched: boolean;
   citation?: string;
@@ -116,6 +125,7 @@ export function upgradeEvidence(
   exec: Exec,
 ): UpgradeResult {
   try {
+    if (!SESSION_ID_SHAPE.test(sessionUuid)) return { matched: false };
     const grep = exec([binaryPath, "grep", sessionUuid]);
     if (!grep.ok) return { matched: false };
     const grepObj = parseCliResponse(grep.stdout);
@@ -126,7 +136,7 @@ export function upgradeEvidence(
       : [];
     for (const candidate of candidates) {
       const engramSid = (candidate as Record<string, unknown> | null)?.session_id;
-      if (typeof engramSid !== "string" || engramSid.length === 0) continue;
+      if (typeof engramSid !== "string" || !SESSION_ID_SHAPE.test(engramSid)) continue;
 
       const peek = exec([binaryPath, "peek", engramSid, "--grep-filter", CODE_EDIT_FILTER]);
       if (!peek.ok) continue;

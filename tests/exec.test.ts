@@ -30,4 +30,15 @@ describe("makeSpawnExec", () => {
     const r = exec(["/no/such/binary-xyz"]);
     expect(r.ok).toBe(false);
   });
+
+  test("a runaway process exceeding the output cap is killed and degrades to ok:false", () => {
+    // 64KB cap for the test; production default is MAX_OUTPUT_BYTES.
+    const exec = makeSpawnExec(5_000, 64 * 1024);
+    const started = Date.now();
+    const r = exec(["yes"]); // emits output forever
+    expect(r.ok).toBe(false);
+    expect(Date.now() - started).toBeLessThan(4_000); // killed by the cap, not the timeout
+    // buffered output is bounded near the cap, not unbounded
+    expect(r.stdout.length).toBeLessThan(10 * 1024 * 1024);
+  });
 });

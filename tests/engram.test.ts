@@ -178,6 +178,37 @@ describe("upgradeEvidence", () => {
     expect(r.matched).toBe(true);
   });
 
+  // Session ids come from transcripts (harness side) and engram output (grep
+  // side) — both untrusted. Anything not matching the UUID/hex-hash
+  // allowlist must be rejected before it can reach an argv.
+  test("rejects hostile or malformed harness session ids without ever calling exec", () => {
+    for (const hostile of ["--help", "-x", "$(rm -rf /)", "", "a".repeat(65), "cc-p0; rm"]) {
+      let calls = 0;
+      const spy: Exec = () => {
+        calls++;
+        return { ok: true, stdout: "", stderr: "" };
+      };
+      const r = upgradeEvidence(hostile, BIN, spy);
+      expect(r.matched).toBe(false);
+      expect(calls).toBe(0);
+    }
+  });
+
+  test("rejects a hostile engram session id from grep output without calling peek", () => {
+    const peeked: string[] = [];
+    const inner = twoStepExec(grepResponse(["--evil-flag", "not hex!", ENGRAM_SID]), {
+      [ENGRAM_SID]: peekResponse([editEvent("/repo/src/a.ts", UUID)]),
+    });
+    const exec: Exec = (argv) => {
+      if (argv[1] === "peek") peeked.push(argv[2]!);
+      return inner(argv);
+    };
+    const r = upgradeEvidence(UUID, BIN, exec);
+    // the hostile candidates are skipped, the legitimate one still matches
+    expect(r.matched).toBe(true);
+    expect(peeked).toEqual([ENGRAM_SID]);
+  });
+
   test("ignores grep sessions without a usable session_id instead of throwing", async () => {
     const exec = twoStepExec(
       cliStdout({ returned: 1, sessions: [{ confidence: 325.0 }] }), // no session_id key
@@ -188,7 +219,7 @@ describe("upgradeEvidence", () => {
   });
 
   test("peeks at most 3 grep candidates per session, even when grep returns more", async () => {
-    const sids = ["c1", "c2", "c3", "c4", "c5", "c6"];
+    const sids = ["cafe0001", "cafe0002", "cafe0003", "cafe0004", "cafe0005", "cafe0006"];
     const peeked: string[] = [];
     const inner = twoStepExec(
       grepResponse(sids),
@@ -202,7 +233,7 @@ describe("upgradeEvidence", () => {
     };
     const r = await upgradeEvidence(UUID, BIN, exec);
     expect(r.matched).toBe(false);
-    expect(peeked).toEqual(["c1", "c2", "c3"]);
+    expect(peeked).toEqual(["cafe0001", "cafe0002", "cafe0003"]);
   });
 
   test("a timed-out engram call (ok:false, empty stdout) degrades to no match", async () => {
