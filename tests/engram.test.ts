@@ -200,6 +200,15 @@ describe("upgradeEvidence", () => {
     expect(r.matched).toBe(false);
   });
 
+  test("a timed-out engram call (ok:false, empty stdout) degrades to no match", async () => {
+    // The shape makeSpawnExec produces when the 5s per-call timeout kills a
+    // hung binary (e.g. locked SQLite DB): non-zero/absent exit, nothing on
+    // stdout. Evidence must stay untouched, never hang the report run.
+    const timedOut: Exec = () => ({ ok: false, stdout: "", stderr: "" });
+    const r = await upgradeEvidence(UUID, BIN, timedOut);
+    expect(r.matched).toBe(false);
+  });
+
   test("never throws even if exec itself throws", async () => {
     const throwingExec: Exec = () => {
       throw new Error("boom");

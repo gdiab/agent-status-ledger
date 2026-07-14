@@ -11,6 +11,7 @@ import { renderHtml, HTML_LAYOUTS, type HtmlLayout } from "./render/html";
 import { redact } from "./redact";
 import { resolveApiKey, macKeychainLookup } from "./apikey";
 import { formatDoctorReport, runDoctor, type Exec } from "./doctor";
+import { makeSpawnExec } from "./exec";
 import { homedir } from "node:os";
 import { sendReportEmail } from "./email";
 import { statusSummary } from "./render/rollup";
@@ -18,17 +19,16 @@ import { statusSummary } from "./render/rollup";
 const USAGE = `usage: asl report [--since 24h] [--open] [--no-llm] [--no-email] [--out DIR] [--layout ${HTML_LAYOUTS.join("|")}]
        asl doctor`;
 
-// One exec seam for the whole CLI — doctor's checks and the email path both
-// just need real subprocess execution with stdout and stderr piped, never
-// throwing.
-const spawnExec: Exec = (argv) => {
-  try {
-    const proc = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe" });
-    return { ok: proc.exitCode === 0, stdout: proc.stdout.toString(), stderr: proc.stderr.toString() };
-  } catch (e) {
-    return { ok: false, stdout: "", stderr: String(e) };
-  }
-};
+// Two exec seams, both timeout-bounded (src/exec.ts) so nothing can hang the
+// unattended run:
+// - spawnExec (60s) for doctor's checks and the email path — matches the
+//   keychain lookup's bound in apikey.ts, and email's curl already self-caps
+//   at --max-time 60, so 60s is the ceiling any legitimate caller needs.
+// - engramExec (5s) for the engram enrichment calls — observed real latency
+//   is ~60ms and a report run may make several calls per profile, so a hung
+//   binary must fail fast rather than eat the 60s budget repeatedly.
+const spawnExec: Exec = makeSpawnExec(60_000);
+const engramExec: Exec = makeSpawnExec(5_000);
 
 function runDoctorCli(): never {
   const cfgPath = configPath();
@@ -115,14 +115,13 @@ async function main() {
   // No usable history → annotateTrends is a no-op and output is unchanged.
   const day = now.toISOString().slice(0, 10);
   const previous = await loadPreviousReport(config.reportsDir, day);
-  // spawnExec is the same real subprocess seam doctor's checks and email use;
-  // reused here so the engram evidence-upgrade connector (opt-in via
-  // connectors.engram.enabled) has a working exec seam in the real CLI, not
-  // just in tests. buildReport's own gate (evidence === "claimed_only" &&
+  // The 5s-bounded engram seam gives the evidence-upgrade connector (opt-in
+  // via connectors.engram.enabled) a working exec in the real CLI, not just
+  // in tests. buildReport's own gate (evidence === "claimed_only" &&
   // config.connectors.engram.enabled) means this is inert unless the user
   // has opted in.
   const report = annotateTrends(
-    await buildReport({ since, now, config, useLlm, apiKey, engramExec: spawnExec }),
+    await buildReport({ since, now, config, useLlm, apiKey, engramExec }),
     previous,
   );
 
