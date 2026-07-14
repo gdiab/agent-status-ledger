@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveSecret, type KeychainLookup } from "./apikey";
 import type { EmailConfig } from "./config";
+import type { Exec } from "./exec";
 
 export const SMTP_KEYCHAIN_SERVICE = "gmail-app-password";
 export const SMTP_KEYCHAIN_ACCOUNT = "asl";
@@ -127,10 +128,9 @@ export function buildMimeMessage(m: MimeInput): string {
   ].join("\r\n");
 }
 
-// Shared exec seam: doctor's checks need stdout (e.g. `bun --version`), and
-// email needs stderr (curl reports SMTP failures there) — one shape with
-// both fields covers every caller instead of each seam inventing its own.
-export type Exec = (argv: string[]) => { ok: boolean; stdout: string; stderr: string };
+// The exec seam now lives in exec.ts next to makeSpawnExec; re-exported here
+// so existing `from "./email"` imports keep working.
+export type { Exec } from "./exec";
 
 export interface SmtpTarget {
   host: string;

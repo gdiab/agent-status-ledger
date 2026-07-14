@@ -17,10 +17,7 @@
 // Guard: grep can hit a session that merely *mentions* the UUID (e.g. an
 // orchestrator transcript quoting a dispatch prompt), so a candidate only
 // counts when its code.edit events actually carry source.session_id == uuid.
-import type { CheckResult } from "../doctor";
-import type { Exec } from "../email";
-
-export type { Exec };
+import type { Exec } from "../exec";
 
 const CODE_EDIT_FILTER = '"k":"code.edit"';
 // Human-readable citation stays a one-liner: cap the distinct files named.
@@ -32,19 +29,6 @@ const MAX_CITED_FILES = 5;
 // the first hits — trying more than a few just burns subprocess time on
 // mention-only transcripts.
 const MAX_GREP_CANDIDATES = 3;
-
-export function checkEngramAvailable(binaryPath: string, exec: Exec): CheckResult {
-  const name = "engram binary";
-  const r = exec([binaryPath, "--help"]);
-  return r.ok
-    ? { name, ok: true, detail: `found via ${binaryPath}` }
-    : {
-        name,
-        ok: false,
-        detail: `${binaryPath} --help failed`,
-        fix: `build engram from source (cargo build --release in the engram repo) and set connectors.engram.binary_path in ~/.config/asl/config.toml to the absolute binary path`,
-      };
-}
 
 interface UpgradeResult {
   matched: boolean;

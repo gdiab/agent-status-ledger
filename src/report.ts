@@ -7,7 +7,8 @@ import { attributeCommits, listCommits } from "./git";
 import { EXCEPTION_STATUSES, inferStatus } from "./status";
 import { buildFactSheet, generateNarrative, templateNarrative } from "./narrative";
 import { redact, redactFacts } from "./redact";
-import { upgradeEvidence, type Exec } from "./connectors/engram";
+import { upgradeEvidence } from "./connectors/engram";
+import type { Exec } from "./exec";
 
 export interface BuildReportOptions {
   since: Date;

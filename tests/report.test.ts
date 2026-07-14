@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { applyEngramEnrichment, buildReport, isTrivialProfile } from "../src/report";
 import { defaultConfig } from "../src/config";
 import type { AgentProfile, CommitEvidence, EvidenceLevel, RawSession } from "../src/types";
-import type { Exec } from "../src/connectors/engram";
+import type { Exec } from "../src/exec";
 
 const NOW = new Date("2026-07-08T07:00:00.000Z");
 const SINCE = new Date("2026-07-07T07:00:00.000Z");

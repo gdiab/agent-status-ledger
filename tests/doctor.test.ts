@@ -9,6 +9,7 @@ import {
   checkConnectorDir,
   checkEmailConfig,
   checkEmailPassword,
+  checkEngram,
   checkLaunchdBunPath,
   checkPlistInstalled,
   checkPlistLoaded,
@@ -248,6 +249,33 @@ describe("runDoctor", () => {
       expect(r.ok).toBe(true);
       expect(r.detail).toContain("skipped");
     }
+  });
+});
+
+describe("checkEngram", () => {
+  test("reports disabled — skipped without probing when the connector is off", () => {
+    let calls = 0;
+    const spy: Exec = () => {
+      calls++;
+      return { ok: true, stdout: "", stderr: "" };
+    };
+    const r = checkEngram({ enabled: false, binaryPath: "/opt/engram" }, spy);
+    expect(r.ok).toBe(true);
+    expect(r.detail).toContain("disabled");
+    expect(calls).toBe(0);
+  });
+
+  test("passes when enabled and the binary responds", () => {
+    const r = checkEngram({ enabled: true, binaryPath: "/opt/engram" }, execOk("engram help text"));
+    expect(r.ok).toBe(true);
+    expect(r.detail).toContain("/opt/engram");
+    expect(r.fix).toBeUndefined();
+  });
+
+  test("fails with a build hint when enabled and the binary is missing or errors", () => {
+    const r = checkEngram({ enabled: true, binaryPath: "/opt/engram" }, execFail);
+    expect(r.ok).toBe(false);
+    expect(r.fix).toContain("cargo build");
   });
 });
 

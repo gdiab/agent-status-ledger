@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { checkEngramAvailable, upgradeEvidence, type Exec } from "../src/connectors/engram";
+import { upgradeEvidence } from "../src/connectors/engram";
+import type { Exec } from "../src/exec";
 
 const execOk =
   (stdout: string): Exec =>
@@ -69,21 +70,6 @@ function twoStepExec(grepStdout: string, peekStdoutBySid: Record<string, string>
     return { ok: false, stdout: "", stderr: `unexpected subcommand ${argv[1]}` };
   };
 }
-
-describe("checkEngramAvailable", () => {
-  test("passes when the binary responds", () => {
-    const r = checkEngramAvailable(BIN, execOk("engram help text"));
-    expect(r.ok).toBe(true);
-    expect(r.detail).toContain(BIN);
-    expect(r.fix).toBeUndefined();
-  });
-
-  test("fails with a build hint when the binary is missing or errors", () => {
-    const r = checkEngramAvailable(BIN, execFail);
-    expect(r.ok).toBe(false);
-    expect(r.fix).toContain("cargo build");
-  });
-});
 
 describe("upgradeEvidence", () => {
   test("does not match when the binary is missing (exec not ok)", async () => {
