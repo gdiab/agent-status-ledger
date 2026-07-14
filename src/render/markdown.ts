@@ -22,6 +22,10 @@ function agentSection(a: AgentReport): string {
     "",
     `- Status: **${a.status}** (${a.severity})`,
     `- Evidence: ${a.evidence}`,
+    // Corroboration from an enrichment connector (engram); absent = no line.
+    // Assembled from session ids and file paths — mdEscape so an underscore
+    // or bracket in a path can't open a formatting span (asl-xis).
+    ...(a.evidenceCitation ? [`- Evidence citation: ${mdEscape(a.evidenceCitation)}`] : []),
     `- Workdir: \`${a.workdir}\``,
     `- Sessions: ${a.facts.sessionCount} (${a.facts.firstActivity} → ${a.facts.lastActivity})`,
     // Cross-day trend annotations (src/trends.ts); absent = no history, no line.

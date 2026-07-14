@@ -6,6 +6,12 @@ import type { Thresholds } from "./types";
 
 export interface ConnectorConfig { enabled: boolean; rootDir: string; }
 
+// Engram (github.com/clickety-clacks/engram) is an optional fail-soft
+// enrichment connector, not a log source — it has a binary path instead of a
+// rootDir, and defaults to disabled until proven in real use (see
+// src/connectors/engram.ts).
+export interface EngramConfig { enabled: boolean; binaryPath: string; }
+
 // No whitespace of any kind (space, tab, CR, LF) in either address part.
 const EMAIL_ADDRESS_SHAPE = /^[^\s@]+@[^\s@]+$/;
 const SMTP_HOST_SHAPE = /^[A-Za-z0-9.-]+$/;
@@ -21,7 +27,7 @@ export interface Config {
   reportsDir: string;
   model: string;
   thresholds: Thresholds;
-  connectors: { claudeCode: ConnectorConfig; codex: ConnectorConfig };
+  connectors: { claudeCode: ConnectorConfig; codex: ConnectorConfig; engram: EngramConfig };
   email?: EmailConfig;   // absent = email delivery off
   redactPatterns: string[];   // extra user regexes (source strings)
 }
@@ -34,6 +40,7 @@ export function defaultConfig(): Config {
     connectors: {
       claudeCode: { enabled: true, rootDir: join(homedir(), ".claude", "projects") },
       codex: { enabled: true, rootDir: join(homedir(), ".codex") },
+      engram: { enabled: false, binaryPath: "engram" },
     },
     redactPatterns: [],
   };
@@ -65,6 +72,9 @@ export function loadConfig(path: string = configPath()): Config {
     if (typeof section?.enabled === "boolean") target.enabled = section.enabled;
     if (typeof section?.root_dir === "string") target.rootDir = section.root_dir;
   }
+  const engramSection = conns?.engram;
+  if (typeof engramSection?.enabled === "boolean") c.connectors.engram.enabled = engramSection.enabled;
+  if (typeof engramSection?.binary_path === "string") c.connectors.engram.binaryPath = engramSection.binary_path;
   const em = raw.email as Record<string, unknown> | undefined;
   // TOML multiline strings can smuggle CR/LF (and other control chars) into
   // values that later land in RFC 5322 headers or a curl.cfg directive line

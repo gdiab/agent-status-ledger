@@ -7,6 +7,8 @@ import { attributeCommits, listCommits } from "./git";
 import { EXCEPTION_STATUSES, inferStatus } from "./status";
 import { buildFactSheet, generateNarrative, templateNarrative } from "./narrative";
 import { redact, redactFacts } from "./redact";
+import { corroborateSessions } from "./connectors/engram";
+import type { Exec } from "./exec";
 
 export interface BuildReportOptions {
   since: Date;
@@ -15,6 +17,11 @@ export interface BuildReportOptions {
   useLlm: boolean;
   apiKey?: string;
   fetchFn?: typeof fetch;
+  // Test seam for the Engram evidence-upgrade connector (same pattern as
+  // fetchFn above): absent = the connector uses its own timeout-bounded real
+  // exec when config.connectors.engram.enabled is true. The enabled flag is
+  // the single switch.
+  engramExec?: Exec;
 }
 
 const SEVERITY_ORDER = { urgent: 0, warning: 1, info: 2 } as const;
@@ -79,8 +86,22 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
     // future consumer of buildReport() (not just the CLI's own render pass) gets a
     // report object with secrets already scrubbed.
     const commits = rawCommits.map((c) => ({ ...c, subject: redact(c.subject, config.redactPatterns) }));
-    const { status, severity, evidence } = inferStatus(profile, rawCommits, now, config.thresholds);
+    const { status, severity, evidence: inferredEvidence } = inferStatus(profile, rawCommits, now, config.thresholds);
+    let evidence = inferredEvidence;
     const facts = redactFacts(buildFactSheet(profile, commits), config.redactPatterns);
+    // Optional evidence corroboration: only a claimed_only reading can be
+    // upgraded — everything else engram-shaped (enabled switch, budgets,
+    // ordering, fail-soft boundary) lives in the connector. The citation is
+    // redacted at the model layer like commit subjects and facts above,
+    // since it is assembled from Engram-derived file paths.
+    let evidenceCitation: string | undefined;
+    if (evidence === "claimed_only") {
+      const upgrade = corroborateSessions(profile.sessions, config.connectors.engram, opts.engramExec);
+      if (upgrade.matched) {
+        evidence = "partially_proven";
+        evidenceCitation = upgrade.citation ? redact(upgrade.citation, config.redactPatterns) : undefined;
+      }
+    }
     const { narrative, source } = opts.useLlm
       ? await generateNarrative(facts, status, { model: config.model, apiKey: opts.apiKey, fetchFn: opts.fetchFn })
       : { narrative: templateNarrative(facts, status), source: "template" as const };
@@ -90,7 +111,7 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
         displayName: profile.displayName,
         platform: profile.platform,
         workdir: profile.workdir,
-        status, severity, evidence,
+        status, severity, evidence, evidenceCitation,
         facts,
         narrative,
         narrativeSource: source,

@@ -10,8 +10,9 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "smol-toml";
 import { KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, resolveApiKey, type KeychainLookup } from "./apikey";
-import type { Config, ConnectorConfig } from "./config";
-import { resolveSmtpPassword, SMTP_PASSWORD_FIX, type Exec } from "./email";
+import type { Config, ConnectorConfig, EngramConfig } from "./config";
+import { resolveSmtpPassword, SMTP_PASSWORD_FIX } from "./email";
+import type { Exec } from "./exec";
 
 export const LAUNCHD_LABEL = "com.gd.asl-report";
 
@@ -22,8 +23,7 @@ export interface CheckResult {
   fix?: string;
 }
 
-// Exec lives in email.ts (doctor already imports from there, and email must
-// not import back from doctor) — re-exported here so existing `from "./doctor"`
+// Exec lives in exec.ts — re-exported here so existing `from "./doctor"`
 // imports keep working.
 export type { Exec };
 
@@ -178,6 +178,24 @@ export function checkEmailPassword(
       };
 }
 
+// The engram connector (src/connectors/engram.ts) is opt-in enrichment: a
+// disabled connector is a healthy skip, an enabled one needs a working
+// binary at the configured path (not on PATH, not on crates.io — built from
+// source).
+export function checkEngram(conn: EngramConfig, exec: Exec): CheckResult {
+  const name = "engram binary";
+  if (!conn.enabled) return { name, ok: true, detail: "disabled in config — skipped" };
+  const r = exec([conn.binaryPath, "--help"]);
+  return r.ok
+    ? { name, ok: true, detail: `found via ${conn.binaryPath}` }
+    : {
+        name,
+        ok: false,
+        detail: `${conn.binaryPath} --help failed`,
+        fix: `build engram from source (cargo build --release in the engram repo) and set connectors.engram.binary_path in ~/.config/asl/config.toml to the absolute binary path`,
+      };
+}
+
 const skipped = (name: string): CheckResult => ({ name, ok: true, detail: "skipped — not macOS" });
 
 export function runDoctor(deps: DoctorDeps): CheckResult[] {
@@ -196,6 +214,7 @@ export function runDoctor(deps: DoctorDeps): CheckResult[] {
     checkEmailPassword(deps.env, deps.keychain, deps.config.email),
     checkConnectorDir("claude-code", "claude_code", connectors.claudeCode),
     checkConnectorDir("codex", "codex", connectors.codex, join(connectors.codex.rootDir, "sessions")),
+    checkEngram(connectors.engram, deps.exec),
   ];
 }
 

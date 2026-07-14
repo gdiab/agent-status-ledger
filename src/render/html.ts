@@ -84,6 +84,10 @@ function cardBody(a: AgentReport): string {
     ...(shows(next) ? [`<dt>Next</dt><dd>${esc(next[1])}</dd>`] : []),
     // Cross-day trend annotations (src/trends.ts); absent = no history, no row.
     ...(a.trends?.length ? [`<dt>Trend</dt><dd>${esc(a.trends.join("; "))}</dd>`] : []),
+    // Corroboration from an enrichment connector (engram); absent = no row.
+    // Distinct class: "evidence" is the badge span on every card, so the
+    // citation needs its own marker for styling and testability.
+    ...(a.evidenceCitation ? [`<dt>Evidence</dt><dd class="evidence-citation">${esc(a.evidenceCitation)}</dd>`] : []),
   ];
   return `<dl>
     ${rows.join("\n    ")}

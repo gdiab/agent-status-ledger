@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { buildReport, isTrivialProfile } from "../src/report";
 import { defaultConfig } from "../src/config";
 import type { AgentProfile, CommitEvidence, RawSession } from "../src/types";
+import type { Exec } from "../src/exec";
 
 const NOW = new Date("2026-07-08T07:00:00.000Z");
 const SINCE = new Date("2026-07-07T07:00:00.000Z");
@@ -108,6 +109,171 @@ describe("buildReport", () => {
     expect(report.agents.every((a) => a.narrativeSource === "llm")).toBe(true);
     expect(maxInflight).toBeGreaterThanOrEqual(2); // actually parallel
     expect(maxInflight).toBeLessThanOrEqual(4);    // but bounded
+  });
+
+  test("engram enrichment never touches an already-proven report, even on a mocked match", async () => {
+    const world = mkdtempSync(join(tmpdir(), "asl-report-"));
+
+    const repo = join(world, "repo");
+    mkdirSync(repo);
+    await run(repo, ["git", "init", "-q"]);
+    await run(repo, ["git", "config", "user.email", "t@t.test"]);
+    await run(repo, ["git", "config", "user.name", "t"]);
+    await run(repo, ["git", "commit", "-q", "--allow-empty", "-m", "fix auth"],
+      { GIT_AUTHOR_DATE: "2026-07-07T09:20:00Z", GIT_COMMITTER_DATE: "2026-07-07T09:20:00Z" });
+
+    const ccRoot = join(world, "claude-projects");
+    const enc = repo.replace(/\//g, "-");
+    mkdirSync(join(ccRoot, enc), { recursive: true });
+    const completed = readFileSync("fixtures/claude-code/session-completed.jsonl", "utf8")
+      .replaceAll("/work/demo", repo);
+    const s1 = join(ccRoot, enc, "s1.jsonl");
+    writeFileSync(s1, completed);
+    utimesSync(s1, MTIME, MTIME);
+
+    const config = defaultConfig();
+    config.connectors.claudeCode.rootDir = ccRoot;
+    config.connectors.codex.enabled = false;
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+
+    let calls = 0;
+    const alwaysMatchExec: Exec = () => {
+      calls++;
+      return {
+        ok: true,
+        stdout: JSON.stringify({ sessions: [{ session_id: "deadbeef", confidence: 325.0 }] }),
+        stderr: "",
+      };
+    };
+
+    const report = await buildReport({
+      since: SINCE, now: NOW, config, useLlm: false, engramExec: alwaysMatchExec,
+    });
+    const agent = report.agents.find((a) => a.workdir === repo)!;
+    expect(agent.evidence).toBe("proven");
+    expect(agent.evidenceCitation).toBeUndefined();
+    // gate is on evidence level, not on whether exec would have matched
+    expect(calls).toBe(0);
+  });
+
+  test("engram enrichment tries a profile's sessions newest-first", async () => {
+    const world = mkdtempSync(join(tmpdir(), "asl-report-"));
+    const ccRoot = join(world, "claude-projects");
+    const dir = join(ccRoot, "-work-p0");
+    mkdirSync(dir, { recursive: true });
+    // Two sessions in the same cwd: the aaaa... session starts at 11:00, the bbbb... session at 12:00.
+    const mkSession = (name: string, sessionId: string, hour: string) => {
+      const f = join(dir, name);
+      writeFileSync(f, [
+        JSON.stringify({
+          type: "user", timestamp: `2026-07-07T${hour}:00:00.000Z`, cwd: "/work/p0",
+          sessionId, message: { role: "user", content: "task" },
+        }),
+        JSON.stringify({
+          type: "assistant", timestamp: `2026-07-07T${hour}:05:00.000Z`, cwd: "/work/p0",
+          sessionId, message: { role: "assistant", content: "done" },
+        }),
+      ].join("\n") + "\n");
+      utimesSync(f, MTIME, MTIME);
+    };
+    mkSession("old.jsonl", "aaaa0000-0000-4000-8000-00000000000a", "11");
+    mkSession("new.jsonl", "bbbb0000-0000-4000-8000-00000000000b", "12");
+
+    const config = defaultConfig();
+    config.connectors.claudeCode.rootDir = ccRoot;
+    config.connectors.codex.enabled = false;
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+
+    const grepped: string[] = [];
+    const spy: Exec = (argv) => {
+      if (argv[1] === "grep") grepped.push(argv[2]!);
+      return { ok: true, stdout: JSON.stringify({ error: "no_results" }), stderr: "" };
+    };
+    await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: spy });
+    // Newest first: recent sessions are the ones most likely to be in the
+    // index and most relevant to today's report.
+    expect(grepped).toEqual(["bbbb0000-0000-4000-8000-00000000000b", "aaaa0000-0000-4000-8000-00000000000a"]);
+  });
+
+  // End-to-end through the real pipeline: a session with no file edits and no
+  // commits infers claimed_only, and the connector keys off its harness
+  // session UUID (which ASL always has) — not facts.filesTouched (which is
+  // guaranteed empty exactly when the claimed_only gate opens).
+  test("engram enrichment upgrades a real claimed_only profile via its session UUID, and stays claimed_only on failure", async () => {
+    const world = mkdtempSync(join(tmpdir(), "asl-report-"));
+    const ccRoot = join(world, "claude-projects");
+    const dir = join(ccRoot, "-work-p0");
+    mkdirSync(dir, { recursive: true });
+    const f = join(dir, "s.jsonl");
+    // Long enough not to be trivial; no file edits → evidence claimed_only.
+    writeFileSync(f, [
+      JSON.stringify({
+        type: "user", timestamp: "2026-07-07T12:00:00.000Z", cwd: "/work/p0",
+        sessionId: "cccc0000-0000-4000-8000-00000000000c", message: { role: "user", content: "task" },
+      }),
+      JSON.stringify({
+        type: "assistant", timestamp: "2026-07-07T12:05:00.000Z", cwd: "/work/p0",
+        sessionId: "cccc0000-0000-4000-8000-00000000000c", message: { role: "assistant", content: "done" },
+      }),
+    ].join("\n") + "\n");
+    utimesSync(f, MTIME, MTIME);
+
+    const config = defaultConfig();
+    config.connectors.claudeCode.rootDir = ccRoot;
+    config.connectors.codex.enabled = false;
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+
+    const matchExec: Exec = (argv) => {
+      if (argv[1] === "grep" && argv[2] === "cccc0000-0000-4000-8000-00000000000c") {
+        return {
+          ok: true,
+          stdout: JSON.stringify({ sessions: [{ session_id: "e1e1e1e1e1e1e1e1", confidence: 12.0 }] }),
+          stderr: "",
+        };
+      }
+      if (argv[1] === "peek" && argv[2] === "e1e1e1e1e1e1e1e1") {
+        return {
+          ok: true,
+          stdout: JSON.stringify({
+            session: {
+              content: [{
+                line: 1,
+                text: JSON.stringify({
+                  file: "/work/p0/src/app.ts", k: "code.edit",
+                  source: { harness: "claude-code", session_id: "cccc0000-0000-4000-8000-00000000000c" }, t: "t",
+                }),
+              }],
+            },
+          }),
+          stderr: "",
+        };
+      }
+      return { ok: true, stdout: JSON.stringify({ error: "no_results" }), stderr: "" };
+    };
+
+    const upgraded = await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: matchExec });
+    const agent = upgraded.agents.find((a) => a.workdir === "/work/p0")!;
+    expect(agent.evidence).toBe("partially_proven");
+    expect(agent.evidenceCitation).toContain("e1e1e1e1e1e1e1e1");
+    expect(agent.evidenceCitation).toContain("/work/p0/src/app.ts");
+
+    // Every failure path leaves the inferred level untouched.
+    const failingExec: Exec = () => ({ ok: false, stdout: "", stderr: "engram: not found" });
+    const untouched = await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: failingExec });
+    const agent2 = untouched.agents.find((a) => a.workdir === "/work/p0")!;
+    expect(agent2.evidence).toBe("claimed_only");
+    expect(agent2.evidenceCitation).toBeUndefined();
+
+    // Defense in depth (same contract as commit subjects / facts): the
+    // citation is assembled from Engram-derived file paths, and a
+    // secret-bearing path must be redacted at the model layer, not left for
+    // the CLI's final render pass.
+    config.redactPatterns = ["app\\.ts"];
+    const redacted = await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: matchExec });
+    const agent3 = redacted.agents.find((a) => a.workdir === "/work/p0")!;
+    expect(agent3.evidence).toBe("partially_proven");
+    expect(agent3.evidenceCitation).toContain("[REDACTED]");
+    expect(agent3.evidenceCitation).not.toContain("app.ts");
   });
 });
 

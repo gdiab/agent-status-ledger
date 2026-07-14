@@ -12,6 +12,7 @@ import { renderEmailDigest } from "./render/digest";
 import { redact } from "./redact";
 import { resolveApiKey, macKeychainLookup } from "./apikey";
 import { formatDoctorReport, runDoctor, type Exec } from "./doctor";
+import { makeSpawnExec } from "./exec";
 import { homedir } from "node:os";
 import { sendReportEmail } from "./email";
 import { statusSummary } from "./render/rollup";
@@ -19,17 +20,13 @@ import { statusSummary } from "./render/rollup";
 const USAGE = `usage: asl report [--since 24h] [--open] [--no-llm] [--no-email] [--out DIR] [--layout ${HTML_LAYOUTS.join("|")}]
        asl doctor`;
 
-// One exec seam for the whole CLI — doctor's checks and the email path both
-// just need real subprocess execution with stdout and stderr piped, never
-// throwing.
-const spawnExec: Exec = (argv) => {
-  try {
-    const proc = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe" });
-    return { ok: proc.exitCode === 0, stdout: proc.stdout.toString(), stderr: proc.stderr.toString() };
-  } catch (e) {
-    return { ok: false, stdout: "", stderr: String(e) };
-  }
-};
+// One timeout-bounded exec seam (src/exec.ts) for doctor's checks and the
+// email path, so nothing can hang the unattended run: 60s matches the
+// keychain lookup's bound in apikey.ts, and email's curl already self-caps
+// at --max-time 60, so 60s is the ceiling any legitimate caller needs. The
+// engram connector owns its own tighter seam (ENGRAM_TIMEOUT_MS in
+// src/connectors/engram.ts) behind the config enabled flag.
+const spawnExec: Exec = makeSpawnExec(60_000);
 
 function runDoctorCli(): never {
   const cfgPath = configPath();
@@ -116,6 +113,9 @@ async function main() {
   // No usable history → annotateTrends is a no-op and output is unchanged.
   const day = now.toISOString().slice(0, 10);
   const previous = await loadPreviousReport(config.reportsDir, day);
+  // The engram evidence-upgrade connector activates purely off
+  // config.connectors.engram.enabled — it brings its own timeout-bounded
+  // exec seam, so nothing needs threading here.
   const report = annotateTrends(await buildReport({ since, now, config, useLlm, apiKey }), previous);
 
   mkdirSync(config.reportsDir, { recursive: true });

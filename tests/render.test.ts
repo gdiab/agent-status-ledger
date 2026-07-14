@@ -102,6 +102,40 @@ describe("renderers", () => {
     expect(renderMarkdown(report)).not.toContain("Other repo commits");
   });
 
+  test("markdown: evidenceCitation renders next to the evidence level, md-escaped", () => {
+    const a = agent({
+      evidence: "partially_proven",
+      evidenceCitation: "engram session abc123: observed code edits to /w/src/my_file.ts",
+    });
+    const md = renderMarkdown({ ...report, agents: [a], exceptions: [] });
+    expect(md).toContain("Evidence: partially_proven");
+    expect(md).toContain("engram session abc123");
+    // underscore in the cited path is escaped so it can't open an emphasis span
+    expect(md).toContain("my\\_file.ts");
+  });
+
+  test("markdown: no citation line when evidenceCitation is absent", () => {
+    expect(renderMarkdown(report)).not.toContain("Evidence citation");
+  });
+
+  test("html: evidenceCitation renders in the card, escaped", () => {
+    const a = agent({
+      evidence: "partially_proven",
+      evidenceCitation: 'engram session abc123: edits to /w/src/<b>bold</b>.ts & "quoted"',
+    });
+    const html = renderHtml({ ...report, agents: [a], exceptions: [] });
+    expect(html).toContain('class="evidence-citation"');
+    expect(html).toContain("engram session abc123");
+    expect(html).toContain("&lt;b&gt;bold&lt;/b&gt;");
+    expect(html).not.toContain("<b>bold</b>");
+  });
+
+  test("html: no citation markup when evidenceCitation is absent", () => {
+    // marker class, not label text: the evidence *badge* renders on every
+    // card, so an assertion on generic wording would pass vacuously
+    expect(renderHtml(report)).not.toContain("evidence-citation");
+  });
+
   test("html: unattributed commits shown, escaped, labeled", () => {
     const a = agent({
       commits: [{ sha: "def5678abcdefghijklmnopqrstuvwxyz123456", authorDate: "2026-07-07T15:00:00.000Z", subject: "hotfix <b>bold</b>", attributed: false }],

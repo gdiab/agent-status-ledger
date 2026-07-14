@@ -52,6 +52,31 @@ describe("config", () => {
     writeFileSync(p, "[thresholds]\nmin_session_seconds = 120\n");
     expect(loadConfig(p).thresholds.minSessionSeconds).toBe(120);
   });
+
+  test("engram connector defaults to disabled with a PATH-based binary", () => {
+    const c = defaultConfig();
+    expect(c.connectors.engram.enabled).toBe(false);
+    expect(c.connectors.engram.binaryPath).toBe("engram");
+  });
+
+  test("connectors.engram is read from toml", () => {
+    const dir = mkdtempSync(join(tmpdir(), "asl-config-"));
+    const p = join(dir, "config.toml");
+    writeFileSync(p, [
+      "[connectors.engram]",
+      "enabled = true",
+      "binary_path = \"/opt/engram/bin/engram\"",
+    ].join("\n"));
+    const c = loadConfig(p);
+    expect(c.connectors.engram.enabled).toBe(true);
+    expect(c.connectors.engram.binaryPath).toBe("/opt/engram/bin/engram");
+  });
+
+  test("connectors.engram unset in toml keeps defaults", () => {
+    const c = loadConfig(join(tmpdir(), "does-not-exist.toml"));
+    expect(c.connectors.engram.enabled).toBe(false);
+    expect(c.connectors.engram.binaryPath).toBe("engram");
+  });
 });
 
 function writeToml(content: string): string {
