@@ -6,11 +6,19 @@ import type { Thresholds } from "./types";
 
 export interface ConnectorConfig { enabled: boolean; rootDir: string; }
 
+export interface EmailConfig {
+  to: string;
+  from: string;
+  smtpHost: string;
+  smtpPort: number;
+}
+
 export interface Config {
   reportsDir: string;
   model: string;
   thresholds: Thresholds;
   connectors: { claudeCode: ConnectorConfig; codex: ConnectorConfig };
+  email?: EmailConfig;   // absent = email delivery off
   redactPatterns: string[];   // extra user regexes (source strings)
 }
 
@@ -52,6 +60,15 @@ export function loadConfig(path: string = configPath()): Config {
     const section = conns?.[key];
     if (typeof section?.enabled === "boolean") target.enabled = section.enabled;
     if (typeof section?.root_dir === "string") target.rootDir = section.root_dir;
+  }
+  const em = raw.email as Record<string, unknown> | undefined;
+  if (typeof em?.to === "string" && em.to.trim()) {
+    c.email = {
+      to: em.to,
+      from: typeof em.from === "string" && em.from.trim() ? em.from : em.to,
+      smtpHost: typeof em.smtp_host === "string" ? em.smtp_host : "smtp.gmail.com",
+      smtpPort: typeof em.smtp_port === "number" ? em.smtp_port : 465,
+    };
   }
   if (Array.isArray(raw.redact_patterns)) {
     c.redactPatterns = raw.redact_patterns.filter((p): p is string => typeof p === "string");

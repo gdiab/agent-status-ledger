@@ -53,3 +53,49 @@ describe("config", () => {
     expect(loadConfig(p).thresholds.minSessionSeconds).toBe(120);
   });
 });
+
+function writeToml(content: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "asl-config-"));
+  const p = join(dir, "config.toml");
+  writeFileSync(p, content);
+  return p;
+}
+
+describe("email config", () => {
+  test("absent [email] section leaves email unset", () => {
+    const path = writeToml(`reports_dir = "/tmp/r"\n`);
+    expect(loadConfig(path).email).toBeUndefined();
+  });
+
+  test("minimal [email] with to applies defaults", () => {
+    const path = writeToml(`[email]\nto = "gd@example.com"\n`);
+    expect(loadConfig(path).email).toEqual({
+      to: "gd@example.com",
+      from: "gd@example.com",
+      smtpHost: "smtp.gmail.com",
+      smtpPort: 465,
+    });
+  });
+
+  test("full [email] section overrides all defaults", () => {
+    const path = writeToml(
+      `[email]\nto = "a@x.com"\nfrom = "b@y.com"\nsmtp_host = "smtp.other.com"\nsmtp_port = 587\n`,
+    );
+    expect(loadConfig(path).email).toEqual({
+      to: "a@x.com", from: "b@y.com", smtpHost: "smtp.other.com", smtpPort: 587,
+    });
+  });
+
+  test("[email] without a usable to stays disabled", () => {
+    expect(loadConfig(writeToml(`[email]\nfrom = "b@y.com"\n`)).email).toBeUndefined();
+    expect(loadConfig(writeToml(`[email]\nto = 42\n`)).email).toBeUndefined();
+    expect(loadConfig(writeToml(`[email]\nto = "  "\n`)).email).toBeUndefined();
+  });
+
+  test("wrong-typed optional email fields fall back to defaults", () => {
+    const path = writeToml(`[email]\nto = "a@x.com"\nsmtp_port = "not-a-number"\nfrom = 7\n`);
+    expect(loadConfig(path).email).toEqual({
+      to: "a@x.com", from: "a@x.com", smtpHost: "smtp.gmail.com", smtpPort: 465,
+    });
+  });
+});
