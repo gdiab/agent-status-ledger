@@ -7,7 +7,7 @@ import { buildReport } from "./report";
 import { annotateTrends, loadPreviousReport } from "./trends";
 import { renderMarkdown } from "./render/markdown";
 import { renderJson } from "./render/json";
-import { renderHtml, HTML_LAYOUTS, type HtmlLayout } from "./render/html";
+import { renderHtml, HTML_LAYOUTS, isHtmlLayout, type HtmlLayout } from "./render/html";
 import { renderEmailDigest } from "./render/digest";
 import { redact } from "./redact";
 import { resolveApiKey, macKeychainLookup } from "./apikey";
@@ -83,7 +83,7 @@ async function main() {
   }
 
   const layout = values.layout!;
-  if (!(HTML_LAYOUTS as readonly string[]).includes(layout)) {
+  if (!isHtmlLayout(layout)) {
     console.error(`error: --layout must be ${HTML_LAYOUTS.map((l) => `"${l}"`).join(" or ")}, got "${layout}"`);
     console.error(USAGE);
     process.exit(2);
@@ -122,7 +122,7 @@ async function main() {
   const base = join(config.reportsDir, day);
   const md = redact(renderMarkdown(report), config.redactPatterns);
   const json = redact(renderJson(report), config.redactPatterns);
-  const html = redact(renderHtml(report, { layout: layout as HtmlLayout }), config.redactPatterns);
+  const html = redact(renderHtml(report, { layout }), config.redactPatterns);
   await Bun.write(`${base}.md`, md);
   await Bun.write(`${base}.json`, json);
   await Bun.write(`${base}.html`, html);
