@@ -1,5 +1,5 @@
 import type { Config } from "./config";
-import type { AgentProfile, AgentReport, CommitEvidence, Report } from "./types";
+import type { AgentProfile, AgentReport, CommitEvidence, EvidenceLevel, Report } from "./types";
 import { scanClaudeCode } from "./connectors/claude-code";
 import { scanCodex } from "./connectors/codex";
 import { resolveProfiles } from "./resolver";
@@ -7,6 +7,7 @@ import { attributeCommits, listCommits } from "./git";
 import { EXCEPTION_STATUSES, inferStatus } from "./status";
 import { buildFactSheet, generateNarrative, templateNarrative } from "./narrative";
 import { redact, redactFacts } from "./redact";
+import { upgradeEvidence, type Exec } from "./connectors/engram";
 
 export interface BuildReportOptions {
   since: Date;
@@ -15,6 +16,10 @@ export interface BuildReportOptions {
   useLlm: boolean;
   apiKey?: string;
   fetchFn?: typeof fetch;
+  // Optional exec seam for the Engram evidence-upgrade connector (see
+  // src/connectors/engram.ts). Absent = enrichment never runs, matching the
+  // connector's own opt-in-only default (config.connectors.engram.enabled).
+  engramExec?: Exec;
 }
 
 const SEVERITY_ORDER = { urgent: 0, warning: 1, info: 2 } as const;
@@ -56,6 +61,31 @@ export function isTrivialProfile(profile: AgentProfile, commits: CommitEvidence[
   );
 }
 
+// Optional, fail-soft evidence upgrade: only ever runs for claimed_only
+// profiles, only when the engram connector is enabled and an exec seam was
+// supplied, and only ever moves evidence up to partially_proven — never
+// invents a new status, never touches proven/partially_proven/unknown
+// reports. Any failure (missing binary, malformed response, no qualifying
+// match, or a thrown error) leaves evidence exactly as inferStatus returned
+// it, mirroring sendReportEmail's never-throws contract (asl-533).
+export async function applyEngramEnrichment(
+  evidence: EvidenceLevel,
+  filesTouched: string[],
+  engramConfig: Config["connectors"]["engram"],
+  exec: Exec | undefined,
+): Promise<{ evidence: EvidenceLevel; evidenceCitation?: string }> {
+  if (evidence !== "claimed_only" || !engramConfig.enabled || !exec) return { evidence };
+  try {
+    for (const file of filesTouched) {
+      const result = await upgradeEvidence(file, engramConfig.binaryPath, exec);
+      if (result.matched) return { evidence: "partially_proven", evidenceCitation: result.citation };
+    }
+  } catch {
+    // fail-soft: engram enrichment must never break report generation
+  }
+  return { evidence };
+}
+
 export async function buildReport(opts: BuildReportOptions): Promise<Report> {
   const { since, now, config } = opts;
   const sessions = [
@@ -79,8 +109,11 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
     // future consumer of buildReport() (not just the CLI's own render pass) gets a
     // report object with secrets already scrubbed.
     const commits = rawCommits.map((c) => ({ ...c, subject: redact(c.subject, config.redactPatterns) }));
-    const { status, severity, evidence } = inferStatus(profile, rawCommits, now, config.thresholds);
+    const { status, severity, evidence: inferredEvidence } = inferStatus(profile, rawCommits, now, config.thresholds);
     const facts = redactFacts(buildFactSheet(profile, commits), config.redactPatterns);
+    const { evidence, evidenceCitation } = await applyEngramEnrichment(
+      inferredEvidence, facts.filesTouched, config.connectors.engram, opts.engramExec,
+    );
     const { narrative, source } = opts.useLlm
       ? await generateNarrative(facts, status, { model: config.model, apiKey: opts.apiKey, fetchFn: opts.fetchFn })
       : { narrative: templateNarrative(facts, status), source: "template" as const };
@@ -90,7 +123,7 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
         displayName: profile.displayName,
         platform: profile.platform,
         workdir: profile.workdir,
-        status, severity, evidence,
+        status, severity, evidence, evidenceCitation,
         facts,
         narrative,
         narrativeSource: source,

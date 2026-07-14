@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { parse } from "smol-toml";
 import { KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, resolveApiKey, type KeychainLookup } from "./apikey";
 import type { Config, ConnectorConfig } from "./config";
+import { checkEngramAvailable } from "./connectors/engram";
 import { resolveSmtpPassword, SMTP_PASSWORD_FIX, type Exec } from "./email";
 
 export const LAUNCHD_LABEL = "com.gd.asl-report";
@@ -196,6 +197,9 @@ export function runDoctor(deps: DoctorDeps): CheckResult[] {
     checkEmailPassword(deps.env, deps.keychain, deps.config.email),
     checkConnectorDir("claude-code", "claude_code", connectors.claudeCode),
     checkConnectorDir("codex", "codex", connectors.codex, join(connectors.codex.rootDir, "sessions")),
+    connectors.engram.enabled
+      ? checkEngramAvailable(connectors.engram.binaryPath, deps.exec)
+      : { name: "engram binary", ok: true, detail: "disabled in config — skipped" },
   ];
 }
 

@@ -115,7 +115,16 @@ async function main() {
   // No usable history → annotateTrends is a no-op and output is unchanged.
   const day = now.toISOString().slice(0, 10);
   const previous = await loadPreviousReport(config.reportsDir, day);
-  const report = annotateTrends(await buildReport({ since, now, config, useLlm, apiKey }), previous);
+  // spawnExec is the same real subprocess seam doctor's checks and email use;
+  // reused here so the engram evidence-upgrade connector (opt-in via
+  // connectors.engram.enabled) has a working exec seam in the real CLI, not
+  // just in tests. buildReport's own gate (evidence === "claimed_only" &&
+  // config.connectors.engram.enabled) means this is inert unless the user
+  // has opted in.
+  const report = annotateTrends(
+    await buildReport({ since, now, config, useLlm, apiKey, engramExec: spawnExec }),
+    previous,
+  );
 
   mkdirSync(config.reportsDir, { recursive: true });
   const base = join(config.reportsDir, day);

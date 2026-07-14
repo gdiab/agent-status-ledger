@@ -97,6 +97,12 @@ export interface AgentReport {
   status: Status;
   severity: Severity;
   evidence: EvidenceLevel;
+  // Human-readable citation for an evidence upgrade performed by an optional
+  // enrichment connector (currently: Engram fingerprint corroboration —
+  // src/connectors/engram.ts). Additive + optional, same precedent as
+  // `trends?: string[]` below — schemaVersion stays 1. Absent unless a
+  // connector actually upgraded this report's evidence.
+  evidenceCitation?: string;
   facts: FactSheet;
   narrative: Narrative;
   narrativeSource: "llm" | "template";

@@ -185,7 +185,7 @@ function fakeDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
 describe("runDoctor", () => {
   test("never throws even when everything is missing, and reports all checks", () => {
     const results = runDoctor(fakeDeps());
-    expect(results.length).toBe(10);
+    expect(results.length).toBe(11);
     for (const r of results) {
       expect(typeof r.name).toBe("string");
       expect(typeof r.detail).toBe("string");
@@ -248,6 +248,33 @@ describe("runDoctor", () => {
       expect(r.ok).toBe(true);
       expect(r.detail).toContain("skipped");
     }
+  });
+});
+
+describe("runDoctor engram wiring", () => {
+  test("reports disabled — skipped when the engram connector is off (the default)", () => {
+    const results = runDoctor(fakeDeps());
+    const engram = results.find((r) => r.name === "engram binary")!;
+    expect(engram.ok).toBe(true);
+    expect(engram.detail).toContain("disabled");
+  });
+
+  test("probes the binary and passes when enabled and exec succeeds", () => {
+    const config = defaultConfig();
+    config.connectors.engram = { enabled: true, binaryPath: "/opt/engram" };
+    const results = runDoctor(fakeDeps({ config, exec: execOk("engram help text") }));
+    const engram = results.find((r) => r.name === "engram binary")!;
+    expect(engram.ok).toBe(true);
+    expect(engram.detail).toContain("/opt/engram");
+  });
+
+  test("fails with a build hint when enabled and exec fails", () => {
+    const config = defaultConfig();
+    config.connectors.engram = { enabled: true, binaryPath: "/opt/engram" };
+    const results = runDoctor(fakeDeps({ config, exec: execFail }));
+    const engram = results.find((r) => r.name === "engram binary")!;
+    expect(engram.ok).toBe(false);
+    expect(engram.fix).toContain("cargo build");
   });
 });
 
