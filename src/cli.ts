@@ -8,6 +8,7 @@ import { annotateTrends, loadPreviousReport } from "./trends";
 import { renderMarkdown } from "./render/markdown";
 import { renderJson } from "./render/json";
 import { renderHtml, HTML_LAYOUTS, type HtmlLayout } from "./render/html";
+import { renderEmailDigest } from "./render/digest";
 import { redact } from "./redact";
 import { resolveApiKey, macKeychainLookup } from "./apikey";
 import { formatDoctorReport, runDoctor, type Exec } from "./doctor";
@@ -136,14 +137,18 @@ async function main() {
     // encoded word, and a populated status list pushes that past the
     // 75-char encoded-word limit.
     const subject = `ASL - ${day}${statuses ? `: ${statuses}` : ""}`;
+    // Gmail flattens the interactive report (details/summary, CSS grid,
+    // light-dark() all stripped or unsupported — asl-3de), so the email body
+    // is a compact inline-styled digest and the full report rides along as
+    // an attachment for anyone who opens it in a browser.
+    const digest = redact(renderEmailDigest(report), config.redactPatterns);
     // Email is best-effort and must never block --open below; sendReportEmail
     // itself never throws, so no try/catch is needed here.
-    const r = sendReportEmail(config.email, subject, md, html, {
-      env: process.env,
-      keychain: macKeychainLookup,
-      exec: spawnExec,
-      now,
-    });
+    const r = sendReportEmail(
+      config.email, subject, md, digest,
+      { env: process.env, keychain: macKeychainLookup, exec: spawnExec, now },
+      { filename: `${day}.html`, content: html },
+    );
     if (r.ok) console.log(r.message);
     else console.error(`warning: ${r.message}`);
   }
