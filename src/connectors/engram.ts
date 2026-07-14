@@ -49,10 +49,21 @@ const MAX_SESSIONS_PER_PROFILE = 5;
 // (RawSession.sessionId is parsed from log files) and engram's own grep
 // output. Allowlist, don't blocklist: Claude Code/Codex session ids are
 // UUIDs and engram session ids are 64-char hex hashes — both fit a plain
-// hex-and-dashes shape. Anything else (option-looking strings like
-// "--help", shell metacharacters, empty) is rejected before any exec, so a
-// hostile id can never become an engram CLI option.
-const SESSION_ID_SHAPE = /^[0-9a-fA-F-]{8,64}$/;
+// hex-and-dashes shape that starts with a hex digit. The leading-hex
+// requirement matters: dashes alone are inside the character class, so
+// option-shaped values built purely from allowlisted characters
+// ("--------", "--dead-beef") would otherwise slip through. Anything else
+// (option-looking strings, shell metacharacters, empty) is rejected before
+// any exec, so a hostile id can never become an engram CLI option.
+const SESSION_ID_SHAPE = /^[0-9a-fA-F][0-9a-fA-F-]{7,63}$/;
+
+// Citation strings end up in every consumer surface (JSON, markdown, html)
+// and are assembled partly from engram-reported file paths, which are
+// untrusted. Neutralize at assembly — control chars (incl. newlines, which
+// would let "#"/markdown structures start a line), DEL, and angle brackets
+// are stripped so the citation is inert before it reaches any renderer.
+// This deliberately does not depend on renderer-side escaping (asl-xis).
+const CITATION_UNSAFE = /[\x00-\x1f\x7f<>]/g;
 
 export interface UpgradeResult {
   matched: boolean;
@@ -150,7 +161,8 @@ export function upgradeEvidence(
       const more = files.length > MAX_CITED_FILES ? `, +${files.length - MAX_CITED_FILES} more` : "";
       return {
         matched: true,
-        citation: `engram session ${engramSid}: observed code edits to ${shown}${more}`,
+        citation: `engram session ${engramSid}: observed code edits to ${shown}${more}`
+          .replace(CITATION_UNSAFE, ""),
       };
     }
     return { matched: false };

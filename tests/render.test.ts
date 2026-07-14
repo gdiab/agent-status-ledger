@@ -99,13 +99,16 @@ describe("renderers", () => {
       evidenceCitation: 'engram session abc123: edits to /w/src/<b>bold</b>.ts & "quoted"',
     });
     const html = renderHtml({ ...report, agents: [a], exceptions: [] });
+    expect(html).toContain('class="evidence-citation"');
     expect(html).toContain("engram session abc123");
     expect(html).toContain("&lt;b&gt;bold&lt;/b&gt;");
     expect(html).not.toContain("<b>bold</b>");
   });
 
   test("html: no citation markup when evidenceCitation is absent", () => {
-    expect(renderHtml(report)).not.toContain("Evidence citation");
+    // marker class, not label text: the evidence *badge* renders on every
+    // card, so an assertion on generic wording would pass vacuously
+    expect(renderHtml(report)).not.toContain("evidence-citation");
   });
 
   test("html: unattributed commits shown, escaped, labeled", () => {

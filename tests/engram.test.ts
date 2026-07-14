@@ -182,7 +182,12 @@ describe("upgradeEvidence", () => {
   // side) — both untrusted. Anything not matching the UUID/hex-hash
   // allowlist must be rejected before it can reach an argv.
   test("rejects hostile or malformed harness session ids without ever calling exec", () => {
-    for (const hostile of ["--help", "-x", "$(rm -rf /)", "", "a".repeat(65), "cc-p0; rm"]) {
+    for (const hostile of [
+      "--help", "-x", "$(rm -rf /)", "", "a".repeat(65), "cc-p0; rm",
+      // option-shaped values built only from allowlisted characters: all
+      // dashes, or leading-dash with hex after — must still be rejected
+      "--------", "-deadbeef0", "--dead-beef",
+    ]) {
       let calls = 0;
       const spy: Exec = () => {
         calls++;
@@ -194,9 +199,28 @@ describe("upgradeEvidence", () => {
     }
   });
 
+  test("citation is sanitized at assembly: no control chars, newlines, or angle brackets survive a hostile file path", () => {
+    const hostileFile = '/repo/<img src=x onerror=alert(1)>\n## Forged heading\t/thing_#1.ts';
+    const exec = twoStepExec(grepResponse([ENGRAM_SID]), {
+      [ENGRAM_SID]: peekResponse([editEvent(hostileFile, UUID)]),
+    });
+    const r = upgradeEvidence(UUID, BIN, exec);
+    expect(r.matched).toBe(true);
+    // dangerous characters are gone entirely...
+    expect(r.citation).not.toContain("<");
+    expect(r.citation).not.toContain(">");
+    expect(r.citation).not.toContain("\n");
+    expect(r.citation).not.toContain("\t");
+    // ...the "#" can no longer start a line (no newlines), and the
+    // neutralized remainder still reads as a path
+    expect(r.citation).toContain("img src=x");
+    expect(r.citation).toContain("thing_#1.ts");
+    expect(r.citation).toContain(ENGRAM_SID);
+  });
+
   test("rejects a hostile engram session id from grep output without calling peek", () => {
     const peeked: string[] = [];
-    const inner = twoStepExec(grepResponse(["--evil-flag", "not hex!", ENGRAM_SID]), {
+    const inner = twoStepExec(grepResponse(["--------", "not hex!", ENGRAM_SID]), {
       [ENGRAM_SID]: peekResponse([editEvent("/repo/src/a.ts", UUID)]),
     });
     const exec: Exec = (argv) => {

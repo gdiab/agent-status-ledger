@@ -86,7 +86,8 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
     // future consumer of buildReport() (not just the CLI's own render pass) gets a
     // report object with secrets already scrubbed.
     const commits = rawCommits.map((c) => ({ ...c, subject: redact(c.subject, config.redactPatterns) }));
-    let { status, severity, evidence } = inferStatus(profile, rawCommits, now, config.thresholds);
+    const { status, severity, evidence: inferredEvidence } = inferStatus(profile, rawCommits, now, config.thresholds);
+    let evidence = inferredEvidence;
     const facts = redactFacts(buildFactSheet(profile, commits), config.redactPatterns);
     // Optional evidence corroboration: only a claimed_only reading can be
     // upgraded — everything else engram-shaped (enabled switch, budgets,
