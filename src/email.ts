@@ -109,12 +109,14 @@ export interface MimeInput {
 }
 
 // A MIME quoted-string (used for the name= and filename= parameters below)
-// cannot carry a raw double quote, CR, or LF, and other C0 controls have no
-// business in a filename either. Strip them so an attacker-influenced filename
-// can never break out of the quotes or inject a header line. Defense-in-depth,
-// not full RFC 2231 encoding — the only live caller passes a fixed ISO date.
+// cannot carry a raw double quote, backslash (the quoted-pair escape — a
+// trailing one could escape our closing quote), CR, or LF, and other C0
+// controls have no business in a filename either. Strip them so an
+// attacker-influenced filename can never break out of the quotes or inject a
+// header line. Defense-in-depth, not full RFC 2231 encoding — the only live
+// caller passes a fixed ISO date.
 function sanitizeMimeFilename(name: string): string {
-  return name.replace(/[\x00-\x1f\x7f"]/g, "");
+  return name.replace(/[\x00-\x1f\x7f"\\]/g, "");
 }
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

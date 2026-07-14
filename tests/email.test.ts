@@ -222,6 +222,17 @@ describe("buildMimeMessage", () => {
       // own header line
       expect(msg).not.toContain("\r\nX-Evil: 1");
     });
+
+    test("strips a trailing backslash so it can't escape the closing quote", () => {
+      const msg = buildMimeMessage({
+        ...withAttachment,
+        attachment: { ...withAttachment.attachment, data: { filename: "report\\", content: "x" } },
+      });
+      // backslash is the MIME quoted-pair escape; a trailing one would turn the
+      // closing quote into an escaped literal and swallow the header end
+      expect(msg).toContain('filename="report"');
+      expect(msg).not.toContain('report\\"');
+    });
   });
 });
 
