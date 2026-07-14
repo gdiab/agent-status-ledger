@@ -58,6 +58,31 @@ describe("renderers", () => {
     expect(md).not.toContain("### my_project");
   });
 
+  test("markdown: narrative fields with markdown metacharacters are escaped, not raw", () => {
+    const a = agent({
+      narrative: {
+        ...agent({}).narrative,
+        workedOn: "Refactored *auth* and [config](http://x) with `flags`.",
+        recommendation: "Review *now* and check [the log](http://x) with `grep`",
+      },
+    });
+    const md = renderMarkdown({ ...report, agents: [a], exceptions: [a] });
+
+    // agentSection site (workedOn)
+    expect(md).toContain("**Worked on:** Refactored \\*auth\\* and \\[config\\]\\(http://x\\) with \\`flags\\`.");
+    expect(md).not.toContain("**Worked on:** Refactored *auth*");
+
+    // agentSection site (recommendation)
+    expect(md).toContain("**Recommended action:** Review \\*now\\* and check \\[the log\\]\\(http://x\\) with \\`grep\\`");
+    expect(md).not.toContain("**Recommended action:** Review *now*");
+
+    // exceptions-loop site (recommendation)
+    expect(md).toContain("Review \\*now\\* and check \\[the log\\]\\(http://x\\) with \\`grep\\`");
+    const exceptionsBlock = md.slice(md.indexOf("## Exceptions"), md.indexOf("## Agents"));
+    expect(exceptionsBlock).toContain("Review \\*now\\*");
+    expect(exceptionsBlock).not.toContain("Review *now*");
+  });
+
   test("markdown: unattributed commits shown as labeled repo context", () => {
     const a = agent({
       commits: [

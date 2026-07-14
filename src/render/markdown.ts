@@ -8,10 +8,13 @@ import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 // filesystem-derived, not LLM output, and md injection is accepted for v0.
 const mdEscape = (s: string) => s.replace(/([\\_*[\]`])/g, "\\$1");
 
+// Escaper for LLM-generated narrative text (standup blurb + the five narrative
+// fields): collapse whitespace so multi-line LLM output stays one line, then
+// escape markdown emphasis/link/code/HTML chars so it can't inject formatting.
+const mdText = (s: string) => s.replace(/\s+/g, " ").trim().replace(/([\\_*<>&[\]()!`])/g, "\\$1");
+
 function agentSection(a: AgentReport): string {
-  // The blurb is LLM output: collapse whitespace so it stays one lead line,
-  // and escape as plain inline text so LLM output can't inject HTML/links/emphasis.
-  const blurb = a.narrative.standup.replace(/\s+/g, " ").trim().replace(/([\\_*<>&[\]()!`])/g, "\\$1");
+  const blurb = mdText(a.narrative.standup);
   const lines = [
     `### ${mdEscape(a.displayName)}`,
     "",
@@ -24,11 +27,11 @@ function agentSection(a: AgentReport): string {
     // Cross-day trend annotations (src/trends.ts); absent = no history, no line.
     ...(a.trends?.length ? [`- Trend: ${a.trends.join("; ")}`] : []),
     "",
-    `**Worked on:** ${a.narrative.workedOn}`,
-    `**Completed:** ${a.narrative.completed}`,
-    `**In progress:** ${a.narrative.inProgress}`,
-    `**Blocked:** ${a.narrative.blocked}`,
-    `**Recommended action:** ${a.narrative.recommendation}`,
+    `**Worked on:** ${mdText(a.narrative.workedOn)}`,
+    `**Completed:** ${mdText(a.narrative.completed)}`,
+    `**In progress:** ${mdText(a.narrative.inProgress)}`,
+    `**Blocked:** ${mdText(a.narrative.blocked)}`,
+    `**Recommended action:** ${mdText(a.narrative.recommendation)}`,
   ];
   if (a.commits.some((c) => c.attributed)) {
     lines.push("", "**Commits:**");
@@ -69,7 +72,7 @@ export function renderMarkdown(report: Report): string {
     parts.push("No exceptions — nothing needs you.");
   } else {
     for (const a of report.exceptions) {
-      parts.push(`- **${mdEscape(a.displayName)}** — ${a.status} (${a.severity}): ${a.narrative.recommendation}`);
+      parts.push(`- **${mdEscape(a.displayName)}** — ${a.status} (${a.severity}): ${mdText(a.narrative.recommendation)}`);
     }
   }
   parts.push("", "## Agents", "");
