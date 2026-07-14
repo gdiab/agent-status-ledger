@@ -27,9 +27,33 @@ function fmtUtc(iso: string): string {
 
 export const HTML_LAYOUTS = ["cards", "flat"] as const;
 export type HtmlLayout = (typeof HTML_LAYOUTS)[number];
+export function isHtmlLayout(x: string): x is HtmlLayout {
+  return (HTML_LAYOUTS as readonly string[]).includes(x);
+}
+
+// Severity → CSS class carrying the `--sev` custom property; the .badge and
+// .card rules consume it for background and left edge, so per-scheme color
+// tweaks are a one-line CSS edit. SEVERITY_COLOR stays the source of truth
+// (the .sev-* rules are generated from it below, and digest.ts reuses it).
+function sevClass(severity: Severity): string {
+  return `sev-${severity}`;
+}
+
+// The .sev-* rules are generated from SEVERITY_COLOR so the hex values keep a
+// single home; changing a per-scheme severity color is then one CSS edit.
+const SEV_CSS = (Object.entries(SEVERITY_COLOR) as [Severity, string][])
+  .map(([sev, hex]) => `.${sevClass(sev)} { --sev: ${hex}; }`).join("\n");
+
+// Defensive front-of-card cap: the standup blurb is length-limited prompt-side
+// (~400 chars), but a pathological or non-LLM blurb could still blow out the
+// card layout, so truncate before escaping.
+const STANDUP_MAX = 280;
+function capStandup(s: string): string {
+  return s.length > STANDUP_MAX ? s.slice(0, STANDUP_MAX).trimEnd() + "…" : s;
+}
 
 function badges(a: AgentReport): string {
-  return `<span class="badge" style="background:${SEVERITY_COLOR[a.severity]}" title="${esc(STATUS_HELP[a.status])}">${esc(a.status)}</span>
+  return `<span class="badge ${sevClass(a.severity)}" title="${esc(STATUS_HELP[a.status])}">${esc(a.status)}</span>
     <span class="evidence" title="${esc(EVIDENCE_HELP[a.evidence])}">${esc(a.evidence.replace("_", " "))}</span>`;
 }
 
@@ -98,14 +122,8 @@ function cardBody(a: AgentReport): string {
   ${errors ? `<h4>Errors</h4><ul class="errors">${errors}</ul>` : ""}`;
 }
 
-// A 3px severity-colored left edge on every card: scannable "who needs me"
-// signal without reading each badge. Inline style, same mechanism as badges.
-function severityEdge(a: AgentReport): string {
-  return ` style="border-left: 3px solid ${SEVERITY_COLOR[a.severity]}"`;
-}
-
 function flatCard(a: AgentReport): string {
-  return `<article class="card"${severityEdge(a)}>
+  return `<article class="card ${sevClass(a.severity)}">
   <header>
     <h3>${esc(a.displayName)}</h3>
     ${badges(a)}
@@ -120,7 +138,7 @@ function rollupChips(report: Report): string {
   if (report.agents.length === 0) return `<p class="rollup">${esc(rollupLine(report))}</p>`;
   const c = rollupCounts(report);
   const chips = c.byStatus.map(({ status, count }) =>
-    `<span class="badge" style="background:${SEVERITY_COLOR[STATUS_SEVERITY[status]]}" title="${esc(STATUS_HELP[status])}">${count} ${esc(status)}</span>`).join(" ");
+    `<span class="badge ${sevClass(STATUS_SEVERITY[status])}" title="${esc(STATUS_HELP[status])}">${count} ${esc(status)}</span>`).join(" ");
   return `<p class="rollup">${plural(c.agents, "agent")}: ${chips} · ${plural(c.commits, "commit")}, ${plural(c.files, "file")} touched</p>`;
 }
 
@@ -130,10 +148,10 @@ function standupCard(a: AgentReport): string {
   // The name is a styled span with an explicit heading role, not an <h3>:
   // browsers strip heading semantics inside <summary>, and keeping the badges
   // outside the heading element keeps tooltip text out of its accessible name.
-  return `<details class="card"${severityEdge(a)}${a.severity === "info" ? "" : " open"}>
+  return `<details class="card ${sevClass(a.severity)}"${a.severity === "info" ? "" : " open"}>
   <summary>
     <span class="name" role="heading" aria-level="3">${esc(a.displayName)}</span> ${badges(a)}
-    <span class="standup">${esc(a.narrative.standup)}</span>
+    <span class="standup">${esc(capStandup(a.narrative.standup))}</span>
   </summary>
   <div class="detail">
   ${cardBody(a)}
@@ -186,9 +204,10 @@ body { max-width: 80rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
 h1 { font-size: 1.5rem; } h3 { margin: 0; font-size: 1.1rem; }
 .window { opacity: .7; font-size: .85rem; }
 .exceptions { border: 1px solid light-dark(#c0392b55, #e07b6c55); border-radius: 8px; padding: 1rem 1.5rem; margin: 1rem 0; overflow-wrap: anywhere; }
-.card { border: 1px solid #8884; border-radius: 8px; padding: 1rem 1.25rem; margin: 1rem 0; overflow-wrap: anywhere; }
+.card { border: 1px solid #8884; border-left: 3px solid var(--sev); border-radius: 8px; padding: 1rem 1.25rem; margin: 1rem 0; overflow-wrap: anywhere; }
 .card header { display: flex; flex-wrap: wrap; gap: .6rem; row-gap: .25rem; align-items: center; margin-bottom: .5rem; }
-.badge { color: #fff; border-radius: 999px; padding: .1rem .6rem; font-size: .75rem; }
+${SEV_CSS}
+.badge { color: #fff; background: var(--sev); border-radius: 999px; padding: .1rem .6rem; font-size: .75rem; }
 .evidence { opacity: .6; font-size: .75rem; }
 .badge[title], .evidence[title] { text-decoration: underline dotted; text-underline-offset: .15em; cursor: help; }
 dl { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: .25rem .75rem; margin: .5rem 0; }

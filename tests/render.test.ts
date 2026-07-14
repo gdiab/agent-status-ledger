@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { AgentReport, Report } from "../src/types";
 import { renderMarkdown } from "../src/render/markdown";
 import { renderJson } from "../src/render/json";
-import { renderHtml } from "../src/render/html";
+import { renderHtml, isHtmlLayout } from "../src/render/html";
 import { STATUS_HELP, EVIDENCE_HELP } from "../src/render/legend";
 import { FILLER_BLOCKED, FILLER_COMPLETED, FILLER_IN_PROGRESS, FILLER_RECOMMENDATION } from "../src/narrative";
 import { redact } from "../src/redact";
@@ -205,7 +205,8 @@ describe("renderers", () => {
     const start = html.indexOf('<p class="rollup">');
     const rollup = html.slice(start, html.indexOf("</p>", start));
     expect(rollup).toContain("2 agents:");
-    expect(rollup).toContain('class="badge"');
+    expect(rollup).toContain('class="badge sev-warning"'); // needs_human chip
+    expect(rollup).toContain('class="badge sev-info"'); // completed chip
     expect(rollup).toContain("1 needs_human");
     expect(rollup).toContain("1 completed");
     // worst-first, same order as the markdown rollup line
@@ -261,7 +262,7 @@ describe("renderers", () => {
   test("html: card name is a heading exposed inside summary, badges outside it", () => {
     const html = renderHtml({ ...report, agents: [agent({})] });
     expect(html).toContain('<span class="name" role="heading" aria-level="3">w (claude-code)</span>');
-    const cardStart = html.indexOf('<details class="card"');
+    const cardStart = html.indexOf('<details class="card');
     const summary = html.slice(html.indexOf("<summary>", cardStart), html.indexOf("</summary>", cardStart));
     expect(summary).not.toContain("<h3>");
     // badge tooltip text must not pollute the heading's accessible name
@@ -332,11 +333,11 @@ describe("renderers", () => {
   test("html: default layout renders details/summary standup cards in a grid", () => {
     const html = renderHtml({ ...report, agents: [agent({})] });
     expect(html).toContain('<div class="cards">');
-    expect(html).toContain('<details class="card"');
-    expect(html).not.toContain('<article class="card"');
+    expect(html).toContain('<details class="card');
+    expect(html).not.toContain('<article class="card');
     expect(html).toContain(".cards {");
     // summary (card front) carries the blurb; full detail is behind it
-    const cardStart = html.indexOf('<details class="card"');
+    const cardStart = html.indexOf('<details class="card');
     const summary = html.slice(html.indexOf("<summary>", cardStart), html.indexOf("</summary>", cardStart));
     expect(summary).toContain("I fixed the login bug and committed the fix.");
     expect(summary).toContain("w (claude-code)");
@@ -344,11 +345,16 @@ describe("renderers", () => {
     expect(card).toContain("<dt>Worked on</dt>");
   });
 
-  test("html: every card carries a severity-colored left edge in both layouts", () => {
+  test("html: every card carries a severity class driving a colored left edge in both layouts", () => {
     for (const layout of ["cards", "flat"] as const) {
       const html = renderHtml(report, { layout });
-      expect(html).toContain("border-left: 3px solid #8a6d00"); // warning card
-      expect(html).toContain("border-left: 3px solid #2d7a46"); // info card
+      expect(html).toContain("card sev-warning"); // warning card
+      expect(html).toContain("card sev-info"); // info card
+      // The colored edge is one CSS rule consuming the class's --sev property.
+      expect(cssRule(html, ".card")).toContain("border-left: 3px solid var(--sev)");
+      expect(cssRule(html, ".sev-warning")).toContain("--sev: #8a6d00");
+      expect(cssRule(html, ".sev-info")).toContain("--sev: #2d7a46");
+      expect(cssRule(html, ".sev-urgent")).toContain("--sev: #c0392b");
     }
   });
 
@@ -371,15 +377,16 @@ describe("renderers", () => {
 
   test("html: flat layout keeps the severity edge but no triage grouping", () => {
     const flat = renderHtml(report, { layout: "flat" });
-    expect(flat).toContain("border-left: 3px solid");
+    expect(flat).toContain('<article class="card sev-warning">');
+    expect(cssRule(flat, ".card")).toContain("border-left: 3px solid var(--sev)");
     expect(flat).not.toContain("Needs attention");
     expect(flat).not.toContain("FYI");
   });
 
   test("html: --layout flat renders the legacy article cards, no collapsible agents", () => {
     const html = renderHtml(report, { layout: "flat" });
-    expect(html).toContain('<article class="card"');
-    expect(html).not.toContain('<details class="card"');
+    expect(html).toContain('<article class="card');
+    expect(html).not.toContain('<details class="card');
     expect(html).toContain("<dt>Worked on</dt>");
     expect(html).toContain('<details class="legend">'); // legend stays collapsible
     expect(html).not.toContain(".cards {");
@@ -421,7 +428,9 @@ describe("renderers", () => {
 
   test("html: warning badge gold and error red meet AA contrast", () => {
     const html = renderHtml(report);
-    expect(html).toContain("background:#8a6d00");
+    // Gold now lives once in the .sev-warning rule; the badge paints it via --sev.
+    expect(cssRule(html, ".sev-warning")).toContain("--sev: #8a6d00");
+    expect(cssRule(html, ".badge")).toContain("background: var(--sev)");
     expect(html).not.toContain("#b8860b");
     expect(cssRule(html, ".errors li")).toContain("light-dark(#c0392b, #e07b6c)");
   });
@@ -458,8 +467,8 @@ describe("renderers", () => {
 
   test("html: exception-severity cards render open; info cards stay collapsed", () => {
     const html = renderHtml(report); // one info agent, one warning agent
-    const open = html.match(/<details class="card"[^>]*\bopen\b/g) ?? [];
-    const all = html.match(/<details class="card"/g) ?? [];
+    const open = html.match(/<details class="card[^>]*\bopen\b/g) ?? [];
+    const all = html.match(/<details class="card/g) ?? [];
     expect(all.length).toBe(2);
     expect(open.length).toBe(1);
   });
@@ -621,5 +630,38 @@ describe("renderers", () => {
     const html = redact(renderHtml({ ...report, agents: [a] }));
     expect(html).toContain("[REDACTED]");
     expect(html).not.toContain("hunter2secret");
+  });
+
+  test("html: status badge carries the severity class, no inline style", () => {
+    const html = renderHtml({ ...report, agents: [blocked] }); // needs_human = warning
+    expect(html).toContain('<span class="badge sev-warning" title=');
+    expect(html).not.toContain('style="background:');
+  });
+
+  test("html: a pathologically long standup blurb is capped with an ellipsis on the card front", () => {
+    const long = "x".repeat(500);
+    const a = agent({ narrative: { ...agent({}).narrative, standup: long } });
+    const html = renderHtml({ ...report, exceptions: [], agents: [a] });
+    const cardStart = html.indexOf('<details class="card');
+    const summary = html.slice(html.indexOf("<summary>", cardStart), html.indexOf("</summary>", cardStart));
+    const blurb = summary.slice(summary.indexOf('<span class="standup">') + '<span class="standup">'.length, summary.indexOf("</span>", summary.indexOf('<span class="standup">')));
+    expect(blurb.endsWith("…")).toBe(true);
+    expect(blurb.length).toBeLessThanOrEqual(281); // 280-char cap + the ellipsis
+    expect(blurb.length).toBeLessThan(long.length);
+  });
+
+  test("html: a short standup blurb passes through unchanged, no ellipsis", () => {
+    const short = "All done, nothing blocking.";
+    const a = agent({ narrative: { ...agent({}).narrative, standup: short } });
+    const html = renderHtml({ ...report, exceptions: [], agents: [a] });
+    expect(html).toContain(`<span class="standup">${short}</span>`);
+    expect(html).not.toContain("…");
+  });
+
+  test("isHtmlLayout narrows valid layout strings and rejects others", () => {
+    expect(isHtmlLayout("cards")).toBe(true);
+    expect(isHtmlLayout("flat")).toBe(true);
+    expect(isHtmlLayout("grid")).toBe(false);
+    expect(isHtmlLayout("")).toBe(false);
   });
 });
