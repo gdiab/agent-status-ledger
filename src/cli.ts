@@ -13,7 +13,7 @@ import { redact } from "./redact";
 import { resolveApiKey, macKeychainLookup } from "./apikey";
 import { formatDoctorReport, runDoctor, type Exec } from "./doctor";
 import { homedir } from "node:os";
-import { sendReportEmail } from "./email";
+import { sendReportEmail, emailSubject } from "./email";
 import { statusSummary } from "./render/rollup";
 
 const USAGE = `usage: asl report [--since 24h] [--open] [--no-llm] [--no-email] [--out DIR] [--layout ${HTML_LAYOUTS.join("|")}]
@@ -132,11 +132,7 @@ async function main() {
   console.log(`wrote ${base}.md ${base}.json ${base}.html`);
 
   if (config.email && !values["no-email"]) {
-    const statuses = statusSummary(report);
-    // Pure ASCII: an em dash would make the whole subject one RFC 2047
-    // encoded word, and a populated status list pushes that past the
-    // 75-char encoded-word limit.
-    const subject = `ASL - ${day}${statuses ? `: ${statuses}` : ""}`;
+    const subject = emailSubject(day, statusSummary(report));
     // Gmail flattens the interactive report (details/summary, CSS grid,
     // light-dark() all stripped or unsupported — asl-3de), so the email body
     // is a compact inline-styled digest and the full report rides along as
