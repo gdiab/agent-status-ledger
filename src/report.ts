@@ -73,6 +73,16 @@ export function isTrivialProfile(profile: AgentProfile, commits: CommitEvidence[
 // which ASL always has — deliberately NOT facts.filesTouched, which under
 // inferStatus's formula is guaranteed empty exactly when evidence is
 // claimed_only (that's what claimed_only means: no observed file activity).
+//
+// Query budget: each session tried costs 1 grep + up to 3 peek subprocesses
+// (MAX_GREP_CANDIDATES in connectors/engram.ts), all sequential and
+// blocking, so a many-session profile must not fan out unbounded. Callers
+// pass sessionIds newest-first (recent sessions are the ones most likely to
+// be in the engram index and most relevant to today's report) and only the
+// first MAX_ENGRAM_SESSIONS are tried — worst case 5 × (1 + 3) = 20
+// subprocess calls per claimed_only profile, ~60ms each observed.
+const MAX_ENGRAM_SESSIONS = 5;
+
 export async function applyEngramEnrichment(
   evidence: EvidenceLevel,
   sessionIds: string[],
@@ -81,7 +91,7 @@ export async function applyEngramEnrichment(
 ): Promise<{ evidence: EvidenceLevel; evidenceCitation?: string }> {
   if (evidence !== "claimed_only" || !engramConfig.enabled || !exec) return { evidence };
   try {
-    for (const sessionId of sessionIds) {
+    for (const sessionId of sessionIds.slice(0, MAX_ENGRAM_SESSIONS)) {
       const result = await upgradeEvidence(sessionId, engramConfig.binaryPath, exec);
       if (result.matched) return { evidence: "partially_proven", evidenceCitation: result.citation };
     }
@@ -116,8 +126,13 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
     const commits = rawCommits.map((c) => ({ ...c, subject: redact(c.subject, config.redactPatterns) }));
     const { status, severity, evidence: inferredEvidence } = inferStatus(profile, rawCommits, now, config.thresholds);
     const facts = redactFacts(buildFactSheet(profile, commits), config.redactPatterns);
+    // Newest session first (explicit sort rather than trusting the profile's
+    // ascending order) — see applyEngramEnrichment's budget comment.
+    const sessionIdsNewestFirst = [...profile.sessions]
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+      .map((s) => s.sessionId);
     const { evidence, evidenceCitation } = await applyEngramEnrichment(
-      inferredEvidence, profile.sessions.map((s) => s.sessionId), config.connectors.engram, opts.engramExec,
+      inferredEvidence, sessionIdsNewestFirst, config.connectors.engram, opts.engramExec,
     );
     const { narrative, source } = opts.useLlm
       ? await generateNarrative(facts, status, { model: config.model, apiKey: opts.apiKey, fetchFn: opts.fetchFn })

@@ -25,6 +25,13 @@ export type { Exec };
 const CODE_EDIT_FILTER = '"k":"code.edit"';
 // Human-readable citation stays a one-liner: cap the distinct files named.
 const MAX_CITED_FILES = 5;
+// Query budget: each candidate costs one blocking `engram peek` subprocess,
+// and grep returns up to 10 hits by default. A grep by session UUID matches
+// the real session far stronger than a mention (hundreds of touch-count
+// points vs a handful), so if the real session is indexed at all it is in
+// the first hits — trying more than a few just burns subprocess time on
+// mention-only transcripts.
+const MAX_GREP_CANDIDATES = 3;
 
 export function checkEngramAvailable(binaryPath: string, exec: Exec): CheckResult {
   const name = "engram binary";
@@ -113,7 +120,9 @@ export async function upgradeEvidence(
     const grepObj = parseCliResponse(grep.stdout);
     if (!grepObj) return { matched: false };
 
-    const candidates = Array.isArray(grepObj.sessions) ? (grepObj.sessions as unknown[]) : [];
+    const candidates = Array.isArray(grepObj.sessions)
+      ? (grepObj.sessions as unknown[]).slice(0, MAX_GREP_CANDIDATES)
+      : [];
     for (const candidate of candidates) {
       const engramSid = (candidate as Record<string, unknown> | null)?.session_id;
       if (typeof engramSid !== "string" || engramSid.length === 0) continue;

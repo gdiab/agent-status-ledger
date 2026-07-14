@@ -156,6 +156,45 @@ describe("buildReport", () => {
     expect(calls).toBe(0);
   });
 
+  test("engram enrichment tries a profile's sessions newest-first", async () => {
+    const world = mkdtempSync(join(tmpdir(), "asl-report-"));
+    const ccRoot = join(world, "claude-projects");
+    const dir = join(ccRoot, "-work-p0");
+    mkdirSync(dir, { recursive: true });
+    // Two sessions in the same cwd: cc-old starts at 11:00, cc-new at 12:00.
+    const mkSession = (name: string, sessionId: string, hour: string) => {
+      const f = join(dir, name);
+      writeFileSync(f, [
+        JSON.stringify({
+          type: "user", timestamp: `2026-07-07T${hour}:00:00.000Z`, cwd: "/work/p0",
+          sessionId, message: { role: "user", content: "task" },
+        }),
+        JSON.stringify({
+          type: "assistant", timestamp: `2026-07-07T${hour}:05:00.000Z`, cwd: "/work/p0",
+          sessionId, message: { role: "assistant", content: "done" },
+        }),
+      ].join("\n") + "\n");
+      utimesSync(f, MTIME, MTIME);
+    };
+    mkSession("old.jsonl", "cc-old", "11");
+    mkSession("new.jsonl", "cc-new", "12");
+
+    const config = defaultConfig();
+    config.connectors.claudeCode.rootDir = ccRoot;
+    config.connectors.codex.enabled = false;
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+
+    const grepped: string[] = [];
+    const spy: Exec = (argv) => {
+      if (argv[1] === "grep") grepped.push(argv[2]!);
+      return { ok: true, stdout: JSON.stringify({ error: "no_results" }), stderr: "" };
+    };
+    await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: spy });
+    // Newest first: recent sessions are the ones most likely to be in the
+    // index and most relevant to today's report.
+    expect(grepped).toEqual(["cc-new", "cc-old"]);
+  });
+
   // End-to-end through the real pipeline: a session with no file edits and no
   // commits infers claimed_only, and the connector keys off its harness
   // session UUID (which ASL always has) — not facts.filesTouched (which is
@@ -414,5 +453,17 @@ describe("applyEngramEnrichment", () => {
     const r = await applyEngramEnrichment("claimed_only", [otherA, UUID, otherB], enabledEngram, exec);
     expect(r.evidence).toBe("partially_proven");
     expect(grepped).toEqual([otherA, UUID]); // never greps otherB
+  });
+
+  test("greps at most 5 sessions per profile, even when more are supplied", async () => {
+    const grepped: string[] = [];
+    const noResultsSpy: Exec = (argv) => {
+      if (argv[1] === "grep") grepped.push(argv[2]!);
+      return { ok: true, stdout: JSON.stringify({ error: "no_results" }), stderr: "" };
+    };
+    const eightSessions = Array.from({ length: 8 }, (_, i) => `sess-${i}`);
+    const r = await applyEngramEnrichment("claimed_only", eightSessions, enabledEngram, noResultsSpy);
+    expect(r.evidence).toBe("claimed_only");
+    expect(grepped).toEqual(["sess-0", "sess-1", "sess-2", "sess-3", "sess-4"]);
   });
 });

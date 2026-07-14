@@ -200,6 +200,24 @@ describe("upgradeEvidence", () => {
     expect(r.matched).toBe(false);
   });
 
+  test("peeks at most 3 grep candidates per session, even when grep returns more", async () => {
+    const sids = ["c1", "c2", "c3", "c4", "c5", "c6"];
+    const peeked: string[] = [];
+    const inner = twoStepExec(
+      grepResponse(sids),
+      // every candidate peeks fine but fails the source.session_id guard,
+      // so the loop would visit all six without a budget
+      Object.fromEntries(sids.map((s) => [s, peekResponse([editEvent("/repo/a.ts", "some-other-uuid")])])),
+    );
+    const exec: Exec = (argv) => {
+      if (argv[1] === "peek") peeked.push(argv[2]!);
+      return inner(argv);
+    };
+    const r = await upgradeEvidence(UUID, BIN, exec);
+    expect(r.matched).toBe(false);
+    expect(peeked).toEqual(["c1", "c2", "c3"]);
+  });
+
   test("a timed-out engram call (ok:false, empty stdout) degrades to no match", async () => {
     // The shape makeSpawnExec produces when the 5s per-call timeout kills a
     // hung binary (e.g. locked SQLite DB): non-zero/absent exit, nothing on
