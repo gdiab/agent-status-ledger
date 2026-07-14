@@ -140,6 +140,37 @@ describe("buildMimeMessage", () => {
     expect(msg.includes("\n")).toBe(true);
     expect(msg.replaceAll("\r\n", "").includes("\n")).toBe(false);
   });
+
+  describe("with an attachment", () => {
+    const withAttachment = {
+      ...input,
+      mixedBoundary: "=_asl-mixed-boundary",
+      attachment: { filename: "2026-07-13.html", content: "<h1>Full report</h1>" },
+    };
+
+    test("wraps the alternative part in multipart/mixed and appends a base64 attachment part", () => {
+      const msg = buildMimeMessage(withAttachment);
+      expect(msg).toContain('Content-Type: multipart/mixed; boundary="=_asl-mixed-boundary"');
+      expect(msg).toContain("--=_asl-mixed-boundary");
+      expect(msg).toContain('Content-Type: multipart/alternative; boundary="=_asl-test-boundary"');
+      expect(msg).toContain('Content-Type: text/html; charset=utf-8; name="2026-07-13.html"');
+      expect(msg).toContain("Content-Transfer-Encoding: base64");
+      expect(msg).toContain('Content-Disposition: attachment; filename="2026-07-13.html"');
+      expect(msg.endsWith("--=_asl-mixed-boundary--\r\n")).toBe(true);
+    });
+
+    test("attachment body is base64 of the exact content, decodable back to the original", () => {
+      const msg = buildMimeMessage(withAttachment);
+      const marker = 'Content-Disposition: attachment; filename="2026-07-13.html"\r\n\r\n';
+      const afterHeader = msg.slice(msg.indexOf(marker) + marker.length);
+      const b64 = afterHeader.split("\r\n--=_asl-mixed-boundary--")[0]!;
+      expect(Buffer.from(b64.replaceAll("\r\n", ""), "base64").toString("utf8")).toBe("<h1>Full report</h1>");
+    });
+
+    test("without an attachment, no multipart/mixed wrapper appears", () => {
+      expect(buildMimeMessage(input)).not.toContain("multipart/mixed");
+    });
+  });
 });
 
 const TARGET = { host: "smtp.gmail.com", port: 465, from: "gd@example.com", to: "gd@example.com" };
@@ -255,6 +286,25 @@ describe("sendReportEmail", () => {
     expect(eml).toContain("text body");
     expect(eml).toContain("<p>html body</p>");
     expect(eml).toContain("multipart/alternative");
+  });
+
+  test("with an attachment, sends a multipart/mixed message carrying the attachment content", () => {
+    let eml = "";
+    const r = sendReportEmail(
+      EMAIL_CFG, "ASL 2026-07-13: 1 blocked", "text body", "<p>digest body</p>",
+      {
+        env: { ASL_SMTP_PASSWORD: "p" }, keychain: noKeychain, now: NOW,
+        exec: (argv) => {
+          eml = readFileSync(argv[argv.indexOf("-T") + 1]!, "utf8");
+          return { ok: true, stdout: "", stderr: "" };
+        },
+      },
+      { filename: "2026-07-13.html", content: "<h1>Full report</h1>" },
+    );
+    expect(r.ok).toBe(true);
+    expect(eml).toContain("multipart/mixed");
+    expect(eml).toContain("<p>digest body</p>");
+    expect(eml).toContain('Content-Disposition: attachment; filename="2026-07-13.html"');
   });
 
   test("send failure surfaces the curl error in the message", () => {

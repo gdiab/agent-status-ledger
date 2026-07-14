@@ -79,6 +79,12 @@ export function encodeHeaderValue(s: string): string {
   return `=?UTF-8?B?${Buffer.from(s, "utf8").toString("base64")}?=`;
 }
 
+export interface MimeAttachment {
+  filename: string;
+  content: string;      // UTF-8 text (e.g. the full HTML report); sent as base64
+  contentType?: string; // default: text/html
+}
+
 export interface MimeInput {
   from: string;
   to: string;
@@ -87,7 +93,9 @@ export interface MimeInput {
   html: string;
   date: Date;
   messageId: string;
-  boundary: string;
+  boundary: string;          // multipart/alternative boundary
+  attachment?: MimeAttachment;
+  mixedBoundary?: string;    // multipart/mixed boundary — required when attachment is set
 }
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -100,29 +108,66 @@ function rfc5322Date(d: Date): string {
     `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} +0000`;
 }
 
-// Deterministic multipart/alternative assembly — date, message-id, and
-// boundary are inputs so tests can pin the whole message.
-export function buildMimeMessage(m: MimeInput): string {
+// RFC 2045 base64, hard-wrapped at 76 chars so a large attachment body never
+// produces one unbounded line.
+function base64Wrap(s: string): string {
+  const b64 = Buffer.from(s, "utf8").toString("base64");
+  const lines: string[] = [];
+  for (let i = 0; i < b64.length; i += 76) lines.push(b64.slice(i, i + 76));
+  return lines.join("\r\n");
+}
+
+function alternativePart(boundary: string, text: string, html: string): string[] {
   return [
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    "Content-Type: text/plain; charset=utf-8",
+    "Content-Transfer-Encoding: quoted-printable",
+    "",
+    quotedPrintable(text),
+    `--${boundary}`,
+    "Content-Type: text/html; charset=utf-8",
+    "Content-Transfer-Encoding: quoted-printable",
+    "",
+    quotedPrintable(html),
+    `--${boundary}--`,
+  ];
+}
+
+// Deterministic MIME assembly — date, message-id, and both boundaries are
+// inputs so tests can pin the whole message. With no attachment this is a
+// bare multipart/alternative, byte-identical to the pre-attachment format;
+// with one, that same part is wrapped in multipart/mixed alongside a
+// base64-encoded attachment part.
+export function buildMimeMessage(m: MimeInput): string {
+  const headers = [
     `From: ${m.from}`,
     `To: ${m.to}`,
     `Subject: ${encodeHeaderValue(m.subject)}`,
     `Date: ${rfc5322Date(m.date)}`,
     `Message-ID: <${m.messageId}>`,
     "MIME-Version: 1.0",
-    `Content-Type: multipart/alternative; boundary="${m.boundary}"`,
+  ];
+  const alt = alternativePart(m.boundary, m.text, m.html);
+  if (!m.attachment) {
+    return [...headers, ...alt, ""].join("\r\n");
+  }
+  const mixedBoundary = m.mixedBoundary!;
+  return [
+    ...headers,
+    `Content-Type: multipart/mixed; boundary="${mixedBoundary}"`,
     "",
-    `--${m.boundary}`,
-    "Content-Type: text/plain; charset=utf-8",
-    "Content-Transfer-Encoding: quoted-printable",
+    `--${mixedBoundary}`,
+    ...alt,
     "",
-    quotedPrintable(m.text),
-    `--${m.boundary}`,
-    "Content-Type: text/html; charset=utf-8",
-    "Content-Transfer-Encoding: quoted-printable",
+    `--${mixedBoundary}`,
+    `Content-Type: ${m.attachment.contentType ?? "text/html"}; charset=utf-8; name="${m.attachment.filename}"`,
+    "Content-Transfer-Encoding: base64",
+    `Content-Disposition: attachment; filename="${m.attachment.filename}"`,
     "",
-    quotedPrintable(m.html),
-    `--${m.boundary}--`,
+    base64Wrap(m.attachment.content),
+    `--${mixedBoundary}--`,
     "",
   ].join("\r\n");
 }
@@ -200,6 +245,7 @@ export function sendReportEmail(
   text: string,
   html: string,
   deps: ReportEmailDeps,
+  attachment?: MimeAttachment,
 ): { ok: boolean; message: string } {
   try {
     const resolved = resolveSmtpPassword(deps.env, deps.keychain);
@@ -219,8 +265,10 @@ export function sendReportEmail(
       date: deps.now,
       messageId: `${stamp}.asl@${email.smtpHost}`,
       // "=_" can never occur in quoted-printable output ("=" is only ever
-      // followed by hex digits or a soft break), so this boundary is safe.
+      // followed by hex digits or a soft break), so both boundaries are safe.
       boundary: `=_asl-${stamp.toString(36)}`,
+      attachment,
+      mixedBoundary: attachment ? `=_asl-mix-${stamp.toString(36)}` : undefined,
     });
     const r = sendEmail(
       { host: email.smtpHost, port: email.smtpPort, from: email.from, to: email.to },
