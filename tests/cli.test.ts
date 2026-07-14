@@ -18,4 +18,10 @@ describe("cli", () => {
     expect(proc.exitCode).toBe(2);
     expect(proc.stderr.toString()).toContain("usage:");
   });
+
+  test("usage mentions --no-email", () => {
+    const proc = Bun.spawnSync(["bun", "src/cli.ts", "not-a-command"], { cwd: repoRoot });
+    expect(proc.exitCode).toBe(2);
+    expect(proc.stderr.toString()).toContain("--no-email");
+  });
 });

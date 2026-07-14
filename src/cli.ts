@@ -12,8 +12,10 @@ import { redact } from "./redact";
 import { resolveApiKey, macKeychainLookup } from "./apikey";
 import { formatDoctorReport, runDoctor, type Exec } from "./doctor";
 import { homedir } from "node:os";
+import { sendReportEmail, type EmailExec } from "./email";
+import { rollupCounts } from "./render/rollup";
 
-const USAGE = `usage: asl report [--since 24h] [--open] [--no-llm] [--out DIR] [--layout ${HTML_LAYOUTS.join("|")}]
+const USAGE = `usage: asl report [--since 24h] [--open] [--no-llm] [--no-email] [--out DIR] [--layout ${HTML_LAYOUTS.join("|")}]
        asl doctor`;
 
 function runDoctorCli(): never {
@@ -55,6 +57,7 @@ function parseCliArgs() {
         since: { type: "string", default: "24h" },
         open: { type: "boolean", default: false },
         "no-llm": { type: "boolean", default: false },
+        "no-email": { type: "boolean", default: false },
         out: { type: "string" },
         layout: { type: "string", default: "cards" },
       },
@@ -122,6 +125,33 @@ async function main() {
   console.log(`agents: ${report.agents.length}, exceptions: ${report.exceptions.length}`);
   for (const a of report.exceptions) console.log(`  ! ${a.displayName} — ${a.status}`);
   console.log(`wrote ${base}.md ${base}.json ${base}.html`);
+
+  if (config.email && !values["no-email"]) {
+    const statuses = rollupCounts(report)
+      .byStatus.map(({ status, count }) => `${count} ${status}`)
+      .join(", ");
+    const subject = `ASL — ${day}${statuses ? `: ${statuses}` : ""}`;
+    const emailExec: EmailExec = (argv) => {
+      try {
+        const proc = Bun.spawnSync(argv, { stderr: "pipe" });
+        return { ok: proc.exitCode === 0, stderr: proc.stderr.toString() };
+      } catch (e) {
+        return { ok: false, stderr: String(e) };
+      }
+    };
+    // Email is best-effort: a failed send warns but never fails the run —
+    // the written report files and the morning browser tab are the primary
+    // delivery, and morning-report.sh must still reach its `open`.
+    const r = sendReportEmail(config.email, subject, md, html, {
+      env: process.env,
+      keychain: macKeychainLookup,
+      exec: emailExec,
+      now,
+    });
+    if (r.ok) console.log(r.message);
+    else console.error(`warning: ${r.message}`);
+  }
+
   if (values.open) Bun.spawn(["open", `${base}.html`]);
 }
 
