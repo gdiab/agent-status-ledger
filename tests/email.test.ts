@@ -275,5 +275,20 @@ describe("sendReportEmail", () => {
     });
     expect(r).toEqual({ ok: false, message: "email: spawn exploded" });
   });
+
+  test("an unprintable throwable (String() itself throws) still never escapes", () => {
+    // Object.create(null) has no toString/valueOf, so String(e) throws
+    // "Cannot convert object to primitive value" — the catch's formatter
+    // must survive even that.
+    const r = sendReportEmail(EMAIL_CFG, "s", "t", "h", {
+      env: {}, now: NOW,
+      keychain: () => {
+        throw Object.create(null);
+      },
+      exec: () => ({ ok: true, stdout: "", stderr: "" }),
+    });
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("unprintable error");
+  });
 });
 

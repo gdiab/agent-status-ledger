@@ -232,6 +232,15 @@ export function sendReportEmail(
       ? { ok: true, message: `emailed report to ${email.to} (password from ${resolved.source})` }
       : { ok: false, message: `email: send to ${email.to} failed — ${r.error}` };
   } catch (e) {
-    return { ok: false, message: `email: ${e instanceof Error ? e.message : String(e)}` };
+    // Even the formatting must not throw: String(e) itself throws for exotic
+    // throwables (e.g. Object.create(null) has no default value), and that
+    // would breach the never-throws contract the CLI relies on.
+    let detail: string;
+    try {
+      detail = e instanceof Error ? e.message : String(e);
+    } catch {
+      detail = "unprintable error";
+    }
+    return { ok: false, message: `email: ${detail}` };
   }
 }
