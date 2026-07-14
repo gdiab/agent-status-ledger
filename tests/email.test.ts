@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import type { KeychainLookup } from "../src/apikey";
 import { buildMimeMessage, encodeHeaderValue, quotedPrintable, resolveSmtpPassword, sendEmail, type EmailExec } from "../src/email";
 
@@ -146,7 +147,7 @@ describe("sendEmail", () => {
     const r = sendEmail(TARGET, "app-pass", "MIME BODY", exec);
     expect(r).toEqual({ ok: true });
     expect(seen!.argv.slice(0, 6)).toEqual([
-      "curl", "-sS", "--max-time", "60", "--url", "smtps://smtp.gmail.com:465",
+      "/usr/bin/curl", "-sS", "--max-time", "60", "--url", "smtps://smtp.gmail.com:465",
     ]);
     expect(seen!.argv).toContain("--mail-from");
     expect(seen!.argv).toContain("--mail-rcpt");
@@ -197,6 +198,19 @@ describe("sendEmail", () => {
   test("falls back to a generic error when stderr is empty", () => {
     const exec: EmailExec = () => ({ ok: false, stderr: "" });
     expect(sendEmail(TARGET, "p", "m", exec)).toEqual({ ok: false, error: "curl failed" });
+  });
+
+  test("rejects a password containing control characters before touching disk", () => {
+    let called = false;
+    const before = readdirSync(tmpdir()).filter((d) => d.startsWith("asl-email-"));
+    const r = sendEmail(TARGET, "bad\npass", "m", () => {
+      called = true;
+      return { ok: true, stderr: "" };
+    });
+    expect(r).toEqual({ ok: false, error: "credential or address contains control characters" });
+    expect(called).toBe(false);
+    const after = readdirSync(tmpdir()).filter((d) => d.startsWith("asl-email-"));
+    expect(after.length).toBe(before.length);
   });
 });
 

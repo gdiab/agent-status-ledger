@@ -34,7 +34,11 @@ export const macKeychainLookup: KeychainLookup = (service, account) => {
   if (process.platform !== "darwin") return null;
   const args = ["security", "find-generic-password", "-s", service, "-w"];
   if (account) args.splice(4, 0, "-a", account);
-  const proc = Bun.spawnSync(args, { stderr: "ignore" });
+  // A keychain prompt with no user present (the unattended launchd run) would
+  // otherwise hang forever; bound it so a stuck prompt degrades to a null
+  // lookup (non-zero/absent exit code) instead of blocking the whole report.
+  // Shared with the SMTP password lookup in email.ts — neither may hang.
+  const proc = Bun.spawnSync(args, { stderr: "ignore", timeout: 60_000 });
   if (proc.exitCode !== 0) return null;
   return proc.stdout.toString();
 };

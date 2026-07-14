@@ -130,7 +130,10 @@ async function main() {
     const statuses = rollupCounts(report)
       .byStatus.map(({ status, count }) => `${count} ${status}`)
       .join(", ");
-    const subject = `ASL — ${day}${statuses ? `: ${statuses}` : ""}`;
+    // Pure ASCII: an em dash would make the whole subject one RFC 2047
+    // encoded word, and a populated status list pushes that past the
+    // 75-char encoded-word limit.
+    const subject = `ASL - ${day}${statuses ? `: ${statuses}` : ""}`;
     const emailExec: EmailExec = (argv) => {
       try {
         const proc = Bun.spawnSync(argv, { stderr: "pipe" });

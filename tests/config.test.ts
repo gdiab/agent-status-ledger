@@ -98,4 +98,21 @@ describe("email config", () => {
       to: "a@x.com", from: "a@x.com", smtpHost: "smtp.gmail.com", smtpPort: 465,
     });
   });
+
+  // TOML multiline strings can carry a real CR/LF, which would otherwise flow
+  // straight into an RFC 5322 header or a curl.cfg directive line.
+  test("a `to` with an embedded newline disables email entirely", () => {
+    const path = writeToml(`[email]\nto = """a@x.com\nevil"""\n`);
+    expect(loadConfig(path).email).toBeUndefined();
+  });
+
+  test("a `from` with an embedded newline falls back to `to`", () => {
+    const path = writeToml(`[email]\nto = "a@x.com"\nfrom = """b@y.com\nevil"""\n`);
+    expect(loadConfig(path).email?.from).toBe("a@x.com");
+  });
+
+  test("an smtp_host with whitespace falls back to the default host", () => {
+    const path = writeToml(`[email]\nto = "a@x.com"\nsmtp_host = "bad host"\n`);
+    expect(loadConfig(path).email?.smtpHost).toBe("smtp.gmail.com");
+  });
 });

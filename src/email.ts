@@ -69,8 +69,10 @@ export function quotedPrintable(s: string): string {
   return lines.join("\r\n");
 }
 
-// RFC 2047 encoded word for header values with non-ASCII (the subject's em
-// dash). Subjects here are short, so one word is enough — no 75-char split.
+// RFC 2047 encoded word for header values with non-ASCII. The caller keeps
+// subjects pure ASCII (see cli.ts), so this path is a safety net for
+// non-ASCII input, not the normal route — one encoded word is enough for
+// anything realistic, no need for a 75-char split.
 export function encodeHeaderValue(s: string): string {
   if (/^[\x20-\x7e]*$/.test(s)) return s;
   return `=?UTF-8?B?${Buffer.from(s, "utf8").toString("base64")}?=`;
@@ -135,6 +137,11 @@ export interface SmtpTarget {
   to: string;
 }
 
+// Control characters (including CR/LF) have no business in a credential or
+// an envelope address; reject them up front rather than trust config.ts and
+// callers to have already validated everything that reaches here.
+const CONTROL_CHARS = /[\x00-\x1f\x7f]/;
+
 // Shells out to the system curl (macOS builds include smtps). The password
 // rides in a mode-600 curl config file, not argv, so it never shows in ps.
 export function sendEmail(
@@ -143,6 +150,14 @@ export function sendEmail(
   mime: string,
   exec: EmailExec,
 ): { ok: boolean; error?: string } {
+  if (
+    CONTROL_CHARS.test(password) ||
+    CONTROL_CHARS.test(target.host) ||
+    CONTROL_CHARS.test(target.from) ||
+    CONTROL_CHARS.test(target.to)
+  ) {
+    return { ok: false, error: "credential or address contains control characters" };
+  }
   const dir = mkdtempSync(join(tmpdir(), "asl-email-")); // mkdtemp dirs are mode 700
   try {
     const cfgPath = join(dir, "curl.cfg");
@@ -151,7 +166,7 @@ export function sendEmail(
     writeFileSync(cfgPath, `user = "${cred}"\n`, { mode: 0o600 });
     writeFileSync(emlPath, mime, { mode: 0o600 });
     const r = exec([
-      "curl", "-sS",
+      "/usr/bin/curl", "-sS",
       // unattended morning run must never hang on a stalled SMTP connection
       "--max-time", "60",
       "--url", `smtps://${target.host}:${target.port}`,
