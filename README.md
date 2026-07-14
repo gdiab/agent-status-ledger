@@ -32,6 +32,7 @@ smtp_port = 465                # default
 ```
 
 **Email delivery setup:** Emails the finished report via SMTP (Gmail by default).
+The mailer uses implicit TLS (`smtps://`), so `smtp_port` must be an implicit-TLS port — Gmail's default port **465** works; port **587** (STARTTLS) is not supported and will fail with opaque curl errors.
 One-time setup: create an app password at https://myaccount.google.com/apppasswords
 (requires 2-Step Verification), then store it in the macOS keychain:
 
