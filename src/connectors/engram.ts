@@ -17,20 +17,35 @@
 // Guard: grep can hit a session that merely *mentions* the UUID (e.g. an
 // orchestrator transcript quoting a dispatch prompt), so a candidate only
 // counts when its code.edit events actually carry source.session_id == uuid.
-import type { Exec } from "../exec";
+import type { EngramConfig } from "../config";
+import { makeSpawnExec, type Exec } from "../exec";
+import type { RawSession } from "../types";
 
 const CODE_EDIT_FILTER = '"k":"code.edit"';
 // Human-readable citation stays a one-liner: cap the distinct files named.
 const MAX_CITED_FILES = 5;
-// Query budget: each candidate costs one blocking `engram peek` subprocess,
-// and grep returns up to 10 hits by default. A grep by session UUID matches
-// the real session far stronger than a mention (hundreds of touch-count
-// points vs a handful), so if the real session is indexed at all it is in
-// the first hits — trying more than a few just burns subprocess time on
-// mention-only transcripts.
-const MAX_GREP_CANDIDATES = 3;
 
-interface UpgradeResult {
+// Per-call timeout for the default real exec seam: observed real latency is
+// ~60ms and a report run may make several calls per profile, so a hung
+// binary (locked SQLite DB, stalled process) must fail fast rather than eat
+// the report's time budget repeatedly.
+export const ENGRAM_TIMEOUT_MS = 5_000;
+
+// Query budget — every call is a sequential blocking subprocess (~60ms
+// observed), so both axes are capped side by side here:
+// - MAX_GREP_CANDIDATES: grep returns up to 10 hits by default, but a grep
+//   by session UUID matches the real session far stronger than a mention
+//   (hundreds of touch-count points vs a handful), so if the real session
+//   is indexed at all it is in the first hits — trying more just burns
+//   subprocess time on mention-only transcripts.
+// - MAX_SESSIONS_PER_PROFILE: sessions are tried newest-first (recent
+//   sessions are the ones most likely to be in the index and most relevant
+//   to today's report). Worst case per claimed_only profile:
+//   5 × (1 grep + 3 peeks) = 20 subprocess calls.
+const MAX_GREP_CANDIDATES = 3;
+const MAX_SESSIONS_PER_PROFILE = 5;
+
+export interface UpgradeResult {
   matched: boolean;
   citation?: string;
 }
@@ -92,12 +107,14 @@ function verifiedEditedFiles(peekResponse: Record<string, unknown>, sessionUuid:
 
 // Asks Engram whether it independently observed real code edits in the
 // harness session `sessionUuid` (grep by UUID, then peek each candidate's
-// code.edit events and verify their source.session_id). Never throws.
-export async function upgradeEvidence(
+// code.edit events and verify their source.session_id). Synchronous by
+// design — the Exec seam is Bun.spawnSync underneath; an async exec is a
+// separate future change. Never throws.
+export function upgradeEvidence(
   sessionUuid: string,
   binaryPath: string,
   exec: Exec,
-): Promise<UpgradeResult> {
+): UpgradeResult {
   try {
     const grep = exec([binaryPath, "grep", sessionUuid]);
     if (!grep.ok) return { matched: false };
@@ -125,6 +142,32 @@ export async function upgradeEvidence(
         matched: true,
         citation: `engram session ${engramSid}: observed code edits to ${shown}${more}`,
       };
+    }
+    return { matched: false };
+  } catch {
+    return { matched: false };
+  }
+}
+
+// The connector's single entry point for report generation: owns the
+// enabled switch, the newest-first session ordering, both query budgets,
+// the default real (timeout-bounded) exec seam, and the one fail-soft
+// boundary — mirroring sendReportEmail's never-throws contract (asl-533).
+// Callers gate on evidence level; everything engram-shaped lives here.
+export function corroborateSessions(
+  sessions: RawSession[],
+  cfg: EngramConfig,
+  exec?: Exec,
+): UpgradeResult {
+  if (!cfg.enabled) return { matched: false };
+  try {
+    // enabled=true with no injected seam runs the real binary (same pattern
+    // as narrative.ts's `fetchFn ?? fetch`); tests inject fakes.
+    const realExec = exec ?? makeSpawnExec(ENGRAM_TIMEOUT_MS);
+    const newestFirst = [...sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    for (const session of newestFirst.slice(0, MAX_SESSIONS_PER_PROFILE)) {
+      const result = upgradeEvidence(session.sessionId, cfg.binaryPath, realExec);
+      if (result.matched) return result;
     }
     return { matched: false };
   } catch {

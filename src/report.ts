@@ -1,5 +1,5 @@
 import type { Config } from "./config";
-import type { AgentProfile, AgentReport, CommitEvidence, EvidenceLevel, Report } from "./types";
+import type { AgentProfile, AgentReport, CommitEvidence, Report } from "./types";
 import { scanClaudeCode } from "./connectors/claude-code";
 import { scanCodex } from "./connectors/codex";
 import { resolveProfiles } from "./resolver";
@@ -7,7 +7,7 @@ import { attributeCommits, listCommits } from "./git";
 import { EXCEPTION_STATUSES, inferStatus } from "./status";
 import { buildFactSheet, generateNarrative, templateNarrative } from "./narrative";
 import { redact, redactFacts } from "./redact";
-import { upgradeEvidence } from "./connectors/engram";
+import { corroborateSessions } from "./connectors/engram";
 import type { Exec } from "./exec";
 
 export interface BuildReportOptions {
@@ -17,9 +17,10 @@ export interface BuildReportOptions {
   useLlm: boolean;
   apiKey?: string;
   fetchFn?: typeof fetch;
-  // Optional exec seam for the Engram evidence-upgrade connector (see
-  // src/connectors/engram.ts). Absent = enrichment never runs, matching the
-  // connector's own opt-in-only default (config.connectors.engram.enabled).
+  // Test seam for the Engram evidence-upgrade connector (same pattern as
+  // fetchFn above): absent = the connector uses its own timeout-bounded real
+  // exec when config.connectors.engram.enabled is true. The enabled flag is
+  // the single switch.
   engramExec?: Exec;
 }
 
@@ -62,46 +63,6 @@ export function isTrivialProfile(profile: AgentProfile, commits: CommitEvidence[
   );
 }
 
-// Optional, fail-soft evidence upgrade: only ever runs for claimed_only
-// profiles, only when the engram connector is enabled and an exec seam was
-// supplied, and only ever moves evidence up to partially_proven — never
-// invents a new status, never touches proven/partially_proven/unknown
-// reports. Any failure (missing binary, malformed response, no qualifying
-// match, or a thrown error) leaves evidence exactly as inferStatus returned
-// it, mirroring sendReportEmail's never-throws contract (asl-533).
-//
-// Keyed off the profile's harness session UUIDs (RawSession.sessionId),
-// which ASL always has — deliberately NOT facts.filesTouched, which under
-// inferStatus's formula is guaranteed empty exactly when evidence is
-// claimed_only (that's what claimed_only means: no observed file activity).
-//
-// Query budget: each session tried costs 1 grep + up to 3 peek subprocesses
-// (MAX_GREP_CANDIDATES in connectors/engram.ts), all sequential and
-// blocking, so a many-session profile must not fan out unbounded. Callers
-// pass sessionIds newest-first (recent sessions are the ones most likely to
-// be in the engram index and most relevant to today's report) and only the
-// first MAX_ENGRAM_SESSIONS are tried — worst case 5 × (1 + 3) = 20
-// subprocess calls per claimed_only profile, ~60ms each observed.
-const MAX_ENGRAM_SESSIONS = 5;
-
-export async function applyEngramEnrichment(
-  evidence: EvidenceLevel,
-  sessionIds: string[],
-  engramConfig: Config["connectors"]["engram"],
-  exec: Exec | undefined,
-): Promise<{ evidence: EvidenceLevel; evidenceCitation?: string }> {
-  if (evidence !== "claimed_only" || !engramConfig.enabled || !exec) return { evidence };
-  try {
-    for (const sessionId of sessionIds.slice(0, MAX_ENGRAM_SESSIONS)) {
-      const result = await upgradeEvidence(sessionId, engramConfig.binaryPath, exec);
-      if (result.matched) return { evidence: "partially_proven", evidenceCitation: result.citation };
-    }
-  } catch {
-    // fail-soft: engram enrichment must never break report generation
-  }
-  return { evidence };
-}
-
 export async function buildReport(opts: BuildReportOptions): Promise<Report> {
   const { since, now, config } = opts;
   const sessions = [
@@ -125,21 +86,21 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
     // future consumer of buildReport() (not just the CLI's own render pass) gets a
     // report object with secrets already scrubbed.
     const commits = rawCommits.map((c) => ({ ...c, subject: redact(c.subject, config.redactPatterns) }));
-    const { status, severity, evidence: inferredEvidence } = inferStatus(profile, rawCommits, now, config.thresholds);
+    let { status, severity, evidence } = inferStatus(profile, rawCommits, now, config.thresholds);
     const facts = redactFacts(buildFactSheet(profile, commits), config.redactPatterns);
-    // Newest session first (explicit sort rather than trusting the profile's
-    // ascending order) — see applyEngramEnrichment's budget comment.
-    const sessionIdsNewestFirst = [...profile.sessions]
-      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
-      .map((s) => s.sessionId);
-    const { evidence, evidenceCitation: rawCitation } = await applyEngramEnrichment(
-      inferredEvidence, sessionIdsNewestFirst, config.connectors.engram, opts.engramExec,
-    );
-    // Same defense-in-depth contract as commit subjects and facts above: the
-    // citation is assembled from Engram-derived file paths, which can carry
-    // secrets (e.g. a filename containing a key) — redact at the model layer
-    // so every consumer of buildReport() gets a scrubbed report object.
-    const evidenceCitation = rawCitation ? redact(rawCitation, config.redactPatterns) : undefined;
+    // Optional evidence corroboration: only a claimed_only reading can be
+    // upgraded — everything else engram-shaped (enabled switch, budgets,
+    // ordering, fail-soft boundary) lives in the connector. The citation is
+    // redacted at the model layer like commit subjects and facts above,
+    // since it is assembled from Engram-derived file paths.
+    let evidenceCitation: string | undefined;
+    if (evidence === "claimed_only") {
+      const upgrade = corroborateSessions(profile.sessions, config.connectors.engram, opts.engramExec);
+      if (upgrade.matched) {
+        evidence = "partially_proven";
+        evidenceCitation = upgrade.citation ? redact(upgrade.citation, config.redactPatterns) : undefined;
+      }
+    }
     const { narrative, source } = opts.useLlm
       ? await generateNarrative(facts, status, { model: config.model, apiKey: opts.apiKey, fetchFn: opts.fetchFn })
       : { narrative: templateNarrative(facts, status), source: "template" as const };

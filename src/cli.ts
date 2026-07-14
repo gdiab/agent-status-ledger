@@ -19,16 +19,13 @@ import { statusSummary } from "./render/rollup";
 const USAGE = `usage: asl report [--since 24h] [--open] [--no-llm] [--no-email] [--out DIR] [--layout ${HTML_LAYOUTS.join("|")}]
        asl doctor`;
 
-// Two exec seams, both timeout-bounded (src/exec.ts) so nothing can hang the
-// unattended run:
-// - spawnExec (60s) for doctor's checks and the email path — matches the
-//   keychain lookup's bound in apikey.ts, and email's curl already self-caps
-//   at --max-time 60, so 60s is the ceiling any legitimate caller needs.
-// - engramExec (5s) for the engram enrichment calls — observed real latency
-//   is ~60ms and a report run may make several calls per profile, so a hung
-//   binary must fail fast rather than eat the 60s budget repeatedly.
+// One timeout-bounded exec seam (src/exec.ts) for doctor's checks and the
+// email path, so nothing can hang the unattended run: 60s matches the
+// keychain lookup's bound in apikey.ts, and email's curl already self-caps
+// at --max-time 60, so 60s is the ceiling any legitimate caller needs. The
+// engram connector owns its own tighter seam (ENGRAM_TIMEOUT_MS in
+// src/connectors/engram.ts) behind the config enabled flag.
 const spawnExec: Exec = makeSpawnExec(60_000);
-const engramExec: Exec = makeSpawnExec(5_000);
 
 function runDoctorCli(): never {
   const cfgPath = configPath();
@@ -115,15 +112,10 @@ async function main() {
   // No usable history → annotateTrends is a no-op and output is unchanged.
   const day = now.toISOString().slice(0, 10);
   const previous = await loadPreviousReport(config.reportsDir, day);
-  // The 5s-bounded engram seam gives the evidence-upgrade connector (opt-in
-  // via connectors.engram.enabled) a working exec in the real CLI, not just
-  // in tests. buildReport's own gate (evidence === "claimed_only" &&
-  // config.connectors.engram.enabled) means this is inert unless the user
-  // has opted in.
-  const report = annotateTrends(
-    await buildReport({ since, now, config, useLlm, apiKey, engramExec }),
-    previous,
-  );
+  // The engram evidence-upgrade connector activates purely off
+  // config.connectors.engram.enabled — it brings its own timeout-bounded
+  // exec seam, so nothing needs threading here.
+  const report = annotateTrends(await buildReport({ since, now, config, useLlm, apiKey }), previous);
 
   mkdirSync(config.reportsDir, { recursive: true });
   const base = join(config.reportsDir, day);
