@@ -6,11 +6,23 @@ import type { Thresholds } from "./types";
 
 export interface ConnectorConfig { enabled: boolean; rootDir: string; }
 
+// No whitespace of any kind (space, tab, CR, LF) in either address part.
+const EMAIL_ADDRESS_SHAPE = /^[^\s@]+@[^\s@]+$/;
+const SMTP_HOST_SHAPE = /^[A-Za-z0-9.-]+$/;
+
+export interface EmailConfig {
+  to: string;
+  from: string;
+  smtpHost: string;
+  smtpPort: number;
+}
+
 export interface Config {
   reportsDir: string;
   model: string;
   thresholds: Thresholds;
   connectors: { claudeCode: ConnectorConfig; codex: ConnectorConfig };
+  email?: EmailConfig;   // absent = email delivery off
   redactPatterns: string[];   // extra user regexes (source strings)
 }
 
@@ -52,6 +64,23 @@ export function loadConfig(path: string = configPath()): Config {
     const section = conns?.[key];
     if (typeof section?.enabled === "boolean") target.enabled = section.enabled;
     if (typeof section?.root_dir === "string") target.rootDir = section.root_dir;
+  }
+  const em = raw.email as Record<string, unknown> | undefined;
+  // TOML multiline strings can smuggle CR/LF (and other control chars) into
+  // values that later land in RFC 5322 headers or a curl.cfg directive line
+  // — reject any whitespace in the address local/domain parts and restrict
+  // smtp_host to a plain hostname shape rather than trying to blocklist bytes.
+  if (typeof em?.to === "string" && em.to.trim() && EMAIL_ADDRESS_SHAPE.test(em.to)) {
+    const from = typeof em.from === "string" && em.from.trim() && EMAIL_ADDRESS_SHAPE.test(em.from) ? em.from : em.to;
+    const smtpHost = typeof em.smtp_host === "string" && SMTP_HOST_SHAPE.test(em.smtp_host)
+      ? em.smtp_host
+      : "smtp.gmail.com";
+    c.email = {
+      to: em.to,
+      from,
+      smtpHost,
+      smtpPort: typeof em.smtp_port === "number" ? em.smtp_port : 465,
+    };
   }
   if (Array.isArray(raw.redact_patterns)) {
     c.redactPatterns = raw.redact_patterns.filter((p): p is string => typeof p === "string");

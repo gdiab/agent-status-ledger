@@ -12,24 +12,30 @@ import { redact } from "./redact";
 import { resolveApiKey, macKeychainLookup } from "./apikey";
 import { formatDoctorReport, runDoctor, type Exec } from "./doctor";
 import { homedir } from "node:os";
+import { sendReportEmail } from "./email";
+import { statusSummary } from "./render/rollup";
 
-const USAGE = `usage: asl report [--since 24h] [--open] [--no-llm] [--out DIR] [--layout ${HTML_LAYOUTS.join("|")}]
+const USAGE = `usage: asl report [--since 24h] [--open] [--no-llm] [--no-email] [--out DIR] [--layout ${HTML_LAYOUTS.join("|")}]
        asl doctor`;
 
+// One exec seam for the whole CLI — doctor's checks and the email path both
+// just need real subprocess execution with stdout and stderr piped, never
+// throwing.
+const spawnExec: Exec = (argv) => {
+  try {
+    const proc = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe" });
+    return { ok: proc.exitCode === 0, stdout: proc.stdout.toString(), stderr: proc.stderr.toString() };
+  } catch (e) {
+    return { ok: false, stdout: "", stderr: String(e) };
+  }
+};
+
 function runDoctorCli(): never {
-  const exec: Exec = (argv) => {
-    try {
-      const proc = Bun.spawnSync(argv, { stderr: "ignore" });
-      return { ok: proc.exitCode === 0, stdout: proc.stdout.toString() };
-    } catch {
-      return { ok: false, stdout: "" };
-    }
-  };
   const cfgPath = configPath();
   const results = runDoctor({
     env: process.env,
     keychain: macKeychainLookup,
-    exec,
+    exec: spawnExec,
     platform: process.platform,
     home: homedir(),
     configPath: cfgPath,
@@ -55,6 +61,7 @@ function parseCliArgs() {
         since: { type: "string", default: "24h" },
         open: { type: "boolean", default: false },
         "no-llm": { type: "boolean", default: false },
+        "no-email": { type: "boolean", default: false },
         out: { type: "string" },
         layout: { type: "string", default: "cards" },
       },
@@ -122,6 +129,25 @@ async function main() {
   console.log(`agents: ${report.agents.length}, exceptions: ${report.exceptions.length}`);
   for (const a of report.exceptions) console.log(`  ! ${a.displayName} — ${a.status}`);
   console.log(`wrote ${base}.md ${base}.json ${base}.html`);
+
+  if (config.email && !values["no-email"]) {
+    const statuses = statusSummary(report);
+    // Pure ASCII: an em dash would make the whole subject one RFC 2047
+    // encoded word, and a populated status list pushes that past the
+    // 75-char encoded-word limit.
+    const subject = `ASL - ${day}${statuses ? `: ${statuses}` : ""}`;
+    // Email is best-effort and must never block --open below; sendReportEmail
+    // itself never throws, so no try/catch is needed here.
+    const r = sendReportEmail(config.email, subject, md, html, {
+      env: process.env,
+      keychain: macKeychainLookup,
+      exec: spawnExec,
+      now,
+    });
+    if (r.ok) console.log(r.message);
+    else console.error(`warning: ${r.message}`);
+  }
+
   if (values.open) Bun.spawn(["open", `${base}.html`]);
 }
 
