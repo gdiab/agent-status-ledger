@@ -105,6 +105,49 @@ describe("redact", () => {
     expect(r).not.toContain("ghp_ABCDEFGHIJKLMNOPQRST123456");
   });
 
+  test("unquoted value with a literal [REDACTED] prefix is fully redacted, no tail leak", () => {
+    const r = redact("password=[REDACTED]abc123def");
+    expect(r).toBe("[REDACTED]");
+    expect(r).not.toContain("abc123def");
+  });
+
+  test("keyword-colon value with a literal [REDACTED] prefix is fully redacted, no tail leak", () => {
+    const r = redact("token: [REDACTED]sk-livesecret");
+    expect(r).toContain("[REDACTED]");
+    expect(r).not.toContain("sk-livesecret");
+  });
+
+  test("quoted-and-truncated value starting with literal [REDACTED] is fully redacted", () => {
+    const r = redact('password: "[REDACTED]abc123def');
+    expect(r).toContain("[REDACTED]");
+    expect(r).not.toContain("abc123def");
+  });
+
+  test("already-redacted quoted output is left byte-for-byte untouched", () => {
+    expect(redact('password: "[REDACTED]"')).toBe('password: "[REDACTED]"');
+  });
+
+  test("already-redacted quoted output embedded in JSON is left untouched", () => {
+    const out = redact('{"password":"[REDACTED]","next":"ok"}');
+    expect(out).toBe('{"password":"[REDACTED]","next":"ok"}');
+  });
+
+  test("redact is idempotent for representative secret-bearing inputs", () => {
+    const cases = [
+      'password: "hunter2secret"',
+      "secret: 'abc\\ndef'",
+      "password=hunter2secretvalue",
+      "password=[REDACTED]abc123def",
+      "token: [REDACTED]sk-livesecret",
+      '{"password":"hunter2secret","next":"ok"}',
+    ];
+    for (const c of cases) {
+      const once = redact(c);
+      const twice = redact(once);
+      expect(twice).toBe(once);
+    }
+  });
+
   test("redactFacts covers every string field", () => {
     const f = redactFacts({
       titles: ["Deploy with ghp_ABCDEFGHIJKLMNOPQRST123456"],

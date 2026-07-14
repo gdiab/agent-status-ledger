@@ -26,8 +26,15 @@ const BUILTIN: Rule[] = [
   { re: new RegExp(`(\\b${KEYWORD}\\b["']?\\s*[:=]\\s*)'(?:\\\\[\\s\\S]|[^'\\\\])*'`, "gi"), sub: "$1'[REDACTED]'" },
   // Unquoted fallback; the optional opening quote catches values whose closing
   // quote was truncated (error excerpts are cut at the first line). The
-  // lookahead stops it re-mangling the quoted rules' own "[REDACTED]" output.
-  { re: new RegExp(`\\b${KEYWORD}\\b\\s*[:=]\\s*["']?(?!\\[REDACTED\\])[^\\s"']{4,}`, "gi"), sub: "[REDACTED]" },
+  // lookahead only excludes a value that IS the "[REDACTED]" marker and
+  // nothing else (optionally quoted, then a closing quote/whitespace/end) —
+  // that's exactly what the quoted rules above (or a prior redact() pass)
+  // produce, so re-matching it is a no-op we skip for clarity. If more secret
+  // characters are glued onto a "[REDACTED]" prefix (e.g. a truncated log
+  // line that literally starts with the marker text), the lookahead does NOT
+  // match, so the whole run gets collapsed to "[REDACTED]" too — no tail
+  // leaks, and the result is stable under a second redact() pass either way.
+  { re: new RegExp(`\\b${KEYWORD}\\b\\s*[:=]\\s*(?!["']?\\[REDACTED\\](?:["']|\\s|$))["']?[^\\s"']{4,}`, "gi"), sub: "[REDACTED]" },
 ];
 
 export function redact(text: string, extraPatterns: string[] = []): string {
