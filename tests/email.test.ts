@@ -145,7 +145,9 @@ describe("sendEmail", () => {
     };
     const r = sendEmail(TARGET, "app-pass", "MIME BODY", exec);
     expect(r).toEqual({ ok: true });
-    expect(seen!.argv.slice(0, 4)).toEqual(["curl", "-sS", "--url", "smtps://smtp.gmail.com:465"]);
+    expect(seen!.argv.slice(0, 6)).toEqual([
+      "curl", "-sS", "--max-time", "60", "--url", "smtps://smtp.gmail.com:465",
+    ]);
     expect(seen!.argv).toContain("--mail-from");
     expect(seen!.argv).toContain("--mail-rcpt");
     expect(seen!.argv.join(" ")).not.toContain("app-pass");

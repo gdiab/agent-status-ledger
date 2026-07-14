@@ -141,15 +141,23 @@ async function main() {
     };
     // Email is best-effort: a failed send warns but never fails the run —
     // the written report files and the morning browser tab are the primary
-    // delivery, and morning-report.sh must still reach its `open`.
-    const r = sendReportEmail(config.email, subject, md, html, {
-      env: process.env,
-      keychain: macKeychainLookup,
-      exec: emailExec,
-      now,
-    });
-    if (r.ok) console.log(r.message);
-    else console.error(`warning: ${r.message}`);
+    // delivery, and morning-report.sh must still reach its `open`. This
+    // includes exceptions (e.g. keychain lookup or temp-file I/O throwing),
+    // not just a curl failure — nothing in this block may reach main()'s
+    // catch and skip the --open step below.
+    try {
+      const r = sendReportEmail(config.email, subject, md, html, {
+        env: process.env,
+        keychain: macKeychainLookup,
+        exec: emailExec,
+        now,
+      });
+      if (r.ok) console.log(r.message);
+      else console.error(`warning: ${r.message}`);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error(`warning: email: ${message}`);
+    }
   }
 
   if (values.open) Bun.spawn(["open", `${base}.html`]);

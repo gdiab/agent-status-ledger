@@ -152,6 +152,8 @@ export function sendEmail(
     writeFileSync(emlPath, mime, { mode: 0o600 });
     const r = exec([
       "curl", "-sS",
+      // unattended morning run must never hang on a stalled SMTP connection
+      "--max-time", "60",
       "--url", `smtps://${target.host}:${target.port}`,
       "--mail-from", target.from,
       "--mail-rcpt", target.to,
