@@ -11,21 +11,29 @@ export interface ResolvedKey {
 export const KEYCHAIN_SERVICE = "anthropic-api-key";
 export const KEYCHAIN_ACCOUNT = "asl";
 
+// Shared by every secret lookup (API key here, SMTP password in email.ts):
+// try each candidate in order, first non-blank trimmed value wins.
+export function resolveSecret(
+  candidates: Array<[() => string | null | undefined, string]>,
+): { value: string; source: string } | null {
+  for (const [get, source] of candidates) {
+    const value = get()?.trim();
+    if (value) return { value, source };
+  }
+  return null;
+}
+
 export function resolveApiKey(
   env: Record<string, string | undefined>,
   keychain: KeychainLookup,
 ): ResolvedKey | null {
-  const candidates: Array<[() => string | null | undefined, string]> = [
+  const resolved = resolveSecret([
     [() => env.ASL_ANTHROPIC_API_KEY, "ASL_ANTHROPIC_API_KEY env var"],
     [() => env.ANTHROPIC_API_KEY, "ANTHROPIC_API_KEY env var"],
     [() => keychain(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT), `keychain ${KEYCHAIN_SERVICE} (account: ${KEYCHAIN_ACCOUNT})`],
     [() => keychain(KEYCHAIN_SERVICE), `keychain ${KEYCHAIN_SERVICE} (any account)`],
-  ];
-  for (const [get, source] of candidates) {
-    const key = get()?.trim();
-    if (key) return { key, source };
-  }
-  return null;
+  ]);
+  return resolved ? { key: resolved.value, source: resolved.source } : null;
 }
 
 // Real lookup via the macOS `security` CLI. Returns null off-macOS, when the

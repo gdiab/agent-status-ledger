@@ -34,9 +34,16 @@ export function rollupCounts(report: Report): RollupCounts {
   };
 }
 
+// "3 blocked, 1 silent" — worst-first, shared by the markdown rollup line
+// and the email subject so they never drift apart.
+export function statusSummary(report: Report): string {
+  return rollupCounts(report)
+    .byStatus.map(({ status, count }) => `${count} ${status}`)
+    .join(", ");
+}
+
 export function rollupLine(report: Report): string {
   if (report.agents.length === 0) return "No agent activity in this window.";
   const c = rollupCounts(report);
-  const byStatus = c.byStatus.map(({ status, count }) => `${count} ${status}`).join(", ");
-  return `${plural(c.agents, "agent")}: ${byStatus} — ${plural(c.commits, "commit")}, ${plural(c.files, "file")} touched`;
+  return `${plural(c.agents, "agent")}: ${statusSummary(report)} — ${plural(c.commits, "commit")}, ${plural(c.files, "file")} touched`;
 }

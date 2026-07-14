@@ -7,6 +7,8 @@ import {
   checkBun,
   checkConfigFile,
   checkConnectorDir,
+  checkEmailConfig,
+  checkEmailPassword,
   checkLaunchdBunPath,
   checkPlistInstalled,
   checkPlistLoaded,
@@ -16,12 +18,12 @@ import {
   type Exec,
 } from "../src/doctor";
 import type { KeychainLookup } from "../src/apikey";
-import { defaultConfig } from "../src/config";
+import { defaultConfig, type EmailConfig } from "../src/config";
 
 const execOk =
   (stdout: string): Exec =>
-  () => ({ ok: true, stdout });
-const execFail: Exec = () => ({ ok: false, stdout: "" });
+  () => ({ ok: true, stdout, stderr: "" });
+const execFail: Exec = () => ({ ok: false, stdout: "", stderr: "" });
 const noKeychain: KeychainLookup = () => null;
 
 function tempDir(): string {
@@ -262,9 +264,6 @@ describe("formatDoctorReport", () => {
   });
 });
 
-import { checkEmailConfig, checkEmailPassword } from "../src/doctor";
-import type { EmailConfig } from "../src/config";
-
 const email: EmailConfig = {
   to: "gd@example.com", from: "gd@example.com", smtpHost: "smtp.gmail.com", smtpPort: 465,
 };
@@ -291,7 +290,7 @@ describe("checkEmailConfig", () => {
 
 describe("checkEmailPassword", () => {
   test("skips when email is not configured", () => {
-    const r = checkEmailPassword({}, noKeychain, false);
+    const r = checkEmailPassword({}, noKeychain, undefined);
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("not configured");
   });
@@ -299,13 +298,13 @@ describe("checkEmailPassword", () => {
   test("passes when the keychain has the app password", () => {
     const keychain: KeychainLookup = (s, a) =>
       s === "gmail-app-password" && a === "asl" ? "pass" : null;
-    const r = checkEmailPassword({}, keychain, true);
+    const r = checkEmailPassword({}, keychain, email);
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("keychain");
   });
 
   test("fails with the add-generic-password hint when missing", () => {
-    const r = checkEmailPassword({}, noKeychain, true);
+    const r = checkEmailPassword({}, noKeychain, email);
     expect(r.ok).toBe(false);
     expect(r.fix).toContain("security add-generic-password -s gmail-app-password -a asl");
   });

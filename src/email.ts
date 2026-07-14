@@ -4,11 +4,16 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { KeychainLookup } from "./apikey";
+import { resolveSecret, type KeychainLookup } from "./apikey";
 import type { EmailConfig } from "./config";
 
 export const SMTP_KEYCHAIN_SERVICE = "gmail-app-password";
 export const SMTP_KEYCHAIN_ACCOUNT = "asl";
+
+// The one fix hint for a missing SMTP password, shared by sendReportEmail's
+// own message and doctor's checkEmailPassword.
+export const SMTP_PASSWORD_FIX =
+  `security add-generic-password -s ${SMTP_KEYCHAIN_SERVICE} -a ${SMTP_KEYCHAIN_ACCOUNT} -w "<gmail app password>"`;
 
 export interface ResolvedPassword {
   password: string;
@@ -19,18 +24,14 @@ export function resolveSmtpPassword(
   env: Record<string, string | undefined>,
   keychain: KeychainLookup,
 ): ResolvedPassword | null {
-  const candidates: Array<[() => string | null | undefined, string]> = [
+  const resolved = resolveSecret([
     [() => env.ASL_SMTP_PASSWORD, "ASL_SMTP_PASSWORD env var"],
     [
       () => keychain(SMTP_KEYCHAIN_SERVICE, SMTP_KEYCHAIN_ACCOUNT),
       `keychain ${SMTP_KEYCHAIN_SERVICE} (account: ${SMTP_KEYCHAIN_ACCOUNT})`,
     ],
-  ];
-  for (const [get, source] of candidates) {
-    const password = get()?.trim();
-    if (password) return { password, source };
-  }
-  return null;
+  ]);
+  return resolved ? { password: resolved.value, source: resolved.source } : null;
 }
 
 // RFC 2045 §6.7 quoted-printable over UTF-8 bytes. Lines capped at 76 chars
@@ -126,9 +127,10 @@ export function buildMimeMessage(m: MimeInput): string {
   ].join("\r\n");
 }
 
-// Doctor's Exec discards stderr; curl reports SMTP failures there, so email
-// gets its own seam shape.
-export type EmailExec = (argv: string[]) => { ok: boolean; stderr: string };
+// Shared exec seam: doctor's checks need stdout (e.g. `bun --version`), and
+// email needs stderr (curl reports SMTP failures there) — one shape with
+// both fields covers every caller instead of each seam inventing its own.
+export type Exec = (argv: string[]) => { ok: boolean; stdout: string; stderr: string };
 
 export interface SmtpTarget {
   host: string;
@@ -148,7 +150,7 @@ export function sendEmail(
   target: SmtpTarget,
   password: string,
   mime: string,
-  exec: EmailExec,
+  exec: Exec,
 ): { ok: boolean; error?: string } {
   if (
     CONTROL_CHARS.test(password) ||
@@ -184,12 +186,14 @@ export function sendEmail(
 export interface ReportEmailDeps {
   env: Record<string, string | undefined>;
   keychain: KeychainLookup;
-  exec: EmailExec;
+  exec: Exec;
   now: Date;
 }
 
 // One-call orchestration for the CLI: resolve password → build MIME → send.
-// Always returns a printable one-liner; the caller decides log vs warn.
+// Always returns a printable one-liner and never throws — email is
+// best-effort and must never block the rest of the report run (the caller
+// just logs or warns based on `ok`).
 export function sendReportEmail(
   email: EmailConfig,
   subject: string,
@@ -197,35 +201,37 @@ export function sendReportEmail(
   html: string,
   deps: ReportEmailDeps,
 ): { ok: boolean; message: string } {
-  const resolved = resolveSmtpPassword(deps.env, deps.keychain);
-  if (!resolved) {
-    return {
-      ok: false,
-      message:
-        "email: no SMTP password — set ASL_SMTP_PASSWORD or run: " +
-        `security add-generic-password -s ${SMTP_KEYCHAIN_SERVICE} -a ${SMTP_KEYCHAIN_ACCOUNT} -w "<gmail app password>"`,
-    };
+  try {
+    const resolved = resolveSmtpPassword(deps.env, deps.keychain);
+    if (!resolved) {
+      return {
+        ok: false,
+        message: `email: no SMTP password — set ASL_SMTP_PASSWORD or run: ${SMTP_PASSWORD_FIX}`,
+      };
+    }
+    const stamp = deps.now.getTime();
+    const mime = buildMimeMessage({
+      from: email.from,
+      to: email.to,
+      subject,
+      text,
+      html,
+      date: deps.now,
+      messageId: `${stamp}.asl@${email.smtpHost}`,
+      // "=_" can never occur in quoted-printable output ("=" is only ever
+      // followed by hex digits or a soft break), so this boundary is safe.
+      boundary: `=_asl-${stamp.toString(36)}`,
+    });
+    const r = sendEmail(
+      { host: email.smtpHost, port: email.smtpPort, from: email.from, to: email.to },
+      resolved.password,
+      mime,
+      deps.exec,
+    );
+    return r.ok
+      ? { ok: true, message: `emailed report to ${email.to} (password from ${resolved.source})` }
+      : { ok: false, message: `email: send to ${email.to} failed — ${r.error}` };
+  } catch (e) {
+    return { ok: false, message: `email: ${e instanceof Error ? e.message : String(e)}` };
   }
-  const stamp = deps.now.getTime();
-  const mime = buildMimeMessage({
-    from: email.from,
-    to: email.to,
-    subject,
-    text,
-    html,
-    date: deps.now,
-    messageId: `${stamp}.asl@${email.smtpHost}`,
-    // "=_" can never occur in quoted-printable output ("=" is only ever
-    // followed by hex digits or a soft break), so this boundary is safe.
-    boundary: `=_asl-${stamp.toString(36)}`,
-  });
-  const r = sendEmail(
-    { host: email.smtpHost, port: email.smtpPort, from: email.from, to: email.to },
-    resolved.password,
-    mime,
-    deps.exec,
-  );
-  return r.ok
-    ? { ok: true, message: `emailed report to ${email.to} (password from ${resolved.source})` }
-    : { ok: false, message: `email: send to ${email.to} failed — ${r.error}` };
 }

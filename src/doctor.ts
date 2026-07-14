@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { parse } from "smol-toml";
 import { KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, resolveApiKey, type KeychainLookup } from "./apikey";
 import type { Config, ConnectorConfig } from "./config";
-import { resolveSmtpPassword, SMTP_KEYCHAIN_ACCOUNT, SMTP_KEYCHAIN_SERVICE } from "./email";
+import { resolveSmtpPassword, SMTP_PASSWORD_FIX, type Exec } from "./email";
 
 export const LAUNCHD_LABEL = "com.gd.asl-report";
 
@@ -22,7 +22,10 @@ export interface CheckResult {
   fix?: string;
 }
 
-export type Exec = (argv: string[]) => { ok: boolean; stdout: string };
+// Exec lives in email.ts (doctor already imports from there, and email must
+// not import back from doctor) — re-exported here so existing `from "./doctor"`
+// imports keep working.
+export type { Exec };
 
 export interface DoctorDeps {
   env: Record<string, string | undefined>;
@@ -160,10 +163,10 @@ export function checkEmailConfig(email: Config["email"]): CheckResult {
 export function checkEmailPassword(
   env: Record<string, string | undefined>,
   keychain: KeychainLookup,
-  configured: boolean,
+  email: Config["email"],
 ): CheckResult {
   const name = "gmail app password";
-  if (!configured) return { name, ok: true, detail: "email not configured — skipped" };
+  if (!email) return { name, ok: true, detail: "email not configured — skipped" };
   const resolved = resolveSmtpPassword(env, keychain);
   return resolved
     ? { name, ok: true, detail: `found via ${resolved.source}` }
@@ -171,7 +174,7 @@ export function checkEmailPassword(
         name,
         ok: false,
         detail: "not found in env (ASL_SMTP_PASSWORD) or keychain",
-        fix: `security add-generic-password -s ${SMTP_KEYCHAIN_SERVICE} -a ${SMTP_KEYCHAIN_ACCOUNT} -w "<gmail app password>"`,
+        fix: SMTP_PASSWORD_FIX,
       };
 }
 
@@ -190,7 +193,7 @@ export function runDoctor(deps: DoctorDeps): CheckResult[] {
     mac ? checkPlistLoaded(deps.exec, plistPath) : skipped("launchd job loaded"),
     checkConfigFile(deps.configPath),
     checkEmailConfig(deps.config.email),
-    checkEmailPassword(deps.env, deps.keychain, !!deps.config.email),
+    checkEmailPassword(deps.env, deps.keychain, deps.config.email),
     checkConnectorDir("claude-code", "claude_code", connectors.claudeCode),
     checkConnectorDir("codex", "codex", connectors.codex, join(connectors.codex.rootDir, "sessions")),
   ];

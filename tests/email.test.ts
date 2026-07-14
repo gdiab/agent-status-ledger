@@ -2,7 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { KeychainLookup } from "../src/apikey";
-import { buildMimeMessage, encodeHeaderValue, quotedPrintable, resolveSmtpPassword, sendEmail, type EmailExec } from "../src/email";
+import type { EmailConfig } from "../src/config";
+import {
+  buildMimeMessage,
+  encodeHeaderValue,
+  quotedPrintable,
+  resolveSmtpPassword,
+  sendEmail,
+  sendReportEmail,
+  type Exec,
+} from "../src/email";
 
 const noKeychain: KeychainLookup = () => null;
 function fakeKeychain(entries: Record<string, string>): KeychainLookup {
@@ -138,11 +147,11 @@ const TARGET = { host: "smtp.gmail.com", port: 465, from: "gd@example.com", to: 
 describe("sendEmail", () => {
   test("invokes curl with smtps url, envelope args, and temp files — password not in argv", () => {
     let seen: { argv: string[]; cfg: string; eml: string } | null = null;
-    const exec: EmailExec = (argv) => {
+    const exec: Exec = (argv) => {
       const cfgPath = argv[argv.indexOf("-K") + 1]!;
       const emlPath = argv[argv.indexOf("-T") + 1]!;
       seen = { argv, cfg: readFileSync(cfgPath, "utf8"), eml: readFileSync(emlPath, "utf8") };
-      return { ok: true, stderr: "" };
+      return { ok: true, stdout: "", stderr: "" };
     };
     const r = sendEmail(TARGET, "app-pass", "MIME BODY", exec);
     expect(r).toEqual({ ok: true });
@@ -158,9 +167,9 @@ describe("sendEmail", () => {
 
   test("escapes quotes and backslashes in the curl config credential", () => {
     let cfg = "";
-    const exec: EmailExec = (argv) => {
+    const exec: Exec = (argv) => {
       cfg = readFileSync(argv[argv.indexOf("-K") + 1]!, "utf8");
-      return { ok: true, stderr: "" };
+      return { ok: true, stdout: "", stderr: "" };
     };
     sendEmail(TARGET, 'p"w\\d', "m", exec);
     expect(cfg).toBe('user = "gd@example.com:p\\"w\\\\d"\n');
@@ -169,10 +178,10 @@ describe("sendEmail", () => {
   test("cleans up the temp dir on success and on failure", () => {
     const dirs: string[] = [];
     const capture =
-      (ok: boolean): EmailExec =>
+      (ok: boolean): Exec =>
       (argv) => {
         dirs.push(argv[argv.indexOf("-K") + 1]!);
-        return { ok, stderr: ok ? "" : "curl: (67) auth failed" };
+        return { ok, stdout: "", stderr: ok ? "" : "curl: (67) auth failed" };
       };
     sendEmail(TARGET, "p", "m", capture(true));
     sendEmail(TARGET, "p", "m", capture(false));
@@ -191,12 +200,12 @@ describe("sendEmail", () => {
   });
 
   test("returns curl stderr as the error on failure", () => {
-    const exec: EmailExec = () => ({ ok: false, stderr: "curl: (67) Login denied\n" });
+    const exec: Exec = () => ({ ok: false, stdout: "", stderr: "curl: (67) Login denied\n" });
     expect(sendEmail(TARGET, "p", "m", exec)).toEqual({ ok: false, error: "curl: (67) Login denied" });
   });
 
   test("falls back to a generic error when stderr is empty", () => {
-    const exec: EmailExec = () => ({ ok: false, stderr: "" });
+    const exec: Exec = () => ({ ok: false, stdout: "", stderr: "" });
     expect(sendEmail(TARGET, "p", "m", exec)).toEqual({ ok: false, error: "curl failed" });
   });
 
@@ -205,7 +214,7 @@ describe("sendEmail", () => {
     const before = readdirSync(tmpdir()).filter((d) => d.startsWith("asl-email-"));
     const r = sendEmail(TARGET, "bad\npass", "m", () => {
       called = true;
-      return { ok: true, stderr: "" };
+      return { ok: true, stdout: "", stderr: "" };
     });
     expect(r).toEqual({ ok: false, error: "credential or address contains control characters" });
     expect(called).toBe(false);
@@ -213,9 +222,6 @@ describe("sendEmail", () => {
     expect(after.length).toBe(before.length);
   });
 });
-
-import type { EmailConfig } from "../src/config";
-import { sendReportEmail } from "../src/email";
 
 const EMAIL_CFG: EmailConfig = {
   to: "gd@example.com", from: "gd@example.com", smtpHost: "smtp.gmail.com", smtpPort: 465,
@@ -227,7 +233,7 @@ describe("sendReportEmail", () => {
     let called = false;
     const r = sendReportEmail(EMAIL_CFG, "subj", "text", "<p>html</p>", {
       env: {}, keychain: noKeychain, now: NOW,
-      exec: () => { called = true; return { ok: true, stderr: "" }; },
+      exec: () => { called = true; return { ok: true, stdout: "", stderr: "" }; },
     });
     expect(called).toBe(false);
     expect(r.ok).toBe(false);
@@ -240,7 +246,7 @@ describe("sendReportEmail", () => {
       env: { ASL_SMTP_PASSWORD: "p" }, keychain: noKeychain, now: NOW,
       exec: (argv) => {
         eml = readFileSync(argv[argv.indexOf("-T") + 1]!, "utf8");
-        return { ok: true, stderr: "" };
+        return { ok: true, stdout: "", stderr: "" };
       },
     });
     expect(r.ok).toBe(true);
@@ -254,10 +260,20 @@ describe("sendReportEmail", () => {
   test("send failure surfaces the curl error in the message", () => {
     const r = sendReportEmail(EMAIL_CFG, "s", "t", "h", {
       env: { ASL_SMTP_PASSWORD: "p" }, keychain: noKeychain, now: NOW,
-      exec: () => ({ ok: false, stderr: "curl: (67) Login denied" }),
+      exec: () => ({ ok: false, stdout: "", stderr: "curl: (67) Login denied" }),
     });
     expect(r.ok).toBe(false);
     expect(r.message).toContain("Login denied");
+  });
+
+  test("an exec that throws never escapes — returns ok:false with the message", () => {
+    const r = sendReportEmail(EMAIL_CFG, "s", "t", "h", {
+      env: { ASL_SMTP_PASSWORD: "p" }, keychain: noKeychain, now: NOW,
+      exec: () => {
+        throw new Error("spawn exploded");
+      },
+    });
+    expect(r).toEqual({ ok: false, message: "email: spawn exploded" });
   });
 });
 
