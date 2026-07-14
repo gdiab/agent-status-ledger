@@ -80,6 +80,14 @@ export function encodeHeaderValue(s: string): string {
   return `=?UTF-8?B?${Buffer.from(s, "utf8").toString("base64")}?=`;
 }
 
+// The morning report's email subject. Pure ASCII by construction (an em dash
+// would force the whole line into one RFC 2047 encoded word and blow the
+// 75-char limit once statuses are appended). Lives here, not in cli.ts, so it
+// is unit-testable without importing cli.ts (which runs main() on load).
+export function emailSubject(day: string, statuses: string): string {
+  return `ASL - ${day}${statuses ? `: ${statuses}` : ""}`;
+}
+
 export interface MimeAttachment {
   filename: string;
   content: string;      // UTF-8 text (e.g. the full HTML report); sent as base64
@@ -95,8 +103,18 @@ export interface MimeInput {
   date: Date;
   messageId: string;
   boundary: string;          // multipart/alternative boundary
-  attachment?: MimeAttachment;
-  mixedBoundary?: string;    // multipart/mixed boundary — required when attachment is set
+  // Attachment and its multipart/mixed boundary travel together so the type
+  // makes the pairing mandatory — you cannot supply one without the other.
+  attachment?: { data: MimeAttachment; boundary: string };
+}
+
+// A MIME quoted-string (used for the name= and filename= parameters below)
+// cannot carry a raw double quote, CR, or LF, and other C0 controls have no
+// business in a filename either. Strip them so an attacker-influenced filename
+// can never break out of the quotes or inject a header line. Defense-in-depth,
+// not full RFC 2231 encoding — the only live caller passes a fixed ISO date.
+function sanitizeMimeFilename(name: string): string {
+  return name.replace(/[\x00-\x1f\x7f"]/g, "");
 }
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -154,7 +172,8 @@ export function buildMimeMessage(m: MimeInput): string {
   if (!m.attachment) {
     return [...headers, ...alt, ""].join("\r\n");
   }
-  const mixedBoundary = m.mixedBoundary!;
+  const { data, boundary: mixedBoundary } = m.attachment;
+  const filename = sanitizeMimeFilename(data.filename);
   return [
     ...headers,
     `Content-Type: multipart/mixed; boundary="${mixedBoundary}"`,
@@ -163,11 +182,11 @@ export function buildMimeMessage(m: MimeInput): string {
     ...alt,
     "",
     `--${mixedBoundary}`,
-    `Content-Type: ${m.attachment.contentType ?? "text/html"}; charset=utf-8; name="${m.attachment.filename}"`,
+    `Content-Type: ${data.contentType ?? "text/html"}; charset=utf-8; name="${filename}"`,
     "Content-Transfer-Encoding: base64",
-    `Content-Disposition: attachment; filename="${m.attachment.filename}"`,
+    `Content-Disposition: attachment; filename="${filename}"`,
     "",
-    base64Wrap(m.attachment.content),
+    base64Wrap(data.content),
     `--${mixedBoundary}--`,
     "",
   ].join("\r\n");
@@ -267,8 +286,9 @@ export function sendReportEmail(
       // "=_" can never occur in quoted-printable output ("=" is only ever
       // followed by hex digits or a soft break), so both boundaries are safe.
       boundary: `=_asl-${stamp.toString(36)}`,
-      attachment,
-      mixedBoundary: attachment ? `=_asl-mix-${stamp.toString(36)}` : undefined,
+      attachment: attachment
+        ? { data: attachment, boundary: `=_asl-mix-${stamp.toString(36)}` }
+        : undefined,
     });
     const r = sendEmail(
       { host: email.smtpHost, port: email.smtpPort, from: email.from, to: email.to },

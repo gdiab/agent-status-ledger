@@ -5,6 +5,7 @@ import type { KeychainLookup } from "../src/apikey";
 import type { EmailConfig } from "../src/config";
 import {
   buildMimeMessage,
+  emailSubject,
   encodeHeaderValue,
   quotedPrintable,
   resolveSmtpPassword,
@@ -47,6 +48,32 @@ describe("resolveSmtpPassword", () => {
   test("trims the resolved password", () => {
     const r = resolveSmtpPassword({}, fakeKeychain({ "gmail-app-password/asl": "pass\n" }));
     expect(r?.password).toBe("pass");
+  });
+
+  test("does not touch the keychain when the env var provides the password", () => {
+    let calls = 0;
+    const countingKeychain: KeychainLookup = () => {
+      calls++;
+      return null;
+    };
+    resolveSmtpPassword({ ASL_SMTP_PASSWORD: "env-pass" }, countingKeychain);
+    expect(calls).toBe(0);
+  });
+});
+
+describe("emailSubject", () => {
+  test("appends the status summary after the day when present", () => {
+    expect(emailSubject("2026-07-13", "2 blocked")).toBe("ASL - 2026-07-13: 2 blocked");
+  });
+
+  test("omits the colon and summary when there are no statuses", () => {
+    expect(emailSubject("2026-07-13", "")).toBe("ASL - 2026-07-13");
+  });
+
+  test("stays pure ASCII (no em dash) so it never needs RFC 2047 encoding", () => {
+    const subject = emailSubject("2026-07-13", "1 blocked, 2 stale");
+    expect(/^[\x20-\x7e]*$/.test(subject)).toBe(true);
+    expect(encodeHeaderValue(subject)).toBe(subject);
   });
 });
 
@@ -144,8 +171,10 @@ describe("buildMimeMessage", () => {
   describe("with an attachment", () => {
     const withAttachment = {
       ...input,
-      mixedBoundary: "=_asl-mixed-boundary",
-      attachment: { filename: "2026-07-13.html", content: "<h1>Full report</h1>" },
+      attachment: {
+        data: { filename: "2026-07-13.html", content: "<h1>Full report</h1>" },
+        boundary: "=_asl-mixed-boundary",
+      },
     };
 
     test("wraps the alternative part in multipart/mixed and appends a base64 attachment part", () => {
@@ -169,6 +198,29 @@ describe("buildMimeMessage", () => {
 
     test("without an attachment, no multipart/mixed wrapper appears", () => {
       expect(buildMimeMessage(input)).not.toContain("multipart/mixed");
+    });
+
+    test("strips a double quote from the filename so it can't break out of the quoted-string", () => {
+      const msg = buildMimeMessage({
+        ...withAttachment,
+        attachment: { ...withAttachment.attachment, data: { filename: 'a"b.html', content: "x" } },
+      });
+      expect(msg).toContain('name="ab.html"');
+      expect(msg).toContain('filename="ab.html"');
+    });
+
+    test("strips CR/LF and other control chars from the filename (no header injection)", () => {
+      const msg = buildMimeMessage({
+        ...withAttachment,
+        attachment: {
+          ...withAttachment.attachment,
+          data: { filename: "a\r\nX-Evil: 1\tb\x00.html", content: "x" },
+        },
+      });
+      expect(msg).toContain('filename="aX-Evil: 1b.html"');
+      // the injected header text stays inside the quoted filename, not on its
+      // own header line
+      expect(msg).not.toContain("\r\nX-Evil: 1");
     });
   });
 });
