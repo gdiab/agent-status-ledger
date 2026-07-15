@@ -1,5 +1,5 @@
 import type { AgentReport, Report, Severity } from "../types";
-import { plural, rollupCounts, rollupLine } from "./rollup";
+import { dispatchRefLabel, plural, rollupCounts, rollupLine } from "./rollup";
 import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 import { STATUS_SEVERITY } from "../status";
 import { FILLER_BLOCKED, FILLER_COMPLETED, FILLER_IN_PROGRESS, FILLER_RECOMMENDATION } from "../narrative";
@@ -108,6 +108,21 @@ function cardBody(a: AgentReport): string {
     ...(shows(next) ? [`<dt>Next</dt><dd>${esc(next[1])}</dd>`] : []),
     // Cross-day trend annotations (src/trends.ts); absent = no history, no row.
     ...(a.trends?.length ? [`<dt>Trend</dt><dd>${esc(a.trends.join("; "))}</dd>`] : []),
+    // Engram dispatch-marker lineage; absent = no row. Plain <dl> rows like
+    // Trend above, so both card layouts' grid rules apply untouched; the
+    // .dispatch class marks the cells for styling and testability.
+    ...(a.dispatchedBy?.length
+      ? [`<dt>Dispatched by</dt><dd class="dispatch">${esc(a.dispatchedBy.map(dispatchRefLabel).join(", "))}</dd>`]
+      : []),
+    // dispatchTruncated: the lineage probe hit its candidate cap, so the
+    // dispatched list may be an undercount — say so instead of implying
+    // completeness. A truncated probe that found NO links still gets a row:
+    // silence would be indistinguishable from an exhaustive "no dispatches".
+    ...(a.dispatched?.length
+      ? [`<dt>Dispatched</dt><dd class="dispatch">${esc(`${plural(a.dispatched.length, "subagent run")}: ${a.dispatched.map(dispatchRefLabel).join(", ")}${a.dispatchTruncated ? " (list may be incomplete)" : ""}`)}</dd>`]
+      : a.dispatchTruncated
+        ? [`<dt>Dispatched</dt><dd class="dispatch">none identified (list may be incomplete)</dd>`]
+        : []),
     // Corroboration from an enrichment connector (engram); absent = no row.
     // Distinct class: "evidence" is the badge span on every card, so the
     // citation needs its own marker for styling and testability.

@@ -111,7 +111,7 @@ describe("buildReport", () => {
     expect(maxInflight).toBeLessThanOrEqual(4);    // but bounded
   });
 
-  test("engram enrichment never touches an already-proven report, even on a mocked match", async () => {
+  test("an already-proven profile never triggers engram evidence calls (lineage probes may still run)", async () => {
     const world = mkdtempSync(join(tmpdir(), "asl-report-"));
 
     const repo = join(world, "repo");
@@ -125,20 +125,41 @@ describe("buildReport", () => {
     const ccRoot = join(world, "claude-projects");
     const enc = repo.replace(/\//g, "-");
     mkdirSync(join(ccRoot, enc), { recursive: true });
+    // UUID-shaped session ids: the fixture's original "cc-fix-1" fails the
+    // connector's SESSION_ID_SHAPE allowlist, which used to make this test
+    // pass for the wrong reason (every engram path rejected the id before
+    // exec, so `calls === 0` proved nothing about the evidence gate).
+    const S1 = "989533ee-ec57-4ac9-b510-9d6cb8b1b969";
+    const S2 = "aaaa0000-0000-4000-8000-00000000000a";
     const completed = readFileSync("fixtures/claude-code/session-completed.jsonl", "utf8")
-      .replaceAll("/work/demo", repo);
+      .replaceAll("/work/demo", repo)
+      .replaceAll("cc-fix-1", S1);
     const s1 = join(ccRoot, enc, "s1.jsonl");
     writeFileSync(s1, completed);
     utimesSync(s1, MTIME, MTIME);
+    // A second session in the same profile so the lineage probe (which needs
+    // at least two linkable sessions) genuinely runs.
+    const s2 = join(ccRoot, enc, "s2.jsonl");
+    writeFileSync(s2, [
+      JSON.stringify({
+        type: "user", timestamp: "2026-07-07T12:00:00.000Z", cwd: repo,
+        sessionId: S2, message: { role: "user", content: "task" },
+      }),
+      JSON.stringify({
+        type: "assistant", timestamp: "2026-07-07T12:05:00.000Z", cwd: repo,
+        sessionId: S2, message: { role: "assistant", content: "done" },
+      }),
+    ].join("\n") + "\n");
+    utimesSync(s2, MTIME, MTIME);
 
     const config = defaultConfig();
     config.connectors.claudeCode.rootDir = ccRoot;
     config.connectors.codex.enabled = false;
     config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
 
-    let calls = 0;
-    const alwaysMatchExec: Exec = () => {
-      calls++;
+    const calls: string[][] = [];
+    const alwaysMatchExec: Exec = (argv) => {
+      calls.push(argv);
       return {
         ok: true,
         stdout: JSON.stringify({ sessions: [{ session_id: "deadbeef", confidence: 325.0 }] }),
@@ -152,8 +173,13 @@ describe("buildReport", () => {
     const agent = report.agents.find((a) => a.workdir === repo)!;
     expect(agent.evidence).toBe("proven");
     expect(agent.evidenceCitation).toBeUndefined();
-    // gate is on evidence level, not on whether exec would have matched
-    expect(calls).toBe(0);
+    // The true invariant: the report-wide lineage probe MAY call engram
+    // (it is evidence-level-agnostic), but the evidence upgrade — the only
+    // caller that peeks with the code.edit filter — must never run for a
+    // proven profile. The gate is on evidence level, not on whether exec
+    // would have matched.
+    expect(calls.length).toBeGreaterThan(0); // lineage did probe
+    expect(calls.some((argv) => argv.includes('"k":"code.edit"'))).toBe(false); // evidence never did
   });
 
   test("engram enrichment tries a profile's sessions newest-first", async () => {
@@ -191,8 +217,14 @@ describe("buildReport", () => {
     };
     await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: spy });
     // Newest first: recent sessions are the ones most likely to be in the
-    // index and most relevant to today's report.
-    expect(grepped).toEqual(["bbbb0000-0000-4000-8000-00000000000b", "aaaa0000-0000-4000-8000-00000000000a"]);
+    // index and most relevant to today's report. Two engram passes share the
+    // seam and both order newest-first: the per-profile evidence upgrade
+    // (inside the profile loop), then the report-wide dispatch-lineage probe
+    // over the post-filter profiles.
+    expect(grepped).toEqual([
+      "bbbb0000-0000-4000-8000-00000000000b", "aaaa0000-0000-4000-8000-00000000000a", // evidence
+      "bbbb0000-0000-4000-8000-00000000000b", "aaaa0000-0000-4000-8000-00000000000a", // lineage
+    ]);
   });
 
   // End-to-end through the real pipeline: a session with no file edits and no
@@ -274,6 +306,270 @@ describe("buildReport", () => {
     expect(agent3.evidence).toBe("partially_proven");
     expect(agent3.evidenceCitation).toContain("[REDACTED]");
     expect(agent3.evidenceCitation).not.toContain("app.ts");
+  });
+
+  // End-to-end acceptance for asl-69s: two sessions linked by an engram
+  // dispatch marker end up cross-referenced in the report — the orchestrator
+  // card says what it dispatched, the subagent card says who dispatched it,
+  // and both renderers show the relationship.
+  test("dispatch-marker lineage cross-references orchestrator and subagent profiles in the report and renders", async () => {
+    const ORCH = "aaaa0000-0000-4000-8000-00000000000a";
+    const SUB = "bbbb0000-0000-4000-8000-00000000000b";
+    const CHILD_TAPE = "2222222222222222222222222222222222222222222222222222222222222222";
+
+    const world = mkdtempSync(join(tmpdir(), "asl-report-"));
+    const ccRoot = join(world, "claude-projects");
+    const mkSession = (dirName: string, cwd: string, sessionId: string) => {
+      const dir = join(ccRoot, dirName);
+      mkdirSync(dir, { recursive: true });
+      const f = join(dir, "s.jsonl");
+      writeFileSync(f, [
+        JSON.stringify({
+          type: "user", timestamp: "2026-07-07T12:00:00.000Z", cwd,
+          sessionId, message: { role: "user", content: "task" },
+        }),
+        JSON.stringify({
+          type: "assistant", timestamp: "2026-07-07T12:05:00.000Z", cwd,
+          sessionId, message: { role: "assistant", content: "done" },
+        }),
+      ].join("\n") + "\n");
+      utimesSync(f, MTIME, MTIME);
+    };
+    mkSession("-work-orch", "/work/orch", ORCH);
+    mkSession("-work-sub", "/work/sub", SUB);
+
+    const config = defaultConfig();
+    config.connectors.claudeCode.rootDir = ccRoot;
+    config.connectors.codex.enabled = false;
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+
+    // Engram CLI double: grep on the orchestrator uuid finds the subagent's
+    // tape; peeking that tape returns the subagent's first user message,
+    // whose parsed content begins with the dispatch marker (the spec
+    // prepends it to the handoff prompt) and carries the subagent's
+    // source.session_id.
+    const exec: Exec = (argv) => {
+      if (argv[1] === "grep" && argv[2] === ORCH) {
+        return {
+          ok: true,
+          stdout: JSON.stringify({ sessions: [{ session_id: CHILD_TAPE, confidence: 325.0 }] }),
+          stderr: "",
+        };
+      }
+      if (argv[1] === "peek" && argv[2] === CHILD_TAPE) {
+        return {
+          ok: true,
+          stdout: JSON.stringify({
+            session: {
+              content: [{
+                line: 1,
+                text: JSON.stringify({
+                  k: "msg.in", role: "user",
+                  content: `<engram-src id="${ORCH}"/> implement the thing`,
+                  source: { harness: "claude-code", session_id: SUB },
+                  t: "2026-07-07T12:00:01.000Z",
+                }),
+              }],
+            },
+          }),
+          stderr: "",
+        };
+      }
+      return { ok: true, stdout: JSON.stringify({ error: "no_results" }), stderr: "" };
+    };
+
+    const report = await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: exec });
+    const orch = report.agents.find((a) => a.workdir === "/work/orch")!;
+    const sub = report.agents.find((a) => a.workdir === "/work/sub")!;
+
+    expect(orch.dispatched).toEqual([{ sessionId: SUB, profile: "sub (claude-code)" }]);
+    expect(orch.dispatchedBy).toBeUndefined();
+    expect(sub.dispatchedBy).toEqual([{ sessionId: ORCH, profile: "orch (claude-code)" }]);
+    expect(sub.dispatched).toBeUndefined();
+
+    // The relationship is visible in the rendered surfaces.
+    const { renderMarkdown } = await import("../src/render/markdown");
+    const { renderHtml } = await import("../src/render/html");
+    const { renderJson } = await import("../src/render/json");
+    const md = renderMarkdown(report);
+    expect(md).toContain("- Dispatched 1 subagent run: sub (claude-code) (session bbbb0000)");
+    expect(md).toContain("- Dispatched by: orch (claude-code) (session aaaa0000)");
+    const html = renderHtml(report);
+    expect(html).toContain(`<dt>Dispatched</dt><dd class="dispatch">1 subagent run: sub (claude-code) (session bbbb0000)</dd>`);
+    expect(html).toContain(`<dt>Dispatched by</dt><dd class="dispatch">orch (claude-code) (session aaaa0000)</dd>`);
+    expect(JSON.parse(renderJson(report)).agents.some(
+      (a: { dispatched?: unknown[] }) => Array.isArray(a.dispatched))).toBe(true);
+  });
+
+  // Invariant: lineage is resolved against the POST-filter profile set, so
+  // every rendered DispatchRef's counterpart has a card in the report. An
+  // edge whose other end was filtered as trivial is dropped, not dangled.
+  test("dispatch lineage never names a trivial-filtered counterpart (both directions)", async () => {
+    const ORCH = "aaaa0000-0000-4000-8000-00000000000a";
+    const SUB = "bbbb0000-0000-4000-8000-00000000000b";
+    const CHILD_TAPE = "2222222222222222222222222222222222222222222222222222222222222222";
+
+    // engram double that would happily link ORCH → SUB if asked
+    const exec: Exec = (argv) => {
+      if (argv[1] === "grep" && argv[2] === ORCH) {
+        return {
+          ok: true,
+          stdout: JSON.stringify({ sessions: [{ session_id: CHILD_TAPE, confidence: 325.0 }] }),
+          stderr: "",
+        };
+      }
+      if (argv[1] === "peek" && argv[2] === CHILD_TAPE) {
+        return {
+          ok: true,
+          stdout: JSON.stringify({
+            session: {
+              content: [{
+                line: 1,
+                text: JSON.stringify({
+                  k: "msg.in", role: "user",
+                  content: `<engram-src id="${ORCH}"/> implement the thing`,
+                  source: { harness: "claude-code", session_id: SUB },
+                  t: "2026-07-07T12:00:01.000Z",
+                }),
+              }],
+            },
+          }),
+          stderr: "",
+        };
+      }
+      return { ok: true, stdout: JSON.stringify({ error: "no_results" }), stderr: "" };
+    };
+
+    const buildWorld = (trivialId: string) => {
+      const world = mkdtempSync(join(tmpdir(), "asl-report-"));
+      const ccRoot = join(world, "claude-projects");
+      const mkSession = (dirName: string, cwd: string, sessionId: string, minutes: number) => {
+        const dir = join(ccRoot, dirName);
+        mkdirSync(dir, { recursive: true });
+        const f = join(dir, "s.jsonl");
+        writeFileSync(f, [
+          JSON.stringify({
+            type: "user", timestamp: "2026-07-07T12:00:00.000Z", cwd,
+            sessionId, message: { role: "user", content: "task" },
+          }),
+          JSON.stringify({
+            type: "assistant", timestamp: `2026-07-07T12:0${minutes}:${minutes ? "00" : "10"}.000Z`, cwd,
+            sessionId, message: { role: "assistant", content: "done" },
+          }),
+        ].join("\n") + "\n");
+        utimesSync(f, MTIME, MTIME);
+      };
+      // 10-second session → trivial; 5-minute session → real card
+      mkSession("-work-orch", "/work/orch", ORCH, trivialId === ORCH ? 0 : 5);
+      mkSession("-work-sub", "/work/sub", SUB, trivialId === SUB ? 0 : 5);
+      const config = defaultConfig();
+      config.connectors.claudeCode.rootDir = ccRoot;
+      config.connectors.codex.enabled = false;
+      config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+      return config;
+    };
+
+    // Direction 1: trivial PARENT — the subagent card must not claim it was
+    // dispatched by a profile that has no card.
+    const trivialParent = await buildReport({
+      since: SINCE, now: NOW, config: buildWorld(ORCH), useLlm: false, engramExec: exec,
+    });
+    expect(trivialParent.trivialProfiles).toEqual(["orch (claude-code)"]);
+    const sub1 = trivialParent.agents.find((a) => a.workdir === "/work/sub")!;
+    expect(sub1.dispatchedBy).toBeUndefined();
+
+    // Direction 2: trivial CHILD — the orchestrator card must not list a
+    // dispatched run that has no card.
+    const trivialChild = await buildReport({
+      since: SINCE, now: NOW, config: buildWorld(SUB), useLlm: false, engramExec: exec,
+    });
+    expect(trivialChild.trivialProfiles).toEqual(["sub (claude-code)"]);
+    const orch2 = trivialChild.agents.find((a) => a.workdir === "/work/orch")!;
+    expect(orch2.dispatched).toBeUndefined();
+  });
+
+  // Product honesty: when the lineage probe hit its candidate cap for a
+  // parent, that parent's card carries dispatchTruncated so renderers can
+  // say "list may be incomplete" instead of presenting a partial list as
+  // the whole truth.
+  test("dispatchTruncated lands on the truncated parent's card, and only there", async () => {
+    const ORCH = "aaaa0000-0000-4000-8000-00000000000a";
+    const SUB = "bbbb0000-0000-4000-8000-00000000000b";
+    const CHILD_TAPE = "2222222222222222222222222222222222222222222222222222222222222222";
+    // 8 candidate tapes > the 6-candidate lineage cap → ORCH is truncated
+    const NOISE_TAPES = Array.from({ length: 7 }, (_, i) => String(i + 3).repeat(64));
+
+    const world = mkdtempSync(join(tmpdir(), "asl-report-"));
+    const ccRoot = join(world, "claude-projects");
+    const mkSession = (dirName: string, cwd: string, sessionId: string) => {
+      const dir = join(ccRoot, dirName);
+      mkdirSync(dir, { recursive: true });
+      const f = join(dir, "s.jsonl");
+      writeFileSync(f, [
+        JSON.stringify({
+          type: "user", timestamp: "2026-07-07T12:00:00.000Z", cwd,
+          sessionId, message: { role: "user", content: "task" },
+        }),
+        JSON.stringify({
+          type: "assistant", timestamp: "2026-07-07T12:05:00.000Z", cwd,
+          sessionId, message: { role: "assistant", content: "done" },
+        }),
+      ].join("\n") + "\n");
+      utimesSync(f, MTIME, MTIME);
+    };
+    mkSession("-work-orch", "/work/orch", ORCH);
+    mkSession("-work-sub", "/work/sub", SUB);
+
+    const config = defaultConfig();
+    config.connectors.claudeCode.rootDir = ccRoot;
+    config.connectors.codex.enabled = false;
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+
+    const exec: Exec = (argv) => {
+      if (argv[1] === "grep" && argv[2] === ORCH) {
+        return {
+          ok: true,
+          stdout: JSON.stringify({
+            sessions: [CHILD_TAPE, ...NOISE_TAPES].map((session_id) => ({ session_id, confidence: 325.0 })),
+          }),
+          stderr: "",
+        };
+      }
+      if (argv[1] === "peek" && argv[2] === CHILD_TAPE) {
+        return {
+          ok: true,
+          stdout: JSON.stringify({
+            session: {
+              content: [{
+                line: 1,
+                text: JSON.stringify({
+                  k: "msg.in", role: "user",
+                  content: `<engram-src id="${ORCH}"/> implement the thing`,
+                  source: { harness: "claude-code", session_id: SUB },
+                  t: "2026-07-07T12:00:01.000Z",
+                }),
+              }],
+            },
+          }),
+          stderr: "",
+        };
+      }
+      if (argv[1] === "peek") {
+        return { ok: true, stdout: JSON.stringify({ session: { content: [] } }), stderr: "" };
+      }
+      return { ok: true, stdout: JSON.stringify({ error: "no_results" }), stderr: "" };
+    };
+
+    const report = await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: exec });
+    const orch = report.agents.find((a) => a.workdir === "/work/orch")!;
+    const sub = report.agents.find((a) => a.workdir === "/work/sub")!;
+    expect(orch.dispatched).toEqual([{ sessionId: SUB, profile: "sub (claude-code)" }]);
+    expect(orch.dispatchTruncated).toBe(true);
+    expect(sub.dispatchTruncated).toBeUndefined();
+
+    const { renderMarkdown } = await import("../src/render/markdown");
+    const md = renderMarkdown(report);
+    expect(md).toContain("- Dispatched 1 subagent run: sub (claude-code) (session bbbb0000) (list may be incomplete)");
   });
 });
 

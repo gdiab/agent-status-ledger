@@ -1,4 +1,4 @@
-import type { Report, Status } from "../types";
+import type { DispatchRef, Report, Status } from "../types";
 
 // Exhaustive by construction: adding a Status member without a display rank
 // is a compile error, so new statuses can't silently vanish from the rollup.
@@ -40,6 +40,16 @@ export function statusSummary(report: Report): string {
   return rollupCounts(report)
     .byStatus.map(({ status, count }) => `${count} ${status}`)
     .join(", ");
+}
+
+// Plain-text label for one end of a dispatch-marker link, shared by the
+// markdown and html renderers so the phrasing never drifts apart. Escaping
+// stays renderer-side (mdEscape / esc) — this is content assembly only. The
+// session id is shape-validated by the connector (hex and dashes), so an
+// 8-char prefix is unambiguous enough for a report line and never noisy.
+export function dispatchRefLabel(ref: DispatchRef): string {
+  const sid = `session ${ref.sessionId.slice(0, 8)}`;
+  return ref.profile ? `${ref.profile} (${sid})` : sid;
 }
 
 export function rollupLine(report: Report): string {

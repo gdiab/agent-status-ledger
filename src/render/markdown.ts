@@ -1,5 +1,5 @@
 import type { AgentReport, Report } from "../types";
-import { rollupLine } from "./rollup";
+import { dispatchRefLabel, plural, rollupLine } from "./rollup";
 import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 
 // Names come from workdir basenames and platform labels; escape markdown
@@ -30,6 +30,21 @@ function agentSection(a: AgentReport): string {
     `- Sessions: ${a.facts.sessionCount} (${a.facts.firstActivity} → ${a.facts.lastActivity})`,
     // Cross-day trend annotations (src/trends.ts); absent = no history, no line.
     ...(a.trends?.length ? [`- Trend: ${a.trends.join("; ")}`] : []),
+    // Engram dispatch-marker lineage; absent = no line. Profile names are
+    // workdir-basename-derived like displayName, so mdEscape applies; session
+    // ids are connector-validated hex/dash and pass through unchanged.
+    ...(a.dispatchedBy?.length
+      ? [`- Dispatched by: ${a.dispatchedBy.map((r) => mdEscape(dispatchRefLabel(r))).join(", ")}`]
+      : []),
+    // dispatchTruncated: the lineage probe hit its candidate cap, so the
+    // dispatched list may be an undercount — say so instead of implying
+    // completeness. A truncated probe that found NO links still gets a line:
+    // silence would be indistinguishable from an exhaustive "no dispatches".
+    ...(a.dispatched?.length
+      ? [`- Dispatched ${plural(a.dispatched.length, "subagent run")}: ${a.dispatched.map((r) => mdEscape(dispatchRefLabel(r))).join(", ")}${a.dispatchTruncated ? " (list may be incomplete)" : ""}`]
+      : a.dispatchTruncated
+        ? ["- Dispatched subagent runs: none identified (list may be incomplete)"]
+        : []),
     "",
     `**Worked on:** ${mdText(a.narrative.workedOn)}`,
     `**Completed:** ${mdText(a.narrative.completed)}`,
