@@ -487,6 +487,86 @@ describe("discoverDispatchLinks", () => {
     expect(links).toEqual([{ parentSessionId: ORCH, childSessionId: SUB }]);
   });
 
+  // ── Same-event correlation guards ─────────────────────────────────────────
+  // The marker text and the child session_id must sit on the SAME parsed
+  // tape event, and that event must be the subagent's inbound message
+  // (k == "msg.in", the shape the dispatch prompt actually arrives as).
+  // Anything looser mints false edges from sessions that merely QUOTE the
+  // marker, or from peek responses mixing lines of several sessions.
+
+  test("no edge when a session only discusses the marker in msg.out / tool.result events", () => {
+    // e.g. a code-review session pasting the dispatch prompt into its own
+    // output, or a tool result echoing a test fixture containing the marker.
+    const quotingToolResult = {
+      k: "tool.result",
+      tool: "bash",
+      stdout: `fixture says <engram-src id="${ORCH}"/> do work`,
+      source: { harness: "claude-code", session_id: SUB },
+      t: "2026-07-14T13:00:00.000Z",
+    };
+    const exec = twoStepExec(grepResponse([CHILD_TAPE]), {
+      [CHILD_TAPE]: peekResponse([
+        sentMarkerEvent(ORCH, SUB), // msg.out quoting the marker
+        quotingToolResult,
+      ]),
+    });
+    expect(discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, exec)).toEqual([]);
+  });
+
+  test("mixed-session peek response: only the session owning the marker event links, not context-line owners", () => {
+    const OTHER = "cccc0000-0000-4000-8000-00000000000c"; // also in the report
+    const exec = twoStepExec(grepResponse([CHILD_TAPE]), {
+      [CHILD_TAPE]: peekResponse([
+        markerEvent(ORCH, SUB), // SUB owns the marker's inbound message
+        { ...readEvent, source: { harness: "claude-code", session_id: OTHER } }, // unrelated context line
+      ]),
+    });
+    const links = discoverDispatchLinks(
+      [lineageSession(ORCH), lineageSession(SUB), lineageSession(OTHER)],
+      enabled,
+      exec,
+    );
+    expect(links).toEqual([{ parentSessionId: ORCH, childSessionId: SUB }]);
+  });
+
+  test("a tape whose events mix session ids never mints multi-child edges from one marker", () => {
+    const OTHER = "cccc0000-0000-4000-8000-00000000000c";
+    const exec = twoStepExec(grepResponse([CHILD_TAPE]), {
+      [CHILD_TAPE]: peekResponse([
+        markerEvent(ORCH, SUB),
+        // another known session's inbound message on the same tape, WITHOUT
+        // the marker — must not become a second child of ORCH
+        {
+          k: "msg.in", role: "user", content: "unrelated task",
+          source: { harness: "claude-code", session_id: OTHER },
+          t: "2026-07-14T13:01:00.000Z",
+        },
+      ]),
+    });
+    const links = discoverDispatchLinks(
+      [lineageSession(ORCH), lineageSession(SUB), lineageSession(OTHER)],
+      enabled,
+      exec,
+    );
+    expect(links).toEqual([{ parentSessionId: ORCH, childSessionId: SUB }]);
+  });
+
+  test("a marker on a raw non-event context line cannot vouch for a session named by other lines", () => {
+    // The marker must live on a PARSED msg.in event; a bare text line
+    // carrying it correlates with nothing.
+    const exec = twoStepExec(grepResponse([CHILD_TAPE]), {
+      [CHILD_TAPE]: cliStdout({
+        session: {
+          content: [
+            { line: 1, text: `context: <engram-src id="${ORCH}"/> quoted in passing` },
+            { line: 2, text: JSON.stringify(editEvent("/repo/src/x.ts", SUB)) },
+          ],
+        },
+      }),
+    });
+    expect(discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, exec)).toEqual([]);
+  });
+
   test("rejects hostile or malformed session ids without ever putting them in an argv", () => {
     const argvSeen: string[] = [];
     const spy: Exec = (argv) => {

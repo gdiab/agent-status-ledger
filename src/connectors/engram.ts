@@ -355,17 +355,24 @@ export function corroborateSessions(
 //      transcript contains it — the orchestrator's own tape plus each
 //      dispatched subagent's tape.
 //   2. `engram peek <tape> --grep-filter <parent-uuid>` returns the tape
-//      lines naming that uuid (the marker line and its context). A tape
-//      counts as a dispatched child only when BOTH hold:
-//        - some returned line carries the literal marker
-//          `<engram-src id="<parent-uuid>"/>` (quotes may be JSON-escaped in
-//          raw tape text), and
-//        - some returned tape event carries a source.session_id that is a
-//          DIFFERENT session known to this report (the mention-only guard,
-//          inverted: here the mention IS the evidence, but it must resolve
-//          to a session ASL can name).
-//      The orchestrator's own tape fails the second test (its events carry
-//      its own session_id), so it never self-links.
+//      lines naming that uuid (the marker line and its context). A session
+//      counts as a dispatched child only when ONE parsed tape event
+//      satisfies ALL of, on that same event:
+//        - the event is an inbound message (k == "msg.in" — the dispatch
+//          prompt arrives as the subagent's incoming message; engram
+//          specs/core/event-contract.md is the kind registry),
+//        - its raw line text carries the literal marker
+//          `<engram-src id="<parent-uuid>"/>` (quotes may be JSON-escaped
+//          in raw tape text), and
+//        - its source.session_id is a DIFFERENT session known to this
+//          report (the mention-only guard, inverted: here the mention IS
+//          the evidence, but it must resolve to a session ASL can name).
+//      Same-event correlation is load-bearing: a session merely QUOTING the
+//      marker in a msg.out/tool.result (code review, test fixture), or a
+//      peek response mixing an A-owned marker line with unrelated B-owned
+//      context lines, must not mint an edge. The orchestrator's own tape
+//      fails on both kind (it SENT the marker inside a tool call, k ==
+//      "msg.out") and ownership, so it never self-links.
 //
 // Same discipline as the evidence upgrade: never throws, allowlisted argv
 // only, bounded subprocess budget, and consuming CLI JSON only (never the
@@ -397,32 +404,10 @@ export interface LineageSession {
   startedAt: string;
 }
 
-// Session uuids owning the tape events on the peeked lines — the tape's
-// identity, per the same source.session_id block upgradeEvidence verifies.
-function eventSessionIds(peekResponse: Record<string, unknown>): Set<string> {
-  const ids = new Set<string>();
-  for (const { event } of tapeEvents(peekResponse)) {
-    const source = event.source as Record<string, unknown> | undefined;
-    const sid = source?.session_id;
-    if (typeof sid === "string" && SESSION_ID_SHAPE.test(sid)) ids.add(sid);
-  }
-  return ids;
-}
-
-// True when any peeked line carries the dispatch marker for `sessionUuid`.
-function hasDispatchMarker(peekResponse: Record<string, unknown>, sessionUuid: string): boolean {
-  const session = peekResponse.session as Record<string, unknown> | undefined;
-  const content = Array.isArray(session?.content) ? (session.content as unknown[]) : [];
-  const marker = markerPattern(sessionUuid);
-  return content.some((entry) => {
-    const text = (entry as Record<string, unknown> | null)?.text;
-    return typeof text === "string" && marker.test(text);
-  });
-}
-
 // Sessions dispatched BY `parentUuid`, resolved against the report's own
-// session set (grep parent uuid, peek each candidate tape, keep tapes that
-// carry the marker and belong to another known session). Never throws.
+// session set (grep parent uuid, peek each candidate tape, keep sessions
+// whose own inbound-message event carries the marker — see the pipeline
+// comment above for the same-event correlation rule). Never throws.
 export function findDispatchedSessions(
   parentUuid: string,
   knownSessionIds: ReadonlySet<string>,
@@ -430,12 +415,20 @@ export function findDispatchedSessions(
   exec: Exec,
 ): string[] {
   try {
+    if (!SESSION_ID_SHAPE.test(parentUuid)) return [];
+    const marker = markerPattern(parentUuid);
     const children = new Set<string>();
     for (const { response } of grepPeekCandidates(
       parentUuid, binaryPath, exec, parentUuid, MAX_GREP_CANDIDATES,
     )) {
-      if (!hasDispatchMarker(response, parentUuid)) continue;
-      for (const sid of eventSessionIds(response)) {
+      for (const { text, event } of tapeEvents(response)) {
+        // All three checks correlate to this ONE event: inbound-message
+        // kind, marker on its own raw line, and its owning session_id.
+        if (event.k !== "msg.in") continue;
+        if (!marker.test(text)) continue;
+        const source = event.source as Record<string, unknown> | undefined;
+        const sid = source?.session_id;
+        if (typeof sid !== "string" || !SESSION_ID_SHAPE.test(sid)) continue;
         if (sid !== parentUuid && knownSessionIds.has(sid)) children.add(sid);
       }
     }
