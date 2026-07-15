@@ -132,6 +132,18 @@ export type SanitizedTapeText = string & { readonly [sanitizedTape]: true };
 // extraPatterns is deliberately required (no default): a defaulted [] let
 // call sites silently drop the user's redactPatterns while still receiving
 // branded output. Passing [] must be a visible choice at the call site.
+//
+// Known cosmetic limitation (accepted): double-redact is not idempotent for
+// pathological extraPatterns that match the marker itself — e.g. ["REDACTED"]
+// or ["\\]"] mutate the first pass's [REDACTED] markers into noise like
+// [[[REDACTED]]]. No secret survives (pinned by test); only the marker text
+// gets mangled. The obvious fix — second pass splits on existing [REDACTED]
+// markers and redacts only the non-marker segments — was tried and rejected:
+// it blinds the second pass to marker-adjacent context, which demonstrably
+// breaks redact.ts's glued-tail cleanup when the strip glues a secret tail
+// onto a quoted marker (password="[REDACTED]"<ZWSP>xyz → the tail xyz
+// survives under the split, but is caught by the full-string pass). A
+// cosmetic defect does not warrant weakening a real redaction path.
 export function sanitizeTapeText(s: string, extraPatterns: string[]): SanitizedTapeText {
   const preStripped = redact(s, extraPatterns);
   return redact(preStripped.replace(TAPE_UNSAFE, ""), extraPatterns) as SanitizedTapeText;

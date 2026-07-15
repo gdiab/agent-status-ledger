@@ -132,6 +132,18 @@ describe("sanitizeTapeText (the choke point)", () => {
     for (const ch of ["\u202E", "\u2066", "\u2060", "\uFEFF"]) expect(out).not.toContain(ch);
     expect(out).toContain("done");
   });
+
+  test("pathological extraPatterns that match the marker mangle it cosmetically but never leak a secret", () => {
+    // Known accepted limitation (see sanitizeTapeText's comment): the second
+    // redact pass re-matches the first pass's [REDACTED] markers when a user
+    // pattern matches the marker text itself, producing noise like
+    // [[[REDACTED]]]. This pins the security invariant that survives it: the
+    // SECRET is gone in every pathological case.
+    for (const patterns of [["REDACTED"], ["\\]"], ["\\["], ["\\[REDACTED\\]"]]) {
+      const out = sanitizeTapeText(`key ${SECRET} end`, patterns);
+      expect(out).not.toContain(SECRET);
+    }
+  });
 });
 
 describe("boundary guard: engram parsing never returns raw tape text", () => {
