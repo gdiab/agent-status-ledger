@@ -174,6 +174,26 @@ describe("renderers", () => {
     }
   });
 
+  test("markdown+html: zero-link truncation still renders an incomplete-list line", () => {
+    // A truncated probe that found no links must be distinguishable from an
+    // exhaustive "no dispatches" — silence on two of three surfaces was a
+    // review finding.
+    const truncatedNoLinks = agent({ dispatchTruncated: true });
+    const noProbe = agent({});
+
+    const md = renderMarkdown({ ...report, agents: [truncatedNoLinks], exceptions: [] });
+    expect(md).toContain("- Dispatched subagent runs: none identified (list may be incomplete)");
+    const mdPlain = renderMarkdown({ ...report, agents: [noProbe], exceptions: [] });
+    expect(mdPlain).not.toContain("Dispatched");
+
+    for (const layout of ["cards", "flat"] as const) {
+      const html = renderHtml({ ...report, agents: [truncatedNoLinks], exceptions: [] }, { layout });
+      expect(html).toContain(`<dt>Dispatched</dt><dd class="dispatch">none identified (list may be incomplete)</dd>`);
+      const htmlPlain = renderHtml({ ...report, agents: [noProbe], exceptions: [] }, { layout });
+      expect(htmlPlain).not.toContain("Dispatched");
+    }
+  });
+
   test("json: dispatchTruncated rides the agent natively", () => {
     const a = agent({
       dispatched: [{ sessionId: "bbbb0000-0000-4000-8000-00000000000b", profile: "sub (claude-code)" }],

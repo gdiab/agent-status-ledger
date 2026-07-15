@@ -116,10 +116,13 @@ function cardBody(a: AgentReport): string {
       : []),
     // dispatchTruncated: the lineage probe hit its candidate cap, so the
     // dispatched list may be an undercount — say so instead of implying
-    // completeness.
+    // completeness. A truncated probe that found NO links still gets a row:
+    // silence would be indistinguishable from an exhaustive "no dispatches".
     ...(a.dispatched?.length
       ? [`<dt>Dispatched</dt><dd class="dispatch">${esc(`${plural(a.dispatched.length, "subagent run")}: ${a.dispatched.map(dispatchRefLabel).join(", ")}${a.dispatchTruncated ? " (list may be incomplete)" : ""}`)}</dd>`]
-      : []),
+      : a.dispatchTruncated
+        ? [`<dt>Dispatched</dt><dd class="dispatch">none identified (list may be incomplete)</dd>`]
+        : []),
     // Corroboration from an enrichment connector (engram); absent = no row.
     // Distinct class: "evidence" is the badge span on every card, so the
     // citation needs its own marker for styling and testability.
