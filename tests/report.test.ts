@@ -111,7 +111,7 @@ describe("buildReport", () => {
     expect(maxInflight).toBeLessThanOrEqual(4);    // but bounded
   });
 
-  test("engram enrichment never touches an already-proven report, even on a mocked match", async () => {
+  test("an already-proven profile never triggers engram evidence calls (lineage probes may still run)", async () => {
     const world = mkdtempSync(join(tmpdir(), "asl-report-"));
 
     const repo = join(world, "repo");
@@ -125,20 +125,41 @@ describe("buildReport", () => {
     const ccRoot = join(world, "claude-projects");
     const enc = repo.replace(/\//g, "-");
     mkdirSync(join(ccRoot, enc), { recursive: true });
+    // UUID-shaped session ids: the fixture's original "cc-fix-1" fails the
+    // connector's SESSION_ID_SHAPE allowlist, which used to make this test
+    // pass for the wrong reason (every engram path rejected the id before
+    // exec, so `calls === 0` proved nothing about the evidence gate).
+    const S1 = "989533ee-ec57-4ac9-b510-9d6cb8b1b969";
+    const S2 = "aaaa0000-0000-4000-8000-00000000000a";
     const completed = readFileSync("fixtures/claude-code/session-completed.jsonl", "utf8")
-      .replaceAll("/work/demo", repo);
+      .replaceAll("/work/demo", repo)
+      .replaceAll("cc-fix-1", S1);
     const s1 = join(ccRoot, enc, "s1.jsonl");
     writeFileSync(s1, completed);
     utimesSync(s1, MTIME, MTIME);
+    // A second session in the same profile so the lineage probe (which needs
+    // at least two linkable sessions) genuinely runs.
+    const s2 = join(ccRoot, enc, "s2.jsonl");
+    writeFileSync(s2, [
+      JSON.stringify({
+        type: "user", timestamp: "2026-07-07T12:00:00.000Z", cwd: repo,
+        sessionId: S2, message: { role: "user", content: "task" },
+      }),
+      JSON.stringify({
+        type: "assistant", timestamp: "2026-07-07T12:05:00.000Z", cwd: repo,
+        sessionId: S2, message: { role: "assistant", content: "done" },
+      }),
+    ].join("\n") + "\n");
+    utimesSync(s2, MTIME, MTIME);
 
     const config = defaultConfig();
     config.connectors.claudeCode.rootDir = ccRoot;
     config.connectors.codex.enabled = false;
     config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
 
-    let calls = 0;
-    const alwaysMatchExec: Exec = () => {
-      calls++;
+    const calls: string[][] = [];
+    const alwaysMatchExec: Exec = (argv) => {
+      calls.push(argv);
       return {
         ok: true,
         stdout: JSON.stringify({ sessions: [{ session_id: "deadbeef", confidence: 325.0 }] }),
@@ -152,8 +173,13 @@ describe("buildReport", () => {
     const agent = report.agents.find((a) => a.workdir === repo)!;
     expect(agent.evidence).toBe("proven");
     expect(agent.evidenceCitation).toBeUndefined();
-    // gate is on evidence level, not on whether exec would have matched
-    expect(calls).toBe(0);
+    // The true invariant: the report-wide lineage probe MAY call engram
+    // (it is evidence-level-agnostic), but the evidence upgrade — the only
+    // caller that peeks with the code.edit filter — must never run for a
+    // proven profile. The gate is on evidence level, not on whether exec
+    // would have matched.
+    expect(calls.length).toBeGreaterThan(0); // lineage did probe
+    expect(calls.some((argv) => argv.includes('"k":"code.edit"'))).toBe(false); // evidence never did
   });
 
   test("engram enrichment tries a profile's sessions newest-first", async () => {

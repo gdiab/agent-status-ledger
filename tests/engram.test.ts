@@ -406,6 +406,19 @@ describe("discoverDispatchLinks", () => {
     expect(calls).toBe(0);
   });
 
+  test("a report with fewer than two linkable sessions never calls exec (a single session cannot link)", () => {
+    let calls = 0;
+    const spy: Exec = () => {
+      calls++;
+      return { ok: true, stdout: cliStdout({ error: "no_results" }), stderr: "" };
+    };
+    expect(discoverDispatchLinks([lineageSession(ORCH)], enabled, spy)).toEqual([]);
+    expect(discoverDispatchLinks([], enabled, spy)).toEqual([]);
+    // one valid + one shape-rejected id is still a one-session report
+    expect(discoverDispatchLinks([lineageSession(ORCH), lineageSession("--help")], enabled, spy)).toEqual([]);
+    expect(calls).toBe(0);
+  });
+
   test("links parent to child when the child tape carries the parent's dispatch marker", () => {
     const links = discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, realisticExec);
     expect(links).toEqual([{ parentSessionId: ORCH, childSessionId: SUB }]);
@@ -417,7 +430,7 @@ describe("discoverDispatchLinks", () => {
       calls.push(argv);
       return realisticExec(argv);
     };
-    discoverDispatchLinks([lineageSession(ORCH)], enabled, exec);
+    discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, exec);
     expect(calls[0]).toEqual([BIN, "grep", ORCH]);
     expect(calls[1]).toEqual([BIN, "peek", PARENT_TAPE, "--grep-filter", ORCH]);
     expect(calls[2]).toEqual([BIN, "peek", CHILD_TAPE, "--grep-filter", ORCH]);
@@ -425,24 +438,24 @@ describe("discoverDispatchLinks", () => {
 
   test("no link when grep finds nothing, errors, or returns malformed JSON", () => {
     const noResults = execOk(cliStdout({ error: "no_results" }));
-    expect(discoverDispatchLinks([lineageSession(ORCH)], enabled, noResults)).toEqual([]);
+    expect(discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, noResults)).toEqual([]);
 
     const malformed = execOk("config: /x\ndb: /y\nnot valid json{{{");
-    expect(discoverDispatchLinks([lineageSession(ORCH)], enabled, malformed)).toEqual([]);
+    expect(discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, malformed)).toEqual([]);
 
-    expect(discoverDispatchLinks([lineageSession(ORCH)], enabled, execFail)).toEqual([]);
+    expect(discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, execFail)).toEqual([]);
   });
 
   test("a timed-out engram call (ok:false, empty stdout) degrades to no links", () => {
     const timedOut: Exec = () => ({ ok: false, stdout: "", stderr: "" });
-    expect(discoverDispatchLinks([lineageSession(ORCH)], enabled, timedOut)).toEqual([]);
+    expect(discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, timedOut)).toEqual([]);
   });
 
   test("never throws even if exec itself throws", () => {
     const throwingExec: Exec = () => {
       throw new Error("boom");
     };
-    expect(discoverDispatchLinks([lineageSession(ORCH)], enabled, throwingExec)).toEqual([]);
+    expect(discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, throwingExec)).toEqual([]);
   });
 
   test("no link when the marker is present but the tape's events belong to no other known session", () => {
@@ -575,7 +588,7 @@ describe("discoverDispatchLinks", () => {
     };
     const hostiles = ["--help", "$(rm -rf /)", "", "--------", "-deadbeef0", "a".repeat(65)];
     discoverDispatchLinks(
-      [...hostiles.map((h) => lineageSession(h)), lineageSession(ORCH)],
+      [...hostiles.map((h) => lineageSession(h)), lineageSession(ORCH), lineageSession(SUB)],
       enabled,
       spy,
     );
@@ -621,8 +634,10 @@ describe("discoverDispatchLinks", () => {
       peeked.push(argv[2]!);
       return { ok: true, stdout: peekResponse([]), stderr: "" };
     };
-    discoverDispatchLinks([lineageSession(ORCH)], enabled, exec);
-    expect(peeked).toEqual(["cafe0001", "cafe0002", "cafe0003", "cafe0004", "cafe0005", "cafe0006"]);
+    discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, exec);
+    expect(peeked.slice(0, 6)).toEqual(["cafe0001", "cafe0002", "cafe0003", "cafe0004", "cafe0005", "cafe0006"]);
+    // the SUB probe peeks the same capped candidate list again
+    expect(peeked.length).toBe(12);
   });
 
   test("a parent with 4 dispatched subagents links all 4, even though its own tape consumes a grep slot", () => {

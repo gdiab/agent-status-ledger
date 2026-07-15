@@ -469,10 +469,14 @@ export function discoverDispatchLinks(
 ): DispatchLink[] {
   if (!cfg.enabled) return [];
   try {
-    const realExec = exec ?? makeSpawnExec(ENGRAM_TIMEOUT_MS);
     const knownIds = new Set(
       sessions.map((s) => s.sessionId).filter((id) => SESSION_ID_SHAPE.test(id)),
     );
+    // A link joins two known sessions, so a report with fewer than two can
+    // never produce one — return before spending any of the subprocess
+    // budget proving it.
+    if (knownIds.size < 2) return [];
+    const realExec = exec ?? makeSpawnExec(ENGRAM_TIMEOUT_MS);
     const newestFirst = [...sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
     const links: DispatchLink[] = [];
     const seen = new Set<string>();
