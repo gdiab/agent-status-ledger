@@ -253,7 +253,15 @@ describe("redaction contract across all render surfaces", () => {
     // surfaces (secret absent AND [REDACTED] present).
     const out = renderEmailDigest(report);
     expect(upgrade.citation).toBeDefined();
+    // Assert per distinctive component, not just the whole string — a digest
+    // that started rendering any PART of the citation (session id, a file
+    // path, the marker, the prefix) must fail here, not slip past a
+    // whole-string check.
     expect(out).not.toContain(upgrade.citation!);
+    expect(out).not.toContain(ENGRAM_SID);
+    expect(out).not.toContain("engram session");
+    expect(out).not.toContain("/repo/src/ok.ts");
+    expect(out).not.toContain("[REDACTED]");
     expect(out).not.toContain(SECRET);
   });
 

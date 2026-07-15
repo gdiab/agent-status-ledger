@@ -92,11 +92,15 @@ const SESSION_ID_SHAPE = /^[0-9a-fA-F][0-9a-fA-F-]{7,63}$/;
 //   U+FFF0..FFF8  reserved, default-ignorable (Cn)
 //   U+E0000..E0FFF plane-14 tags + VARIATION SELECTOR-17..256 + reserved
 //
-// Known fidelity tradeoff (accepted, security over fidelity): SOFT HYPHEN
-// U+00AD is \p{Cf} but is a legal filename character, so a citation for
-// "/repo/co­operate.ts" comes out naming "/repo/cooperate.ts" — a
-// different file than the one actually edited. We accept the mislabeled
-// citation rather than let an invisible character through the boundary.
+// Known fidelity tradeoff (accepted, security over fidelity): several
+// stripped code points are legal, potentially load-bearing filename
+// characters — SOFT HYPHEN U+00AD (a citation for "/repo/co­operate.ts"
+// comes out naming "/repo/cooperate.ts", a different file), variation
+// selectors (which can change glyph/semantic identity of the preceding
+// character), Mongolian FVS, Khmer inherent vowels, and Hangul fillers.
+// A stripped citation can therefore name a path that differs from the one
+// actually edited. We accept the mislabeled citation rather than let an
+// invisible or rendering-altering character through the boundary.
 const TAPE_UNSAFE =
   /[\x00-\x1f\x7f<>]|\p{Cf}|[\u034F\u115F\u1160\u17B4\u17B5\u180B-\u180F\u2065\u3164\uFE00-\uFE0F\uFFA0\uFFF0-\uFFF8]|[\u{E0000}-\u{E0FFF}]/gu;
 
