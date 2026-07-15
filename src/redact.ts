@@ -35,6 +35,26 @@ const BUILTIN: Rule[] = [
   // match, so the whole run gets collapsed to "[REDACTED]" too — no tail
   // leaks, and the result is stable under a second redact() pass either way.
   { re: new RegExp(`\\b${KEYWORD}\\b\\s*[:=]\\s*(?!["']?\\[REDACTED\\](?:["']|\\s|$))["']?[^\\s"']{4,}`, "gi"), sub: "[REDACTED]" },
+  // Marker cleanup for the quote-glued residual (asl-2u3): the quoted rules keep
+  // their closing quote, so a secret tail glued straight onto a keyword's marker
+  // (password="[REDACTED]"tail) lands OUTSIDE the quoted value, and the unquoted
+  // fallback's lookahead treats the quoted "[REDACTED]" as already-done and
+  // skips it — so the tail survives. Scoped to the keyword=value context, this
+  // drops a trailing run of secret-alphabet characters glued onto the marker
+  // while preserving the marker and its quotes so JSON/YAML stay parseable.
+  //
+  // Best-effort defense-in-depth, NOT a value parser — known, tested limits:
+  //  - The tail class is an allowlist of the base64/token alphabet; it excludes
+  //    structural delimiters (" ' { } [ ] : , and whitespace), so it can never
+  //    eat a following field in valid JSON/YAML/env/query strings, and it
+  //    requires >=1 tail char so it is a no-op on clean output (idempotent).
+  //  - It therefore covers token-like tails only: a tail led by an excluded
+  //    char (password="[REDACTED]"!x) is left as-is.
+  //  - For delimiter-FREE adjacent content it WILL over-redact, because that is
+  //    indistinguishable from a leaked tail: password="[REDACTED]"user=bob drops
+  //    "user=bob". Acceptable for a redactor — it errs toward masking. A fuller
+  //    fix would redact the keyword assignment atomically (see asl follow-up).
+  { re: new RegExp(`((?:\\b${KEYWORD}\\b["']?\\s*[:=]\\s*)["']?\\[REDACTED\\]["']?)[A-Za-z0-9._~+/=-]+`, "gi"), sub: "$1" },
 ];
 
 export function redact(text: string, extraPatterns: string[] = []): string {

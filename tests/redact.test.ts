@@ -123,6 +123,47 @@ describe("redact", () => {
     expect(r).not.toContain("abc123def");
   });
 
+  test("quote-glued secret tail after a keyword value does not leak (asl-2u3)", () => {
+    // The quoted rule keeps its closing quote, so a tail glued directly onto it
+    // (password="secret"tail) lands outside the value, and the unquoted
+    // fallback's lookahead skips the already-quoted marker. The marker-cleanup
+    // rule collapses the glued tail while preserving the quotes.
+    const r = redact('password="hunter2"leakedtail123');
+    expect(r).toBe('password="[REDACTED]"');
+    expect(r).not.toContain("hunter2");
+    expect(r).not.toContain("leakedtail");
+  });
+
+  test("single-quoted keyword value with a glued tail does not leak (asl-2u3)", () => {
+    expect(redact("secret='abc123'gluedsecret")).toBe("secret='[REDACTED]'");
+  });
+
+  test("marker cleanup preserves adjacent JSON structure, no over-redaction", () => {
+    const out = redact('{"password":"topsecret","user":"bob"}');
+    expect(out).toBe('{"password":"[REDACTED]","user":"bob"}');
+    expect(JSON.parse(out).user).toBe("bob");
+  });
+
+  test("marker cleanup stops at whitespace, leaving following words intact", () => {
+    expect(redact('password="hunter2" and then more')).toBe('password="[REDACTED]" and then more');
+  });
+
+  // Characterization of the marker-cleanup rule's deliberate limits (asl-2u3).
+  // These pin best-effort scope; they are not aspirational.
+  test("marker cleanup covers token-like tails only: an excluded-char-led tail is left as-is", () => {
+    // '!' is outside the base64/token allowlist, so the cleanup does not fire;
+    // the residual is a documented limit, not a regression.
+    expect(redact('password="hunter2"!residual')).toBe('password="[REDACTED]"!residual');
+  });
+
+  test("marker cleanup over-redacts delimiter-free adjacent content (errs toward masking)", () => {
+    // No structural delimiter separates the glued tail from the next token, so
+    // it is indistinguishable from a leaked secret tail and gets masked too.
+    const out = redact('password="hunter2"user=bob');
+    expect(out).toBe('password="[REDACTED]"');
+    expect(out).not.toContain("bob");
+  });
+
   test("already-redacted quoted output is left byte-for-byte untouched", () => {
     expect(redact('password: "[REDACTED]"')).toBe('password: "[REDACTED]"');
   });
@@ -140,6 +181,7 @@ describe("redact", () => {
       "password=[REDACTED]abc123def",
       "token: [REDACTED]sk-livesecret",
       '{"password":"hunter2secret","next":"ok"}',
+      'password="hunter2"leakedtail123',
     ];
     for (const c of cases) {
       const once = redact(c);
