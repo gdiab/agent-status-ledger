@@ -19,6 +19,7 @@
 // counts when its code.edit events actually carry source.session_id == uuid.
 import type { EngramConfig } from "../config";
 import { makeSpawnExec, type Exec } from "../exec";
+import { redact } from "../redact";
 import type { RawSession } from "../types";
 
 const CODE_EDIT_FILTER = '"k":"code.edit"';
@@ -57,17 +58,107 @@ const MAX_SESSIONS_PER_PROFILE = 5;
 // any exec, so a hostile id can never become an engram CLI option.
 const SESSION_ID_SHAPE = /^[0-9a-fA-F][0-9a-fA-F-]{7,63}$/;
 
-// Citation strings end up in every consumer surface (JSON, markdown, html)
-// and are assembled partly from engram-reported file paths, which are
-// untrusted. Neutralize at assembly — control chars (incl. newlines, which
-// would let "#"/markdown structures start a line), DEL, and angle brackets
-// are stripped so the citation is inert before it reaches any renderer.
+// Tape-sourced strings end up in every consumer surface (JSON, markdown,
+// html, digest, email) and are assembled from engram-reported content
+// (today: file paths; soon: quoted DIALOGUE), which is untrusted AND
+// unredacted — engram stores verbatim transcripts. Neutralize at ingestion —
+// control chars (incl. newlines, which would let "#"/markdown structures
+// start a line), DEL, angle brackets, and Unicode format characters (\p{Cf}:
+// zero-width space/joiners, word joiner, BOM, soft hyphen, bidi controls —
+// all invisible in renderers, so a secret split by one would reconstruct on
+// copy-paste and bidi controls could reorder the citation display) are
+// stripped so the text is inert before it reaches any renderer. Citations
+// are file paths plus counts, where no \p{Cf} character is load-bearing.
 // This deliberately does not depend on renderer-side escaping (asl-xis).
-const CITATION_UNSAFE = /[\x00-\x1f\x7f<>]/g;
+//
+// \p{Cf} alone is not enough: Unicode's Default_Ignorable_Code_Point
+// property (DerivedCoreProperties.txt) also contains characters in other
+// general categories that render as nothing — notably COMBINING GRAPHEME
+// JOINER U+034F and the variation selectors U+FE00–FE0F / U+E0100–E01EF,
+// which are nonspacing marks (\p{Mn}) — so they too can invisibly split a
+// secret that reconstructs on copy-paste. JS regex cannot express
+// \p{Default_Ignorable_Code_Point} directly, so the non-Cf members are
+// enumerated explicitly below (do NOT widen to all of \p{Mn}: legitimate
+// combining marks are load-bearing in NFD file paths, e.g. "café.ts" from
+// macOS filesystems):
+//   U+034F        COMBINING GRAPHEME JOINER (Mn)
+//   U+115F..1160  HANGUL CHOSEONG/JUNGSEONG FILLER (Lo)
+//   U+17B4..17B5  KHMER VOWEL INHERENT AQ/AA (Mn)
+//   U+180B..180F  MONGOLIAN FREE VARIATION SELECTORS + VOWEL SEPARATOR
+//   U+2065        reserved, default-ignorable (Cn)
+//   U+3164        HANGUL FILLER (Lo)
+//   U+FE00..FE0F  VARIATION SELECTOR-1..16 (Mn)
+//   U+FFA0        HALFWIDTH HANGUL FILLER (Lo)
+//   U+FFF0..FFF8  reserved, default-ignorable (Cn)
+//   U+E0000..E0FFF plane-14 tags + VARIATION SELECTOR-17..256 + reserved
+//
+// Known fidelity tradeoff (accepted, security over fidelity): several
+// stripped code points are legal, potentially load-bearing filename
+// characters — SOFT HYPHEN U+00AD (a citation for "/repo/co­operate.ts"
+// comes out naming "/repo/cooperate.ts", a different file), variation
+// selectors (which can change glyph/semantic identity of the preceding
+// character), Mongolian FVS, Khmer inherent vowels, and Hangul fillers.
+// A stripped citation can therefore name a path that differs from the one
+// actually edited. We accept the mislabeled citation rather than let an
+// invisible or rendering-altering character through the boundary.
+const TAPE_UNSAFE =
+  /[\x00-\x1f\x7f<>]|\p{Cf}|[\u034F\u115F\u1160\u17B4\u17B5\u180B-\u180F\u2065\u3164\uFE00-\uFE0F\uFFA0\uFFF0-\uFFF8]|[\u{E0000}-\u{E0FFF}]/gu;
+
+// Branded string marking a tape-sourced value that went through
+// sanitizeTapeText. This is a compile-time convention against ACCIDENTAL
+// misuse, not a proof: the brand can be forged with an assertion / `any` /
+// JSON.parse, and it widens back to plain string where the value is stored
+// (AgentReport.evidenceCitation). What it buys: sanitizeTapeText below is
+// the single sanctioned producer, so a future field that quotes tape
+// dialogue can declare this type and the compiler will flag any code path
+// that forgot the choke point — as long as nobody casts around it.
+declare const sanitizedTape: unique symbol;
+export type SanitizedTapeText = string & { readonly [sanitizedTape]: true };
+
+// THE redaction choke point for the Engram boundary (asl-a5v): every string
+// that originates in engram subprocess output must pass through here at the
+// point it is parsed into an ASL data structure — never at render time, so
+// no future render path can bypass it. Composes the shared secret-matching
+// rules from src/redact.ts (builtin + user extraPatterns — no new matching
+// logic here, per asl-2u3) with the tape-specific structural hardening
+// above. Redact runs on BOTH sides of the strip, because each order has an
+// inverse evasion:
+//  - strip-then-redact only: a boundary-dependent rule that matched the raw
+//    text stops matching once the strip glues adjacent chars onto the secret
+//    ("AKIA…F\x00X" → "AKIA…FX" breaks the \b…{16}\b rule);
+//  - redact-then-strip only: a secret split by a stripped char slips past
+//    the redactor as short fragments and is glued back into a live key
+//    ("sk-fix\x00ture…" reassembles).
+// Running redact → strip → redact covers both representations. Cost: redact
+// runs twice per tape string — citations are one-liners and redact is a
+// fixed list of regex passes, so this is noise next to the subprocess calls.
+//
+// extraPatterns is deliberately required (no default): a defaulted [] let
+// call sites silently drop the user's redactPatterns while still receiving
+// branded output. Passing [] must be a visible choice at the call site.
+//
+// Known cosmetic limitation (accepted): double-redact is not idempotent for
+// pathological extraPatterns that match the marker itself — e.g. ["REDACTED"]
+// or ["\\]"] mutate the first pass's [REDACTED] markers into noise like
+// [[[REDACTED]]]. No secret survives (pinned by test); only the marker text
+// gets mangled. The obvious fix — second pass splits on existing [REDACTED]
+// markers and redacts only the non-marker segments — was tried and rejected:
+// it blinds the second pass to marker-adjacent context, which demonstrably
+// breaks redact.ts's glued-tail cleanup when the strip glues a secret tail
+// onto a quoted marker (password="[REDACTED]"<ZWSP>xyz → the tail xyz
+// survives under the split, but is caught by the full-string pass). A
+// cosmetic defect does not warrant weakening a real redaction path.
+export function sanitizeTapeText(s: string, extraPatterns: string[]): SanitizedTapeText {
+  const preStripped = redact(s, extraPatterns);
+  return redact(preStripped.replace(TAPE_UNSAFE, ""), extraPatterns) as SanitizedTapeText;
+}
 
 export interface UpgradeResult {
   matched: boolean;
-  citation?: string;
+  // Branded: accidentally constructing an UpgradeResult with a raw
+  // (unsanitized) string here is a compile error — see the honest scope of
+  // that guarantee on SanitizedTapeText above.
+  citation?: SanitizedTapeText;
 }
 
 // Every engram command prints two lines of config/db path info before the
@@ -129,11 +220,14 @@ function verifiedEditedFiles(peekResponse: Record<string, unknown>, sessionUuid:
 // harness session `sessionUuid` (grep by UUID, then peek each candidate's
 // code.edit events and verify their source.session_id). Synchronous by
 // design — the Exec seam is Bun.spawnSync underneath; an async exec is a
-// separate future change. Never throws.
+// separate future change. Never throws. extraPatterns is required for the
+// same reason as sanitizeTapeText's: dropping the user's redactPatterns
+// must never be a silent default.
 export function upgradeEvidence(
   sessionUuid: string,
   binaryPath: string,
   exec: Exec,
+  extraPatterns: string[],
 ): UpgradeResult {
   try {
     if (!SESSION_ID_SHAPE.test(sessionUuid)) return { matched: false };
@@ -161,8 +255,10 @@ export function upgradeEvidence(
       const more = files.length > MAX_CITED_FILES ? `, +${files.length - MAX_CITED_FILES} more` : "";
       return {
         matched: true,
-        citation: `engram session ${engramSid}: observed code edits to ${shown}${more}`
-          .replace(CITATION_UNSAFE, ""),
+        citation: sanitizeTapeText(
+          `engram session ${engramSid}: observed code edits to ${shown}${more}`,
+          extraPatterns,
+        ),
       };
     }
     return { matched: false };
@@ -176,19 +272,30 @@ export function upgradeEvidence(
 // the default real (timeout-bounded) exec seam, and the one fail-soft
 // boundary — mirroring sendReportEmail's never-throws contract (asl-533).
 // Callers gate on evidence level; everything engram-shaped lives here.
+//
+// The options object is required and redactPatterns has no default: the
+// user's config.redactPatterns must be threaded through explicitly, so a
+// call site that opts out ([]) is visible as configuration, never an
+// accidental omission. exec stays optional inside it (tests inject fakes;
+// production omits it to run the real binary).
+export interface CorroborateOptions {
+  redactPatterns: string[];
+  exec?: Exec;
+}
+
 export function corroborateSessions(
   sessions: RawSession[],
   cfg: EngramConfig,
-  exec?: Exec,
+  opts: CorroborateOptions,
 ): UpgradeResult {
   if (!cfg.enabled) return { matched: false };
   try {
     // enabled=true with no injected seam runs the real binary (same pattern
     // as narrative.ts's `fetchFn ?? fetch`); tests inject fakes.
-    const realExec = exec ?? makeSpawnExec(ENGRAM_TIMEOUT_MS);
+    const realExec = opts.exec ?? makeSpawnExec(ENGRAM_TIMEOUT_MS);
     const newestFirst = [...sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
     for (const session of newestFirst.slice(0, MAX_SESSIONS_PER_PROFILE)) {
-      const result = upgradeEvidence(session.sessionId, cfg.binaryPath, realExec);
+      const result = upgradeEvidence(session.sessionId, cfg.binaryPath, realExec, opts.redactPatterns);
       if (result.matched) return result;
     }
     return { matched: false };
