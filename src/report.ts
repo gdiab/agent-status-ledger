@@ -98,8 +98,10 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
     // not re-applied here at the model layer.
     let evidenceCitation: string | undefined;
     if (evidence === "claimed_only") {
-      const upgrade = corroborateSessions(
-        profile.sessions, config.connectors.engram, opts.engramExec, config.redactPatterns);
+      const upgrade = corroborateSessions(profile.sessions, config.connectors.engram, {
+        redactPatterns: config.redactPatterns,
+        exec: opts.engramExec,
+      });
       if (upgrade.matched) {
         evidence = "partially_proven";
         evidenceCitation = upgrade.citation;

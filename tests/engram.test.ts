@@ -74,22 +74,22 @@ function twoStepExec(grepStdout: string, peekStdoutBySid: Record<string, string>
 
 describe("upgradeEvidence", () => {
   test("does not match when the binary is missing (exec not ok)", async () => {
-    const r = await upgradeEvidence(UUID, BIN, execFail);
+    const r = await upgradeEvidence(UUID, BIN, execFail, []);
     expect(r.matched).toBe(false);
     expect(r.citation).toBeUndefined();
   });
 
   test("does not match when grep returns an error / no sessions", async () => {
     const noResults = execOk(cliStdout({ error: "no_results", query: UUID }));
-    expect((await upgradeEvidence(UUID, BIN, noResults)).matched).toBe(false);
+    expect((await upgradeEvidence(UUID, BIN, noResults, [])).matched).toBe(false);
 
     const emptySessions = execOk(cliStdout({ returned: 0, sessions: [] }));
-    expect((await upgradeEvidence(UUID, BIN, emptySessions)).matched).toBe(false);
+    expect((await upgradeEvidence(UUID, BIN, emptySessions, [])).matched).toBe(false);
   });
 
   test("does not match on malformed grep JSON", async () => {
     const exec = execOk("config: /x\ndb: /y\nnot valid json{{{");
-    const r = await upgradeEvidence(UUID, BIN, exec);
+    const r = await upgradeEvidence(UUID, BIN, exec, []);
     expect(r.matched).toBe(false);
   });
 
@@ -97,7 +97,7 @@ describe("upgradeEvidence", () => {
     const exec = twoStepExec(grepResponse([ENGRAM_SID]), {
       [ENGRAM_SID]: cliStdout({ error: "session_not_found", session_id: ENGRAM_SID }),
     });
-    const r = await upgradeEvidence(UUID, BIN, exec);
+    const r = await upgradeEvidence(UUID, BIN, exec, []);
     expect(r.matched).toBe(false);
   });
 
@@ -105,7 +105,7 @@ describe("upgradeEvidence", () => {
     const exec = twoStepExec(grepResponse([ENGRAM_SID]), {
       [ENGRAM_SID]: peekResponse([readEvent, readEvent]),
     });
-    const r = await upgradeEvidence(UUID, BIN, exec);
+    const r = await upgradeEvidence(UUID, BIN, exec, []);
     expect(r.matched).toBe(false);
   });
 
@@ -116,7 +116,7 @@ describe("upgradeEvidence", () => {
     const exec = twoStepExec(grepResponse([ENGRAM_SID]), {
       [ENGRAM_SID]: peekResponse([editEvent("/repo/src/a.ts", "some-other-uuid")]),
     });
-    const r = await upgradeEvidence(UUID, BIN, exec);
+    const r = await upgradeEvidence(UUID, BIN, exec, []);
     expect(r.matched).toBe(false);
   });
 
@@ -129,7 +129,7 @@ describe("upgradeEvidence", () => {
         editEvent("/repo/src/config.ts", UUID), // duplicate file, cited once
       ]),
     });
-    const r = await upgradeEvidence(UUID, BIN, exec);
+    const r = await upgradeEvidence(UUID, BIN, exec, []);
     expect(r.matched).toBe(true);
     expect(r.citation).toContain(ENGRAM_SID);
     expect(r.citation).toContain("/repo/src/config.ts");
@@ -143,7 +143,7 @@ describe("upgradeEvidence", () => {
       [other]: peekResponse([editEvent("/repo/src/a.ts", "some-other-uuid")]),
       [ENGRAM_SID]: peekResponse([editEvent("/repo/src/b.ts", UUID)]),
     });
-    const r = await upgradeEvidence(UUID, BIN, exec);
+    const r = await upgradeEvidence(UUID, BIN, exec, []);
     expect(r.matched).toBe(true);
     expect(r.citation).toContain(ENGRAM_SID);
     expect(r.citation).toContain("/repo/src/b.ts");
@@ -158,7 +158,7 @@ describe("upgradeEvidence", () => {
       calls.push(argv);
       return inner(argv);
     };
-    await upgradeEvidence(UUID, BIN, exec);
+    await upgradeEvidence(UUID, BIN, exec, []);
     expect(calls[0]).toEqual([BIN, "grep", UUID]);
     expect(calls[1]).toEqual([BIN, "peek", ENGRAM_SID, "--grep-filter", EDIT_FILTER]);
   });
@@ -174,7 +174,7 @@ describe("upgradeEvidence", () => {
         },
       }),
     });
-    const r = await upgradeEvidence(UUID, BIN, exec);
+    const r = await upgradeEvidence(UUID, BIN, exec, []);
     expect(r.matched).toBe(true);
   });
 
@@ -193,7 +193,7 @@ describe("upgradeEvidence", () => {
         calls++;
         return { ok: true, stdout: "", stderr: "" };
       };
-      const r = upgradeEvidence(hostile, BIN, spy);
+      const r = upgradeEvidence(hostile, BIN, spy, []);
       expect(r.matched).toBe(false);
       expect(calls).toBe(0);
     }
@@ -204,7 +204,7 @@ describe("upgradeEvidence", () => {
     const exec = twoStepExec(grepResponse([ENGRAM_SID]), {
       [ENGRAM_SID]: peekResponse([editEvent(hostileFile, UUID)]),
     });
-    const r = upgradeEvidence(UUID, BIN, exec);
+    const r = upgradeEvidence(UUID, BIN, exec, []);
     expect(r.matched).toBe(true);
     // dangerous characters are gone entirely...
     expect(r.citation).not.toContain("<");
@@ -227,7 +227,7 @@ describe("upgradeEvidence", () => {
       if (argv[1] === "peek") peeked.push(argv[2]!);
       return inner(argv);
     };
-    const r = upgradeEvidence(UUID, BIN, exec);
+    const r = upgradeEvidence(UUID, BIN, exec, []);
     // the hostile candidates are skipped, the legitimate one still matches
     expect(r.matched).toBe(true);
     expect(peeked).toEqual([ENGRAM_SID]);
@@ -238,7 +238,7 @@ describe("upgradeEvidence", () => {
       cliStdout({ returned: 1, sessions: [{ confidence: 325.0 }] }), // no session_id key
       {},
     );
-    const r = await upgradeEvidence(UUID, BIN, exec);
+    const r = await upgradeEvidence(UUID, BIN, exec, []);
     expect(r.matched).toBe(false);
   });
 
@@ -255,7 +255,7 @@ describe("upgradeEvidence", () => {
       if (argv[1] === "peek") peeked.push(argv[2]!);
       return inner(argv);
     };
-    const r = await upgradeEvidence(UUID, BIN, exec);
+    const r = await upgradeEvidence(UUID, BIN, exec, []);
     expect(r.matched).toBe(false);
     expect(peeked).toEqual(["cafe0001", "cafe0002", "cafe0003"]);
   });
@@ -265,7 +265,7 @@ describe("upgradeEvidence", () => {
     // hung binary (e.g. locked SQLite DB): non-zero/absent exit, nothing on
     // stdout. Evidence must stay untouched, never hang the report run.
     const timedOut: Exec = () => ({ ok: false, stdout: "", stderr: "" });
-    const r = await upgradeEvidence(UUID, BIN, timedOut);
+    const r = await upgradeEvidence(UUID, BIN, timedOut, []);
     expect(r.matched).toBe(false);
   });
 
@@ -273,7 +273,7 @@ describe("upgradeEvidence", () => {
     const throwingExec: Exec = () => {
       throw new Error("boom");
     };
-    const r = await upgradeEvidence(UUID, BIN, throwingExec);
+    const r = await upgradeEvidence(UUID, BIN, throwingExec, []);
     expect(r.matched).toBe(false);
   });
 });
@@ -304,20 +304,20 @@ describe("corroborateSessions", () => {
       calls++;
       return { ok: true, stdout: "", stderr: "" };
     };
-    const r = corroborateSessions([rawSession(UUID, "2026-07-07T12:00:00.000Z")], disabled, spy);
+    const r = corroborateSessions([rawSession(UUID, "2026-07-07T12:00:00.000Z")], disabled, { redactPatterns: [], exec: spy });
     expect(r.matched).toBe(false);
     expect(calls).toBe(0);
   });
 
   test("matches via an injected exec, returning the citation", () => {
-    const r = corroborateSessions([rawSession(UUID, "2026-07-07T12:00:00.000Z")], enabled, matchingExec(UUID));
+    const r = corroborateSessions([rawSession(UUID, "2026-07-07T12:00:00.000Z")], enabled, { redactPatterns: [], exec: matchingExec(UUID) });
     expect(r.matched).toBe(true);
     expect(r.citation).toContain(ENGRAM_SID);
     expect(r.citation).toContain("/repo/src/thing.ts");
   });
 
   test("returns no match for an empty session list", () => {
-    const r = corroborateSessions([], enabled, matchingExec(UUID));
+    const r = corroborateSessions([], enabled, { redactPatterns: [], exec: matchingExec(UUID) });
     expect(r.matched).toBe(false);
   });
 
@@ -332,7 +332,7 @@ describe("corroborateSessions", () => {
       rawSession("cccc3333", "2026-07-07T12:00:00.000Z"), // newest
       rawSession("bbbb2222", "2026-07-07T11:00:00.000Z"),
     ];
-    corroborateSessions(sessions, enabled, spy);
+    corroborateSessions(sessions, enabled, { redactPatterns: [], exec: spy });
     expect(grepped).toEqual(["cccc3333", "bbbb2222", "aaaa1111"]);
   });
 
@@ -345,7 +345,7 @@ describe("corroborateSessions", () => {
     // ascending start times; ids hex-shaped, newest are 7..3
     const sessions = Array.from({ length: 8 }, (_, i) =>
       rawSession(`aaaa000${i}`, `2026-07-07T0${i}:00:00.000Z`));
-    const r = corroborateSessions(sessions, enabled, spy);
+    const r = corroborateSessions(sessions, enabled, { redactPatterns: [], exec: spy });
     expect(r.matched).toBe(false);
     expect(grepped).toEqual(["aaaa0007", "aaaa0006", "aaaa0005", "aaaa0004", "aaaa0003"]);
   });
@@ -365,7 +365,7 @@ describe("corroborateSessions", () => {
       rawSession(UUID, "2026-07-07T11:00:00.000Z"),
       rawSession("bbbb2222", "2026-07-07T12:00:00.000Z"),
     ];
-    const r = corroborateSessions(sessions, enabled, exec);
+    const r = corroborateSessions(sessions, enabled, { redactPatterns: [], exec });
     expect(r.matched).toBe(true);
     // newest-first: bbbb2222 misses, UUID matches, aaaa1111 never tried
     expect(grepped).toEqual(["bbbb2222", UUID]);
@@ -375,7 +375,7 @@ describe("corroborateSessions", () => {
     const throwingExec: Exec = () => {
       throw new Error("boom");
     };
-    const r = corroborateSessions([rawSession(UUID, "2026-07-07T12:00:00.000Z")], enabled, throwingExec);
+    const r = corroborateSessions([rawSession(UUID, "2026-07-07T12:00:00.000Z")], enabled, { redactPatterns: [], exec: throwingExec });
     expect(r.matched).toBe(false);
   });
 
@@ -387,7 +387,7 @@ describe("corroborateSessions", () => {
     const r = corroborateSessions(
       [rawSession(UUID, "2026-07-07T12:00:00.000Z")],
       { enabled: true, binaryPath: "/no/such/binary-xyz" },
-      undefined,
+      { redactPatterns: [] },
     );
     expect(r.matched).toBe(false);
   });

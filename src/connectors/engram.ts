@@ -97,7 +97,11 @@ export type SanitizedTapeText = string & { readonly [sanitizedTape]: true };
 // Running redact → strip → redact covers both representations. Cost: redact
 // runs twice per tape string — citations are one-liners and redact is a
 // fixed list of regex passes, so this is noise next to the subprocess calls.
-export function sanitizeTapeText(s: string, extraPatterns: string[] = []): SanitizedTapeText {
+//
+// extraPatterns is deliberately required (no default): a defaulted [] let
+// call sites silently drop the user's redactPatterns while still receiving
+// branded output. Passing [] must be a visible choice at the call site.
+export function sanitizeTapeText(s: string, extraPatterns: string[]): SanitizedTapeText {
   const preStripped = redact(s, extraPatterns);
   return redact(preStripped.replace(TAPE_UNSAFE, ""), extraPatterns) as SanitizedTapeText;
 }
@@ -168,12 +172,14 @@ function verifiedEditedFiles(peekResponse: Record<string, unknown>, sessionUuid:
 // harness session `sessionUuid` (grep by UUID, then peek each candidate's
 // code.edit events and verify their source.session_id). Synchronous by
 // design — the Exec seam is Bun.spawnSync underneath; an async exec is a
-// separate future change. Never throws.
+// separate future change. Never throws. extraPatterns is required for the
+// same reason as sanitizeTapeText's: dropping the user's redactPatterns
+// must never be a silent default.
 export function upgradeEvidence(
   sessionUuid: string,
   binaryPath: string,
   exec: Exec,
-  extraPatterns: string[] = [],
+  extraPatterns: string[],
 ): UpgradeResult {
   try {
     if (!SESSION_ID_SHAPE.test(sessionUuid)) return { matched: false };
@@ -218,20 +224,30 @@ export function upgradeEvidence(
 // the default real (timeout-bounded) exec seam, and the one fail-soft
 // boundary — mirroring sendReportEmail's never-throws contract (asl-533).
 // Callers gate on evidence level; everything engram-shaped lives here.
+//
+// The options object is required and redactPatterns has no default: the
+// user's config.redactPatterns must be threaded through explicitly, so a
+// call site that opts out ([]) is visible as configuration, never an
+// accidental omission. exec stays optional inside it (tests inject fakes;
+// production omits it to run the real binary).
+export interface CorroborateOptions {
+  redactPatterns: string[];
+  exec?: Exec;
+}
+
 export function corroborateSessions(
   sessions: RawSession[],
   cfg: EngramConfig,
-  exec?: Exec,
-  extraPatterns: string[] = [],
+  opts: CorroborateOptions,
 ): UpgradeResult {
   if (!cfg.enabled) return { matched: false };
   try {
     // enabled=true with no injected seam runs the real binary (same pattern
     // as narrative.ts's `fetchFn ?? fetch`); tests inject fakes.
-    const realExec = exec ?? makeSpawnExec(ENGRAM_TIMEOUT_MS);
+    const realExec = opts.exec ?? makeSpawnExec(ENGRAM_TIMEOUT_MS);
     const newestFirst = [...sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
     for (const session of newestFirst.slice(0, MAX_SESSIONS_PER_PROFILE)) {
-      const result = upgradeEvidence(session.sessionId, cfg.binaryPath, realExec, extraPatterns);
+      const result = upgradeEvidence(session.sessionId, cfg.binaryPath, realExec, opts.redactPatterns);
       if (result.matched) return result;
     }
     return { matched: false };

@@ -84,7 +84,7 @@ function rawSession(sessionId: string, startedAt: string): RawSession {
 
 describe("sanitizeTapeText (the choke point)", () => {
   test("composes redact.ts rules: builtin secret shapes come back as [REDACTED]", () => {
-    const out = sanitizeTapeText(`edited ${SECRET_FILE} and /repo/src/ok.ts`);
+    const out = sanitizeTapeText(`edited ${SECRET_FILE} and /repo/src/ok.ts`, []);
     expect(out).not.toContain(SECRET);
     expect(out).toContain("[REDACTED]");
     expect(out).toContain("/repo/src/ok.ts");
@@ -97,7 +97,7 @@ describe("sanitizeTapeText (the choke point)", () => {
   });
 
   test("keeps the existing citation hardening: control chars, newlines, angle brackets stripped", () => {
-    const out = sanitizeTapeText("/repo/<img src=x>\n## heading\t/thing.ts");
+    const out = sanitizeTapeText("/repo/<img src=x>\n## heading\t/thing.ts", []);
     expect(out).not.toContain("<");
     expect(out).not.toContain(">");
     expect(out).not.toContain("\n");
@@ -155,7 +155,7 @@ describe("sanitizeTapeText (the choke point)", () => {
 
 describe("boundary guard: engram parsing never returns raw tape text", () => {
   test("upgradeEvidence's entire result carries no unredacted tape secret", () => {
-    const r = upgradeEvidence(UUID, BIN, leakyExec);
+    const r = upgradeEvidence(UUID, BIN, leakyExec, []);
     expect(r.matched).toBe(true);
     // every string field of the result, not just citation
     expect(JSON.stringify(r)).not.toContain(SECRET);
@@ -180,8 +180,7 @@ describe("boundary guard: engram parsing never returns raw tape text", () => {
     const r = corroborateSessions(
       [rawSession(UUID, "2026-07-07T12:00:00.000Z")],
       { enabled: true, binaryPath: BIN },
-      exec,
-      ["customsecretvalue"],
+      { redactPatterns: ["customsecretvalue"], exec },
     );
     expect(r.matched).toBe(true);
     expect(r.citation).not.toContain("customsecretvalue");
@@ -196,7 +195,7 @@ describe("redaction contract across all render surfaces", () => {
   const upgrade = corroborateSessions(
     [rawSession(UUID, "2026-07-07T12:00:00.000Z")],
     { enabled: true, binaryPath: BIN },
-    leakyExec,
+    { redactPatterns: [], exec: leakyExec },
   );
 
   function agentWithCitation(): AgentReport {
