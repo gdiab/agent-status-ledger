@@ -613,8 +613,8 @@ describe("discoverDispatchLinks", () => {
     expect(grepped[9]).toBe("aaaa0002");
   });
 
-  test("peeks at most 3 grep candidates per probed session", () => {
-    const tapes = ["cafe0001", "cafe0002", "cafe0003", "cafe0004", "cafe0005"];
+  test("peeks at most 6 grep candidates per probed session (lineage cap, wider than evidence's 3)", () => {
+    const tapes = ["cafe0001", "cafe0002", "cafe0003", "cafe0004", "cafe0005", "cafe0006", "cafe0007", "cafe0008"];
     const peeked: string[] = [];
     const exec: Exec = (argv) => {
       if (argv[1] === "grep") return { ok: true, stdout: grepResponse(tapes), stderr: "" };
@@ -622,7 +622,37 @@ describe("discoverDispatchLinks", () => {
       return { ok: true, stdout: peekResponse([]), stderr: "" };
     };
     discoverDispatchLinks([lineageSession(ORCH)], enabled, exec);
-    expect(peeked).toEqual(["cafe0001", "cafe0002", "cafe0003"]);
+    expect(peeked).toEqual(["cafe0001", "cafe0002", "cafe0003", "cafe0004", "cafe0005", "cafe0006"]);
+  });
+
+  test("a parent with 4 dispatched subagents links all 4, even though its own tape consumes a grep slot", () => {
+    // grep on the parent uuid returns the parent's own tape FIRST (it always
+    // matches strongest) plus one tape per child — 5 candidates. The old
+    // evidence-sized cap of 3 silently dropped two children.
+    const subs = [
+      "bbbb0000-0000-4000-8000-00000000000b",
+      "cccc0000-0000-4000-8000-00000000000c",
+      "dddd0000-0000-4000-8000-00000000000d",
+      "eeee0000-0000-4000-8000-00000000000e",
+    ];
+    const childTapes = subs.map((_, i) => String(i + 3).repeat(64));
+    const exec: Exec = (argv) => {
+      if (argv[1] === "grep" && argv[2] === ORCH) {
+        return { ok: true, stdout: grepResponse([PARENT_TAPE, ...childTapes]), stderr: "" };
+      }
+      if (argv[1] === "grep") return { ok: true, stdout: cliStdout({ error: "no_results" }), stderr: "" };
+      if (argv[2] === PARENT_TAPE) {
+        return { ok: true, stdout: peekResponse([sentMarkerEvent(ORCH, ORCH)]), stderr: "" };
+      }
+      const child = subs[childTapes.indexOf(argv[2]!)]!;
+      return { ok: true, stdout: peekResponse([markerEvent(ORCH, child)]), stderr: "" };
+    };
+    const links = discoverDispatchLinks(
+      [lineageSession(ORCH), ...subs.map((s) => lineageSession(s))],
+      enabled,
+      exec,
+    );
+    expect(links).toEqual(subs.map((childSessionId) => ({ parentSessionId: ORCH, childSessionId })));
   });
 
   test("a failing peek on one candidate doesn't stop the next candidate from linking", () => {
