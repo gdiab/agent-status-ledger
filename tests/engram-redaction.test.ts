@@ -5,13 +5,16 @@
 // future render path can bypass redaction by forgetting a render-time call.
 import { describe, expect, test } from "bun:test";
 import { corroborateSessions, sanitizeTapeText, upgradeEvidence } from "../src/connectors/engram";
-import type { Exec } from "../src/exec";
-import type { AgentReport, RawSession, Report } from "../src/types";
+import type { AgentReport, Report } from "../src/types";
 import { renderJson } from "../src/render/json";
 import { renderMarkdown } from "../src/render/markdown";
 import { renderHtml } from "../src/render/html";
 import { renderEmailDigest } from "../src/render/digest";
 import { buildMimeMessage } from "../src/email";
+import {
+  BIN, ENGRAM_SID, UUID,
+  editEvent, grepResponse, peekResponse, rawSession, twoStepExec,
+} from "./helpers/engram-fixtures";
 
 // Fixture secret embedded in Engram tape output (a file path an agent might
 // genuinely create): matches redact.ts's builtin sk- rule, so surviving any
@@ -19,68 +22,11 @@ import { buildMimeMessage } from "../src/email";
 const SECRET = "sk-fixturesecret1234567890abcdef";
 const SECRET_FILE = `/repo/src/${SECRET}.ts`;
 
-const UUID = "989533ee-ec57-4ac9-b510-9d6cb8b1b969";
-const ENGRAM_SID = "cbe8ebd49d60f46dac4ca64c3058ad0617d5c888811025b771d82e94e2faa455";
-const BIN = "/path/to/engram";
-
-function cliStdout(json: unknown): string {
-  return `config: /Users/gd/.engram/config.yml\ndb: /Users/gd/.engram/index.sqlite\n${JSON.stringify(json)}\n`;
-}
-
-function grepResponse(sessionIds: string[]): string {
-  return cliStdout({
-    returned: sessionIds.length,
-    sessions: sessionIds.map((session_id, i) => ({
-      session_id,
-      confidence: 325.0 - i,
-      files_touched: ["/whatever/file.ts"],
-      timestamp: "2026-07-14T13:39:18.481Z",
-    })),
-  });
-}
-
-function peekResponse(events: unknown[]): string {
-  return cliStdout({
-    session: { content: events.map((ev, i) => ({ line: i + 1, text: JSON.stringify(ev) })) },
-  });
-}
-
-function editEvent(file: string, sourceSessionId: string): unknown {
-  return {
-    file,
-    k: "code.edit",
-    range: [1, 10],
-    range_basis: "line",
-    source: { harness: "claude-code", session_id: sourceSessionId },
-    t: "2026-07-14T13:39:18.481Z",
-  };
-}
-
-function twoStepExec(grepStdout: string, peekStdoutBySid: Record<string, string>): Exec {
-  return (argv) => {
-    if (argv[1] === "grep") return { ok: true, stdout: grepStdout, stderr: "" };
-    if (argv[1] === "peek") {
-      const sid = argv[2]!;
-      const stdout = peekStdoutBySid[sid] ?? cliStdout({ error: "session_not_found", session_id: sid });
-      return { ok: true, stdout, stderr: "" };
-    }
-    return { ok: false, stdout: "", stderr: `unexpected subcommand ${argv[1]}` };
-  };
-}
-
 // Mocked Engram subprocess whose tape output leaks the fixture secret in an
 // edited-file path — the exact shape future dialogue quoting will amplify.
 const leakyExec = twoStepExec(grepResponse([ENGRAM_SID]), {
   [ENGRAM_SID]: peekResponse([editEvent(SECRET_FILE, UUID), editEvent("/repo/src/ok.ts", UUID)]),
 });
-
-function rawSession(sessionId: string, startedAt: string): RawSession {
-  return {
-    platform: "claude-code", sessionId, cwd: "/w",
-    startedAt, lastEventAt: startedAt,
-    events: [], filesTouched: [], errors: [],
-  };
-}
 
 describe("sanitizeTapeText (the choke point)", () => {
   test("composes redact.ts rules: builtin secret shapes come back as [REDACTED]", () => {
