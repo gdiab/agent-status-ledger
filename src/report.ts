@@ -7,7 +7,7 @@ import { attributeCommits, listCommits } from "./git";
 import { EXCEPTION_STATUSES, inferStatus } from "./status";
 import { buildFactSheet, generateNarrative, templateNarrative } from "./narrative";
 import { redact, redactFacts } from "./redact";
-import { corroborateSessions, discoverDispatchLinks, type DispatchLink } from "./connectors/engram";
+import { corroborateSessions, discoverDispatchLinks } from "./connectors/engram";
 import type { Exec } from "./exec";
 
 export interface BuildReportOptions {
@@ -63,6 +63,57 @@ export function isTrivialProfile(profile: AgentProfile, commits: CommitEvidence[
   );
 }
 
+// Dispatch-marker lineage is a cross-profile fact (an orchestrator in one
+// workdir dispatches subagent runs in another), discovered once per report
+// and attached to the finished cards. Invariant: lineage is resolved against
+// the POST-filter profile set (only profiles that produced an agent card),
+// so every rendered DispatchRef's counterpart exists in the report — an edge
+// whose other end was filtered as trivial is dropped, never left dangling.
+// Fail-soft like every engram query: disabled or failing engram means no
+// links, never a broken report.
+function attachDispatchLineage(agents: AgentReport[], profiles: AgentProfile[], opts: BuildReportOptions): void {
+  const liveIds = new Set(agents.map((a) => a.profileId));
+  const liveProfiles = profiles.filter((p) => liveIds.has(p.profileId));
+  const dispatchLinks = discoverDispatchLinks(
+    liveProfiles.flatMap((p) => p.sessions.map((s) => ({ sessionId: s.sessionId, startedAt: s.startedAt }))),
+    opts.config.connectors.engram,
+    opts.engramExec,
+  );
+  if (dispatchLinks.length === 0) return;
+
+  // Session uuid → owning live profile, for naming the other end of a link.
+  const profileBySession = new Map<string, AgentProfile>();
+  for (const p of liveProfiles) for (const s of p.sessions) profileBySession.set(s.sessionId, p);
+  const dispatchRef = (sessionId: string): DispatchRef => {
+    const profile = profileBySession.get(sessionId);
+    return { sessionId, ...(profile ? { profile: profile.displayName } : {}) };
+  };
+
+  // Split the link list per profile once, up front — not re-filtered inside
+  // each agent. Optional + additive fields, absent when empty — like trends.
+  const linksByProfile = new Map<string, { dispatched: DispatchRef[]; dispatchedBy: DispatchRef[] }>();
+  const slot = (profileId: string) => {
+    let s = linksByProfile.get(profileId);
+    if (!s) {
+      s = { dispatched: [], dispatchedBy: [] };
+      linksByProfile.set(profileId, s);
+    }
+    return s;
+  };
+  for (const link of dispatchLinks) {
+    const parent = profileBySession.get(link.parentSessionId);
+    const child = profileBySession.get(link.childSessionId);
+    if (!parent || !child) continue; // links only ever join live sessions; keep the invariant local anyway
+    slot(parent.profileId).dispatched.push(dispatchRef(link.childSessionId));
+    slot(child.profileId).dispatchedBy.push(dispatchRef(link.parentSessionId));
+  }
+  for (const agent of agents) {
+    const links = linksByProfile.get(agent.profileId);
+    if (links?.dispatchedBy.length) agent.dispatchedBy = links.dispatchedBy;
+    if (links?.dispatched.length) agent.dispatched = links.dispatched;
+  }
+}
+
 export async function buildReport(opts: BuildReportOptions): Promise<Report> {
   const { since, now, config } = opts;
   const sessions = [
@@ -74,26 +125,6 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
       : []),
   ];
   const profiles = resolveProfiles(sessions);
-
-  // Dispatch-marker lineage is a cross-profile fact (an orchestrator in one
-  // workdir dispatches subagent runs in another), so it's discovered once per
-  // report — before the per-profile loop — and attached per profile below.
-  // Fail-soft like every engram query: disabled or failing engram means no
-  // links, never a broken report.
-  const dispatchLinks = discoverDispatchLinks(
-    profiles.flatMap((p) => p.sessions.map((s) => ({ sessionId: s.sessionId, startedAt: s.startedAt }))),
-    config.connectors.engram,
-    opts.engramExec,
-  );
-  // Session uuid → owning profile's display name, for naming the other end
-  // of a link. Covers every scanned profile, including ones later filtered
-  // as trivial (a trivial orchestrator still names who dispatched a card).
-  const profileBySession = new Map<string, string>();
-  for (const p of profiles) for (const s of p.sessions) profileBySession.set(s.sessionId, p.displayName);
-  const dispatchRef = (sessionId: string): DispatchRef => {
-    const profile = profileBySession.get(sessionId);
-    return { sessionId, ...(profile ? { profile } : {}) };
-  };
 
   type ProfileResult = { agent: AgentReport } | { trivial: string };
 
@@ -127,16 +158,6 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
         evidenceCitation = upgrade.citation;
       }
     }
-    // Lineage split per profile: links where one of this profile's sessions
-    // is the parent (dispatched) or the child (dispatchedBy). Optional +
-    // additive fields, absent when empty — like trends.
-    const own = new Set(profile.sessions.map((s) => s.sessionId));
-    const dispatched = dispatchLinks
-      .filter((l: DispatchLink) => own.has(l.parentSessionId))
-      .map((l) => dispatchRef(l.childSessionId));
-    const dispatchedBy = dispatchLinks
-      .filter((l: DispatchLink) => own.has(l.childSessionId))
-      .map((l) => dispatchRef(l.parentSessionId));
     const { narrative, source } = opts.useLlm
       ? await generateNarrative(facts, status, { model: config.model, apiKey: opts.apiKey, fetchFn: opts.fetchFn })
       : { narrative: templateNarrative(facts, status), source: "template" as const };
@@ -151,14 +172,14 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
         narrative,
         narrativeSource: source,
         commits,
-        ...(dispatchedBy.length ? { dispatchedBy } : {}),
-        ...(dispatched.length ? { dispatched } : {}),
       },
     };
   });
 
   const agents = results.flatMap((r) => ("agent" in r ? [r.agent] : []));
   const trivialProfiles = results.flatMap((r) => ("trivial" in r ? [r.trivial] : [])).sort();
+
+  attachDispatchLineage(agents, profiles, opts);
 
   agents.sort((a, b) =>
     SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || a.displayName.localeCompare(b.displayName));
