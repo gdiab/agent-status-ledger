@@ -19,6 +19,7 @@
 // counts when its code.edit events actually carry source.session_id == uuid.
 import type { EngramConfig } from "../config";
 import { makeSpawnExec, type Exec } from "../exec";
+import { redact } from "../redact";
 import type { RawSession } from "../types";
 
 const CODE_EDIT_FILTER = '"k":"code.edit"';
@@ -57,17 +58,42 @@ const MAX_SESSIONS_PER_PROFILE = 5;
 // any exec, so a hostile id can never become an engram CLI option.
 const SESSION_ID_SHAPE = /^[0-9a-fA-F][0-9a-fA-F-]{7,63}$/;
 
-// Citation strings end up in every consumer surface (JSON, markdown, html)
-// and are assembled partly from engram-reported file paths, which are
-// untrusted. Neutralize at assembly — control chars (incl. newlines, which
-// would let "#"/markdown structures start a line), DEL, and angle brackets
-// are stripped so the citation is inert before it reaches any renderer.
-// This deliberately does not depend on renderer-side escaping (asl-xis).
-const CITATION_UNSAFE = /[\x00-\x1f\x7f<>]/g;
+// Tape-sourced strings end up in every consumer surface (JSON, markdown,
+// html, digest, email) and are assembled from engram-reported content
+// (today: file paths; soon: quoted DIALOGUE), which is untrusted AND
+// unredacted — engram stores verbatim transcripts. Neutralize at ingestion —
+// control chars (incl. newlines, which would let "#"/markdown structures
+// start a line), DEL, and angle brackets are stripped so the text is inert
+// before it reaches any renderer. This deliberately does not depend on
+// renderer-side escaping (asl-xis).
+const TAPE_UNSAFE = /[\x00-\x1f\x7f<>]/g;
+
+// Branded string: proof a tape-sourced value went through sanitizeTapeText.
+// The symbol is declared but never exported/created, so the only way to
+// produce a SanitizedTapeText outside this module is the choke point below —
+// a future field that quotes tape dialogue into an ASL data structure can
+// declare this type and the compiler will reject raw engram output.
+declare const sanitizedTape: unique symbol;
+export type SanitizedTapeText = string & { readonly [sanitizedTape]: true };
+
+// THE redaction choke point for the Engram boundary (asl-a5v): every string
+// that originates in engram subprocess output must pass through here at the
+// point it is parsed into an ASL data structure — never at render time, so
+// no future render path can bypass it. Composes the shared secret-matching
+// rules from src/redact.ts (builtin + user extraPatterns — no new matching
+// logic here, per asl-2u3) with the tape-specific structural hardening
+// above. Strip runs BEFORE redact: a secret split by a control char would
+// otherwise slip past the redactor as two short fragments and be glued back
+// into a live key by the strip.
+export function sanitizeTapeText(s: string, extraPatterns: string[] = []): SanitizedTapeText {
+  return redact(s.replace(TAPE_UNSAFE, ""), extraPatterns) as SanitizedTapeText;
+}
 
 export interface UpgradeResult {
   matched: boolean;
-  citation?: string;
+  // Branded: constructing an UpgradeResult with a raw (unsanitized) string
+  // here is a compile error — see SanitizedTapeText above.
+  citation?: SanitizedTapeText;
 }
 
 // Every engram command prints two lines of config/db path info before the
@@ -134,6 +160,7 @@ export function upgradeEvidence(
   sessionUuid: string,
   binaryPath: string,
   exec: Exec,
+  extraPatterns: string[] = [],
 ): UpgradeResult {
   try {
     if (!SESSION_ID_SHAPE.test(sessionUuid)) return { matched: false };
@@ -161,8 +188,10 @@ export function upgradeEvidence(
       const more = files.length > MAX_CITED_FILES ? `, +${files.length - MAX_CITED_FILES} more` : "";
       return {
         matched: true,
-        citation: `engram session ${engramSid}: observed code edits to ${shown}${more}`
-          .replace(CITATION_UNSAFE, ""),
+        citation: sanitizeTapeText(
+          `engram session ${engramSid}: observed code edits to ${shown}${more}`,
+          extraPatterns,
+        ),
       };
     }
     return { matched: false };
@@ -180,6 +209,7 @@ export function corroborateSessions(
   sessions: RawSession[],
   cfg: EngramConfig,
   exec?: Exec,
+  extraPatterns: string[] = [],
 ): UpgradeResult {
   if (!cfg.enabled) return { matched: false };
   try {
@@ -188,7 +218,7 @@ export function corroborateSessions(
     const realExec = exec ?? makeSpawnExec(ENGRAM_TIMEOUT_MS);
     const newestFirst = [...sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
     for (const session of newestFirst.slice(0, MAX_SESSIONS_PER_PROFILE)) {
-      const result = upgradeEvidence(session.sessionId, cfg.binaryPath, realExec);
+      const result = upgradeEvidence(session.sessionId, cfg.binaryPath, realExec, extraPatterns);
       if (result.matched) return result;
     }
     return { matched: false };

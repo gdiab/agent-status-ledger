@@ -91,15 +91,18 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
     const facts = redactFacts(buildFactSheet(profile, commits), config.redactPatterns);
     // Optional evidence corroboration: only a claimed_only reading can be
     // upgraded — everything else engram-shaped (enabled switch, budgets,
-    // ordering, fail-soft boundary) lives in the connector. The citation is
-    // redacted at the model layer like commit subjects and facts above,
-    // since it is assembled from Engram-derived file paths.
+    // ordering, fail-soft boundary) lives in the connector. The citation
+    // arrives already sanitized (SanitizedTapeText): the redaction contract
+    // (asl-a5v) is enforced at the Engram parse boundary via
+    // sanitizeTapeText, which is why redactPatterns is threaded through —
+    // not re-applied here at the model layer.
     let evidenceCitation: string | undefined;
     if (evidence === "claimed_only") {
-      const upgrade = corroborateSessions(profile.sessions, config.connectors.engram, opts.engramExec);
+      const upgrade = corroborateSessions(
+        profile.sessions, config.connectors.engram, opts.engramExec, config.redactPatterns);
       if (upgrade.matched) {
         evidence = "partially_proven";
-        evidenceCitation = upgrade.citation ? redact(upgrade.citation, config.redactPatterns) : undefined;
+        evidenceCitation = upgrade.citation;
       }
     }
     const { narrative, source } = opts.useLlm
