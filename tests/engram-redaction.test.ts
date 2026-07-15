@@ -244,11 +244,16 @@ describe("redaction contract across all render surfaces", () => {
     expect(out).toContain("[REDACTED]");
   });
 
-  test("digest surface: secret absent", () => {
-    // The digest does not render citations today, so no [REDACTED] marker is
-    // expected — the contract here is pure absence, and it must keep holding
-    // if the digest ever grows a citation line.
+  test("digest surface renders no citation content at all", () => {
+    // The digest never renders evidenceCitation, so a secret-absence check
+    // alone is vacuous — it would pass for an UNREDACTED citation too. The
+    // honest invariant to pin is that the citation string as a whole never
+    // reaches digest output. If the digest ever starts rendering citations,
+    // this test must be replaced with a marker-presence test like the other
+    // surfaces (secret absent AND [REDACTED] present).
     const out = renderEmailDigest(report);
+    expect(upgrade.citation).toBeDefined();
+    expect(out).not.toContain(upgrade.citation!);
     expect(out).not.toContain(SECRET);
   });
 
