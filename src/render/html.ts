@@ -114,8 +114,11 @@ function cardBody(a: AgentReport): string {
     ...(a.dispatchedBy?.length
       ? [`<dt>Dispatched by</dt><dd class="dispatch">${esc(a.dispatchedBy.map(dispatchRefLabel).join(", "))}</dd>`]
       : []),
+    // dispatchTruncated: the lineage probe hit its candidate cap, so the
+    // dispatched list may be an undercount — say so instead of implying
+    // completeness.
     ...(a.dispatched?.length
-      ? [`<dt>Dispatched</dt><dd class="dispatch">${esc(`${plural(a.dispatched.length, "subagent run")}: ${a.dispatched.map(dispatchRefLabel).join(", ")}`)}</dd>`]
+      ? [`<dt>Dispatched</dt><dd class="dispatch">${esc(`${plural(a.dispatched.length, "subagent run")}: ${a.dispatched.map(dispatchRefLabel).join(", ")}${a.dispatchTruncated ? " (list may be incomplete)" : ""}`)}</dd>`]
       : []),
     // Corroboration from an enrichment connector (engram); absent = no row.
     // Distinct class: "evidence" is the badge span on every card, so the

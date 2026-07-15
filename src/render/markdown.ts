@@ -36,8 +36,11 @@ function agentSection(a: AgentReport): string {
     ...(a.dispatchedBy?.length
       ? [`- Dispatched by: ${a.dispatchedBy.map((r) => mdEscape(dispatchRefLabel(r))).join(", ")}`]
       : []),
+    // dispatchTruncated: the lineage probe hit its candidate cap, so the
+    // dispatched list may be an undercount — say so instead of implying
+    // completeness.
     ...(a.dispatched?.length
-      ? [`- Dispatched ${plural(a.dispatched.length, "subagent run")}: ${a.dispatched.map((r) => mdEscape(dispatchRefLabel(r))).join(", ")}`]
+      ? [`- Dispatched ${plural(a.dispatched.length, "subagent run")}: ${a.dispatched.map((r) => mdEscape(dispatchRefLabel(r))).join(", ")}${a.dispatchTruncated ? " (list may be incomplete)" : ""}`]
       : []),
     "",
     `**Worked on:** ${mdText(a.narrative.workedOn)}`,

@@ -487,6 +487,90 @@ describe("buildReport", () => {
     const orch2 = trivialChild.agents.find((a) => a.workdir === "/work/orch")!;
     expect(orch2.dispatched).toBeUndefined();
   });
+
+  // Product honesty: when the lineage probe hit its candidate cap for a
+  // parent, that parent's card carries dispatchTruncated so renderers can
+  // say "list may be incomplete" instead of presenting a partial list as
+  // the whole truth.
+  test("dispatchTruncated lands on the truncated parent's card, and only there", async () => {
+    const ORCH = "aaaa0000-0000-4000-8000-00000000000a";
+    const SUB = "bbbb0000-0000-4000-8000-00000000000b";
+    const CHILD_TAPE = "2222222222222222222222222222222222222222222222222222222222222222";
+    // 8 candidate tapes > the 6-candidate lineage cap → ORCH is truncated
+    const NOISE_TAPES = Array.from({ length: 7 }, (_, i) => String(i + 3).repeat(64));
+
+    const world = mkdtempSync(join(tmpdir(), "asl-report-"));
+    const ccRoot = join(world, "claude-projects");
+    const mkSession = (dirName: string, cwd: string, sessionId: string) => {
+      const dir = join(ccRoot, dirName);
+      mkdirSync(dir, { recursive: true });
+      const f = join(dir, "s.jsonl");
+      writeFileSync(f, [
+        JSON.stringify({
+          type: "user", timestamp: "2026-07-07T12:00:00.000Z", cwd,
+          sessionId, message: { role: "user", content: "task" },
+        }),
+        JSON.stringify({
+          type: "assistant", timestamp: "2026-07-07T12:05:00.000Z", cwd,
+          sessionId, message: { role: "assistant", content: "done" },
+        }),
+      ].join("\n") + "\n");
+      utimesSync(f, MTIME, MTIME);
+    };
+    mkSession("-work-orch", "/work/orch", ORCH);
+    mkSession("-work-sub", "/work/sub", SUB);
+
+    const config = defaultConfig();
+    config.connectors.claudeCode.rootDir = ccRoot;
+    config.connectors.codex.enabled = false;
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+
+    const exec: Exec = (argv) => {
+      if (argv[1] === "grep" && argv[2] === ORCH) {
+        return {
+          ok: true,
+          stdout: JSON.stringify({
+            sessions: [CHILD_TAPE, ...NOISE_TAPES].map((session_id) => ({ session_id, confidence: 325.0 })),
+          }),
+          stderr: "",
+        };
+      }
+      if (argv[1] === "peek" && argv[2] === CHILD_TAPE) {
+        return {
+          ok: true,
+          stdout: JSON.stringify({
+            session: {
+              content: [{
+                line: 1,
+                text: JSON.stringify({
+                  k: "msg.in", role: "user",
+                  content: `<engram-src id="${ORCH}"/> implement the thing`,
+                  source: { harness: "claude-code", session_id: SUB },
+                  t: "2026-07-07T12:00:01.000Z",
+                }),
+              }],
+            },
+          }),
+          stderr: "",
+        };
+      }
+      if (argv[1] === "peek") {
+        return { ok: true, stdout: JSON.stringify({ session: { content: [] } }), stderr: "" };
+      }
+      return { ok: true, stdout: JSON.stringify({ error: "no_results" }), stderr: "" };
+    };
+
+    const report = await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: exec });
+    const orch = report.agents.find((a) => a.workdir === "/work/orch")!;
+    const sub = report.agents.find((a) => a.workdir === "/work/sub")!;
+    expect(orch.dispatched).toEqual([{ sessionId: SUB, profile: "sub (claude-code)" }]);
+    expect(orch.dispatchTruncated).toBe(true);
+    expect(sub.dispatchTruncated).toBeUndefined();
+
+    const { renderMarkdown } = await import("../src/render/markdown");
+    const md = renderMarkdown(report);
+    expect(md).toContain("- Dispatched 1 subagent run: sub (claude-code) (session bbbb0000) (list may be incomplete)");
+  });
 });
 
 function sess(over: Partial<RawSession>): RawSession {

@@ -128,6 +128,13 @@ export interface AgentReport {
   // stays 1 (same contract as trends above).
   dispatchedBy?: DispatchRef[];
   dispatched?: DispatchRef[];
+  // True when the engram lineage probe hit its per-parent candidate cap for
+  // this profile's sessions, so `dispatched` may be an undercount (the walk
+  // could not peek every candidate tape). Renderers append "(list may be
+  // incomplete)" to the dispatched line — grounded language over false
+  // completeness. Additive + optional, absent when the walk was exhaustive —
+  // schemaVersion stays 1 (same contract as trends above).
+  dispatchTruncated?: true;
 }
 
 export interface Report {

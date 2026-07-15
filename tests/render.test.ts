@@ -155,6 +155,36 @@ describe("renderers", () => {
     }
   });
 
+  test("markdown+html: dispatchTruncated appends the incomplete-list suffix to the dispatched line only when set", () => {
+    const dispatched = [{ sessionId: "bbbb0000-0000-4000-8000-00000000000b", profile: "sub (claude-code)" }];
+    const truncated = agent({ dispatched, dispatchTruncated: true });
+    const complete = agent({ dispatched });
+
+    const mdTruncated = renderMarkdown({ ...report, agents: [truncated], exceptions: [] });
+    expect(mdTruncated).toContain("- Dispatched 1 subagent run: sub (claude-code) (session bbbb0000) (list may be incomplete)");
+    const mdComplete = renderMarkdown({ ...report, agents: [complete], exceptions: [] });
+    expect(mdComplete).toContain("- Dispatched 1 subagent run: sub (claude-code) (session bbbb0000)");
+    expect(mdComplete).not.toContain("list may be incomplete");
+
+    for (const layout of ["cards", "flat"] as const) {
+      const htmlTruncated = renderHtml({ ...report, agents: [truncated], exceptions: [] }, { layout });
+      expect(htmlTruncated).toContain(`<dt>Dispatched</dt><dd class="dispatch">1 subagent run: sub (claude-code) (session bbbb0000) (list may be incomplete)</dd>`);
+      const htmlComplete = renderHtml({ ...report, agents: [complete], exceptions: [] }, { layout });
+      expect(htmlComplete).not.toContain("list may be incomplete");
+    }
+  });
+
+  test("json: dispatchTruncated rides the agent natively", () => {
+    const a = agent({
+      dispatched: [{ sessionId: "bbbb0000-0000-4000-8000-00000000000b", profile: "sub (claude-code)" }],
+      dispatchTruncated: true,
+    });
+    const parsed = JSON.parse(renderJson({ ...report, agents: [a], exceptions: [] }));
+    expect(parsed.agents[0].dispatchTruncated).toBe(true);
+    const plain = JSON.parse(renderJson(report));
+    expect(plain.agents[0].dispatchTruncated).toBeUndefined();
+  });
+
   test("html: a hostile profile name in a dispatch ref is escaped", () => {
     const a = agent({
       dispatchedBy: [{ sessionId: "aaaa0000-0000-4000-8000-00000000000a", profile: `<img src=x onerror=alert(1)> (codex)` }],

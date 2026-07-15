@@ -46,9 +46,11 @@ export const ENGRAM_TIMEOUT_MS = 5_000;
 //   silently reported at most 2 of a 4-subagent fan-out. A parent-uuid grep
 //   ranks real dispatch tapes high, so 6 covers realistic fan-out (parent
 //   tape + 5 children) without an unbounded probe. When grep returns more
-//   candidates than this cap, the walk reports truncation via its internal
-//   `meta.truncated` flag (see grepPeekCandidates) — partial lineage is
-//   explicit in code, not silent, though no report field carries it yet.
+//   candidates than this cap, the walk flags truncation (see
+//   grepPeekCandidates' `meta.truncated`), discoverDispatchLinks reports
+//   the affected parents in `truncatedParents`, and report.ts surfaces it
+//   as AgentReport.dispatchTruncated — rendered as "(list may be
+//   incomplete)" so partial lineage is never presented as the whole truth.
 // - MAX_SESSIONS_PER_PROFILE (evidence upgrade): sessions are tried
 //   newest-first (recent sessions are the ones most likely to be in the
 //   index and most relevant to today's report).
@@ -244,7 +246,9 @@ function* tapeEvents(
 // uuid, failed exec, malformed JSON, hostile tape id) is a silent skip —
 // the fail-soft boundary lives in the entry points, not here.
 // `meta.truncated` reports when grep returned more candidates than the cap
-// allowed probing — internal partial-results flag, not a report field.
+// allowed probing — the partial-results signal lineage callers propagate
+// up to the report (evidence-upgrade callers don't pass meta and treat a
+// truncated walk as an ordinary miss).
 function* grepPeekCandidates(
   sessionUuid: string,
   binaryPath: string,
@@ -434,21 +438,21 @@ export interface LineageSession {
 // Sessions dispatched BY `parentUuid`, resolved against the report's own
 // session set (grep parent uuid, peek each candidate tape, keep sessions
 // whose own inbound-message event carries the marker — see the pipeline
-// comment above for the same-event correlation rule). Never throws.
+// comment above for the same-event correlation rule). `truncated` is true
+// when grep found more candidate tapes than MAX_LINEAGE_CANDIDATES allowed
+// peeking, i.e. `children` may be an undercount — surfaced so the report
+// can say "list may be incomplete" rather than dropping the fact. Never
+// throws.
 export function findDispatchedSessions(
   parentUuid: string,
   knownSessionIds: ReadonlySet<string>,
   binaryPath: string,
   exec: Exec,
-): string[] {
+): { children: string[]; truncated: boolean } {
   try {
-    if (!SESSION_ID_SHAPE.test(parentUuid)) return [];
+    if (!SESSION_ID_SHAPE.test(parentUuid)) return { children: [], truncated: false };
     const marker = markerPrefixPattern(parentUuid);
     const children = new Set<string>();
-    // Internal partial-results flag: true when grep found more candidate
-    // tapes than MAX_LINEAGE_CANDIDATES allowed peeking, i.e. the returned
-    // children may be an undercount. Not yet surfaced in the report schema;
-    // kept explicit here so truncation is a stated fact, not a silent drop.
     const meta = { truncated: false };
     for (const { response } of grepPeekCandidates(
       parentUuid, binaryPath, exec, parentUuid, MAX_LINEAGE_CANDIDATES, meta,
@@ -465,11 +469,22 @@ export function findDispatchedSessions(
         if (sid !== parentUuid && knownSessionIds.has(sid)) children.add(sid);
       }
     }
-    return [...children].sort();
+    return { children: [...children].sort(), truncated: meta.truncated };
   } catch {
-    return [];
+    return { children: [], truncated: false };
   }
 }
+
+// What the lineage walk hands back to report generation: the discovered
+// edges, plus the parents whose candidate walk was truncated (their
+// `dispatched` list may be an undercount — report.ts turns each into
+// AgentReport.dispatchTruncated on the owning profile's card).
+export interface DispatchDiscovery {
+  links: DispatchLink[];
+  truncatedParents: string[]; // parent session uuids, in probe order
+}
+
+const EMPTY_DISCOVERY: DispatchDiscovery = { links: [], truncatedParents: [] };
 
 // The lineage entry point for report generation: owns the enabled switch,
 // the newest-first ordering, the report-wide probe budget, the default real
@@ -480,8 +495,8 @@ export function discoverDispatchLinks(
   sessions: LineageSession[],
   cfg: EngramConfig,
   exec?: Exec,
-): DispatchLink[] {
-  if (!cfg.enabled) return [];
+): DispatchDiscovery {
+  if (!cfg.enabled) return EMPTY_DISCOVERY;
   try {
     const knownIds = new Set(
       sessions.map((s) => s.sessionId).filter((id) => SESSION_ID_SHAPE.test(id)),
@@ -489,21 +504,24 @@ export function discoverDispatchLinks(
     // A link joins two known sessions, so a report with fewer than two can
     // never produce one — return before spending any of the subprocess
     // budget proving it.
-    if (knownIds.size < 2) return [];
+    if (knownIds.size < 2) return EMPTY_DISCOVERY;
     const realExec = exec ?? makeSpawnExec(ENGRAM_TIMEOUT_MS);
     const newestFirst = [...sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
     const links: DispatchLink[] = [];
+    const truncatedParents: string[] = [];
     const seen = new Set<string>();
     for (const session of newestFirst.slice(0, MAX_LINEAGE_SESSIONS)) {
-      for (const child of findDispatchedSessions(session.sessionId, knownIds, cfg.binaryPath, realExec)) {
+      const { children, truncated } = findDispatchedSessions(session.sessionId, knownIds, cfg.binaryPath, realExec);
+      if (truncated) truncatedParents.push(session.sessionId);
+      for (const child of children) {
         const key = `${session.sessionId} ${child}`;
         if (seen.has(key)) continue;
         seen.add(key);
         links.push({ parentSessionId: session.sessionId, childSessionId: child });
       }
     }
-    return links;
+    return { links, truncatedParents };
   } catch {
-    return [];
+    return EMPTY_DISCOVERY;
   }
 }
