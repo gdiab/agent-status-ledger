@@ -1,5 +1,5 @@
 import type { Config } from "./config";
-import type { AgentProfile, AgentReport, CommitEvidence, Report } from "./types";
+import type { AgentProfile, AgentReport, CommitEvidence, DispatchRef, Report } from "./types";
 import { scanClaudeCode } from "./connectors/claude-code";
 import { scanCodex } from "./connectors/codex";
 import { resolveProfiles } from "./resolver";
@@ -7,7 +7,7 @@ import { attributeCommits, listCommits } from "./git";
 import { EXCEPTION_STATUSES, inferStatus } from "./status";
 import { buildFactSheet, generateNarrative, templateNarrative } from "./narrative";
 import { redact, redactFacts } from "./redact";
-import { corroborateSessions } from "./connectors/engram";
+import { corroborateSessions, discoverDispatchLinks, type DispatchLink } from "./connectors/engram";
 import type { Exec } from "./exec";
 
 export interface BuildReportOptions {
@@ -75,6 +75,26 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
   ];
   const profiles = resolveProfiles(sessions);
 
+  // Dispatch-marker lineage is a cross-profile fact (an orchestrator in one
+  // workdir dispatches subagent runs in another), so it's discovered once per
+  // report — before the per-profile loop — and attached per profile below.
+  // Fail-soft like every engram query: disabled or failing engram means no
+  // links, never a broken report.
+  const dispatchLinks = discoverDispatchLinks(
+    profiles.flatMap((p) => p.sessions.map((s) => ({ sessionId: s.sessionId, startedAt: s.startedAt }))),
+    config.connectors.engram,
+    opts.engramExec,
+  );
+  // Session uuid → owning profile's display name, for naming the other end
+  // of a link. Covers every scanned profile, including ones later filtered
+  // as trivial (a trivial orchestrator still names who dispatched a card).
+  const profileBySession = new Map<string, string>();
+  for (const p of profiles) for (const s of p.sessions) profileBySession.set(s.sessionId, p.displayName);
+  const dispatchRef = (sessionId: string): DispatchRef => {
+    const profile = profileBySession.get(sessionId);
+    return { sessionId, ...(profile ? { profile } : {}) };
+  };
+
   type ProfileResult = { agent: AgentReport } | { trivial: string };
 
   const results = await mapLimit<AgentProfile, ProfileResult>(profiles, PROFILE_CONCURRENCY, async (profile) => {
@@ -107,6 +127,16 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
         evidenceCitation = upgrade.citation;
       }
     }
+    // Lineage split per profile: links where one of this profile's sessions
+    // is the parent (dispatched) or the child (dispatchedBy). Optional +
+    // additive fields, absent when empty — like trends.
+    const own = new Set(profile.sessions.map((s) => s.sessionId));
+    const dispatched = dispatchLinks
+      .filter((l: DispatchLink) => own.has(l.parentSessionId))
+      .map((l) => dispatchRef(l.childSessionId));
+    const dispatchedBy = dispatchLinks
+      .filter((l: DispatchLink) => own.has(l.childSessionId))
+      .map((l) => dispatchRef(l.parentSessionId));
     const { narrative, source } = opts.useLlm
       ? await generateNarrative(facts, status, { model: config.model, apiKey: opts.apiKey, fetchFn: opts.fetchFn })
       : { narrative: templateNarrative(facts, status), source: "template" as const };
@@ -121,6 +151,8 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
         narrative,
         narrativeSource: source,
         commits,
+        ...(dispatchedBy.length ? { dispatchedBy } : {}),
+        ...(dispatched.length ? { dispatched } : {}),
       },
     };
   });

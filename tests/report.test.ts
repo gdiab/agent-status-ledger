@@ -191,8 +191,14 @@ describe("buildReport", () => {
     };
     await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: spy });
     // Newest first: recent sessions are the ones most likely to be in the
-    // index and most relevant to today's report.
-    expect(grepped).toEqual(["bbbb0000-0000-4000-8000-00000000000b", "aaaa0000-0000-4000-8000-00000000000a"]);
+    // index and most relevant to today's report. Two engram passes share the
+    // seam and both order newest-first: the report-wide dispatch-lineage
+    // probe (before the per-profile loop), then the per-profile evidence
+    // upgrade.
+    expect(grepped).toEqual([
+      "bbbb0000-0000-4000-8000-00000000000b", "aaaa0000-0000-4000-8000-00000000000a", // lineage
+      "bbbb0000-0000-4000-8000-00000000000b", "aaaa0000-0000-4000-8000-00000000000a", // evidence
+    ]);
   });
 
   // End-to-end through the real pipeline: a session with no file edits and no
@@ -274,6 +280,98 @@ describe("buildReport", () => {
     expect(agent3.evidence).toBe("partially_proven");
     expect(agent3.evidenceCitation).toContain("[REDACTED]");
     expect(agent3.evidenceCitation).not.toContain("app.ts");
+  });
+
+  // End-to-end acceptance for asl-69s: two sessions linked by an engram
+  // dispatch marker end up cross-referenced in the report — the orchestrator
+  // card says what it dispatched, the subagent card says who dispatched it,
+  // and both renderers show the relationship.
+  test("dispatch-marker lineage cross-references orchestrator and subagent profiles in the report and renders", async () => {
+    const ORCH = "aaaa0000-0000-4000-8000-00000000000a";
+    const SUB = "bbbb0000-0000-4000-8000-00000000000b";
+    const CHILD_TAPE = "2222222222222222222222222222222222222222222222222222222222222222";
+
+    const world = mkdtempSync(join(tmpdir(), "asl-report-"));
+    const ccRoot = join(world, "claude-projects");
+    const mkSession = (dirName: string, cwd: string, sessionId: string) => {
+      const dir = join(ccRoot, dirName);
+      mkdirSync(dir, { recursive: true });
+      const f = join(dir, "s.jsonl");
+      writeFileSync(f, [
+        JSON.stringify({
+          type: "user", timestamp: "2026-07-07T12:00:00.000Z", cwd,
+          sessionId, message: { role: "user", content: "task" },
+        }),
+        JSON.stringify({
+          type: "assistant", timestamp: "2026-07-07T12:05:00.000Z", cwd,
+          sessionId, message: { role: "assistant", content: "done" },
+        }),
+      ].join("\n") + "\n");
+      utimesSync(f, MTIME, MTIME);
+    };
+    mkSession("-work-orch", "/work/orch", ORCH);
+    mkSession("-work-sub", "/work/sub", SUB);
+
+    const config = defaultConfig();
+    config.connectors.claudeCode.rootDir = ccRoot;
+    config.connectors.codex.enabled = false;
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+
+    // Engram CLI double: grep on the orchestrator uuid finds the subagent's
+    // tape; peeking that tape returns the subagent's first user message,
+    // whose raw tape line carries the dispatch marker (quotes JSON-escaped,
+    // as the real CLI returns them) and the subagent's source.session_id.
+    const exec: Exec = (argv) => {
+      if (argv[1] === "grep" && argv[2] === ORCH) {
+        return {
+          ok: true,
+          stdout: JSON.stringify({ sessions: [{ session_id: CHILD_TAPE, confidence: 325.0 }] }),
+          stderr: "",
+        };
+      }
+      if (argv[1] === "peek" && argv[2] === CHILD_TAPE) {
+        return {
+          ok: true,
+          stdout: JSON.stringify({
+            session: {
+              content: [{
+                line: 1,
+                text: JSON.stringify({
+                  k: "msg.in", role: "user",
+                  content: `<engram-src id="${ORCH}"/> implement the thing`,
+                  source: { harness: "claude-code", session_id: SUB },
+                  t: "2026-07-07T12:00:01.000Z",
+                }),
+              }],
+            },
+          }),
+          stderr: "",
+        };
+      }
+      return { ok: true, stdout: JSON.stringify({ error: "no_results" }), stderr: "" };
+    };
+
+    const report = await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: exec });
+    const orch = report.agents.find((a) => a.workdir === "/work/orch")!;
+    const sub = report.agents.find((a) => a.workdir === "/work/sub")!;
+
+    expect(orch.dispatched).toEqual([{ sessionId: SUB, profile: "sub (claude-code)" }]);
+    expect(orch.dispatchedBy).toBeUndefined();
+    expect(sub.dispatchedBy).toEqual([{ sessionId: ORCH, profile: "orch (claude-code)" }]);
+    expect(sub.dispatched).toBeUndefined();
+
+    // The relationship is visible in the rendered surfaces.
+    const { renderMarkdown } = await import("../src/render/markdown");
+    const { renderHtml } = await import("../src/render/html");
+    const { renderJson } = await import("../src/render/json");
+    const md = renderMarkdown(report);
+    expect(md).toContain("- Dispatched 1 subagent run: sub (claude-code) (session bbbb0000)");
+    expect(md).toContain("- Dispatched by: orch (claude-code) (session aaaa0000)");
+    const html = renderHtml(report);
+    expect(html).toContain(`<dt>Dispatched</dt><dd class="dispatch">1 subagent run: sub (claude-code) (session bbbb0000)</dd>`);
+    expect(html).toContain(`<dt>Dispatched by</dt><dd class="dispatch">orch (claude-code) (session aaaa0000)</dd>`);
+    expect(JSON.parse(renderJson(report)).agents.some(
+      (a: { dispatched?: unknown[] }) => Array.isArray(a.dispatched))).toBe(true);
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { corroborateSessions, upgradeEvidence } from "../src/connectors/engram";
+import { corroborateSessions, discoverDispatchLinks, upgradeEvidence } from "../src/connectors/engram";
 import type { Exec } from "../src/exec";
 import {
   BIN, ENGRAM_SID, UUID,
@@ -330,5 +330,231 @@ describe("corroborateSessions", () => {
       { redactPatterns: [] },
     );
     expect(r.matched).toBe(false);
+  });
+});
+
+// Dispatch-marker lineage: an orchestrator prepends `<engram-src id="<its
+// own session uuid>"/>` to each dispatch prompt, so the marker text lands
+// verbatim in the subagent's transcript. The connector greps the parent's
+// uuid, peeks the candidate tapes, and links parent → child when a tape
+// carries the marker AND its events belong to another known report session.
+describe("discoverDispatchLinks", () => {
+  const enabled = { enabled: true, binaryPath: BIN };
+  const disabled = { enabled: false, binaryPath: BIN };
+
+  const ORCH = "aaaa0000-0000-4000-8000-00000000000a"; // orchestrator (parent)
+  const SUB = "bbbb0000-0000-4000-8000-00000000000b"; // subagent (child)
+  const PARENT_TAPE = "1111111111111111111111111111111111111111111111111111111111111111";
+  const CHILD_TAPE = "2222222222222222222222222222222222222222222222222222222222222222";
+
+  function lineageSession(sessionId: string, startedAt = "2026-07-07T12:00:00.000Z") {
+    return { sessionId, startedAt };
+  }
+
+  // The subagent's tape: its first user message carries the dispatch marker
+  // (quotes JSON-escaped inside the raw tape line, as peek returns them),
+  // and every event carries the subagent's own source.session_id block.
+  function markerEvent(markerUuid: string, ownerUuid: string): unknown {
+    return {
+      k: "msg.in",
+      role: "user",
+      content: `<engram-src id="${markerUuid}"/> implement the thing`,
+      source: { harness: "claude-code", session_id: ownerUuid },
+      t: "2026-07-14T13:00:00.000Z",
+    };
+  }
+
+  // The orchestrator's own tape: the marker sits inside a toolCall payload
+  // and all events carry the orchestrator's source.session_id — it must
+  // never self-link.
+  function sentMarkerEvent(markerUuid: string, ownerUuid: string): unknown {
+    return {
+      k: "msg.out",
+      role: "assistant",
+      content: [{ type: "toolCall", arguments: { prompt: `<engram-src id="${markerUuid}"/> do work` } }],
+      source: { harness: "claude-code", session_id: ownerUuid },
+      t: "2026-07-14T12:59:00.000Z",
+    };
+  }
+
+  const realisticExec: Exec = (argv) => {
+    if (argv[1] === "grep" && argv[2] === ORCH) {
+      return { ok: true, stdout: grepResponse([PARENT_TAPE, CHILD_TAPE]), stderr: "" };
+    }
+    if (argv[1] === "grep") return { ok: true, stdout: cliStdout({ error: "no_results" }), stderr: "" };
+    if (argv[1] === "peek" && argv[2] === PARENT_TAPE) {
+      return { ok: true, stdout: peekResponse([sentMarkerEvent(ORCH, ORCH)]), stderr: "" };
+    }
+    if (argv[1] === "peek" && argv[2] === CHILD_TAPE) {
+      return {
+        ok: true,
+        stdout: peekResponse([markerEvent(ORCH, SUB), editEvent("/repo/src/x.ts", SUB)]),
+        stderr: "",
+      };
+    }
+    return { ok: true, stdout: cliStdout({ error: "session_not_found" }), stderr: "" };
+  };
+
+  test("returns no links without calling exec when the connector is disabled", () => {
+    let calls = 0;
+    const spy: Exec = () => {
+      calls++;
+      return { ok: true, stdout: "", stderr: "" };
+    };
+    const links = discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], disabled, spy);
+    expect(links).toEqual([]);
+    expect(calls).toBe(0);
+  });
+
+  test("links parent to child when the child tape carries the parent's dispatch marker", () => {
+    const links = discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, realisticExec);
+    expect(links).toEqual([{ parentSessionId: ORCH, childSessionId: SUB }]);
+  });
+
+  test("issues the exact grep and peek argv shapes (peek filtered by the parent uuid)", () => {
+    const calls: string[][] = [];
+    const exec: Exec = (argv) => {
+      calls.push(argv);
+      return realisticExec(argv);
+    };
+    discoverDispatchLinks([lineageSession(ORCH)], enabled, exec);
+    expect(calls[0]).toEqual([BIN, "grep", ORCH]);
+    expect(calls[1]).toEqual([BIN, "peek", PARENT_TAPE, "--grep-filter", ORCH]);
+    expect(calls[2]).toEqual([BIN, "peek", CHILD_TAPE, "--grep-filter", ORCH]);
+  });
+
+  test("no link when grep finds nothing, errors, or returns malformed JSON", () => {
+    const noResults = execOk(cliStdout({ error: "no_results" }));
+    expect(discoverDispatchLinks([lineageSession(ORCH)], enabled, noResults)).toEqual([]);
+
+    const malformed = execOk("config: /x\ndb: /y\nnot valid json{{{");
+    expect(discoverDispatchLinks([lineageSession(ORCH)], enabled, malformed)).toEqual([]);
+
+    expect(discoverDispatchLinks([lineageSession(ORCH)], enabled, execFail)).toEqual([]);
+  });
+
+  test("a timed-out engram call (ok:false, empty stdout) degrades to no links", () => {
+    const timedOut: Exec = () => ({ ok: false, stdout: "", stderr: "" });
+    expect(discoverDispatchLinks([lineageSession(ORCH)], enabled, timedOut)).toEqual([]);
+  });
+
+  test("never throws even if exec itself throws", () => {
+    const throwingExec: Exec = () => {
+      throw new Error("boom");
+    };
+    expect(discoverDispatchLinks([lineageSession(ORCH)], enabled, throwingExec)).toEqual([]);
+  });
+
+  test("no link when the marker is present but the tape's events belong to no other known session", () => {
+    // e.g. the dispatched agent's transcript isn't in today's report window:
+    // the tape carries the marker, but its session_id is unknown to ASL.
+    const exec = twoStepExec(grepResponse([CHILD_TAPE]), {
+      [CHILD_TAPE]: peekResponse([markerEvent(ORCH, "cccc0000-0000-4000-8000-00000000000c")]),
+    });
+    expect(discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, exec)).toEqual([]);
+  });
+
+  test("no link when another session's events appear without the dispatch marker (mention-only guard)", () => {
+    // A tape that merely mentions the parent uuid (no <engram-src .../>)
+    // must not be read as a dispatch.
+    const exec = twoStepExec(grepResponse([CHILD_TAPE]), {
+      [CHILD_TAPE]: peekResponse([editEvent("/repo/src/x.ts", SUB)]),
+    });
+    expect(discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, exec)).toEqual([]);
+  });
+
+  test("the orchestrator's own tape never produces a self-link", () => {
+    const exec = twoStepExec(grepResponse([PARENT_TAPE]), {
+      [PARENT_TAPE]: peekResponse([sentMarkerEvent(ORCH, ORCH)]),
+    });
+    expect(discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, exec)).toEqual([]);
+  });
+
+  test("duplicate discoveries collapse to one link", () => {
+    // Marker and child events repeated across several lines and both tapes.
+    const exec: Exec = (argv) => {
+      if (argv[1] === "grep" && argv[2] === ORCH) {
+        return { ok: true, stdout: grepResponse([PARENT_TAPE, CHILD_TAPE]), stderr: "" };
+      }
+      if (argv[1] === "grep") return { ok: true, stdout: cliStdout({ error: "no_results" }), stderr: "" };
+      return {
+        ok: true,
+        stdout: peekResponse([markerEvent(ORCH, SUB), markerEvent(ORCH, SUB), editEvent("/x.ts", SUB)]),
+        stderr: "",
+      };
+    };
+    const links = discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, exec);
+    expect(links).toEqual([{ parentSessionId: ORCH, childSessionId: SUB }]);
+  });
+
+  test("rejects hostile or malformed session ids without ever putting them in an argv", () => {
+    const argvSeen: string[] = [];
+    const spy: Exec = (argv) => {
+      argvSeen.push(...argv.slice(2));
+      return { ok: true, stdout: cliStdout({ error: "no_results" }), stderr: "" };
+    };
+    const hostiles = ["--help", "$(rm -rf /)", "", "--------", "-deadbeef0", "a".repeat(65)];
+    discoverDispatchLinks(
+      [...hostiles.map((h) => lineageSession(h)), lineageSession(ORCH)],
+      enabled,
+      spy,
+    );
+    for (const h of hostiles) expect(argvSeen).not.toContain(h);
+    expect(argvSeen).toContain(ORCH);
+  });
+
+  test("rejects hostile tape ids from grep output without calling peek", () => {
+    const peeked: string[] = [];
+    const exec: Exec = (argv) => {
+      if (argv[1] === "grep") {
+        return argv[2] === ORCH
+          ? { ok: true, stdout: grepResponse(["--------", "not hex!", CHILD_TAPE]), stderr: "" }
+          : { ok: true, stdout: cliStdout({ error: "no_results" }), stderr: "" };
+      }
+      peeked.push(argv[2]!);
+      return { ok: true, stdout: peekResponse([markerEvent(ORCH, SUB)]), stderr: "" };
+    };
+    const links = discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, exec);
+    expect(peeked).toEqual([CHILD_TAPE]);
+    expect(links).toEqual([{ parentSessionId: ORCH, childSessionId: SUB }]);
+  });
+
+  test("probes sessions newest-first and stops at the report-wide budget of 10", () => {
+    const grepped: string[] = [];
+    const spy: Exec = (argv) => {
+      if (argv[1] === "grep") grepped.push(argv[2]!);
+      return { ok: true, stdout: cliStdout({ error: "no_results" }), stderr: "" };
+    };
+    const sessions = Array.from({ length: 12 }, (_, i) =>
+      lineageSession(`aaaa00${String(i).padStart(2, "0")}`, `2026-07-07T${String(i + 1).padStart(2, "0")}:00:00.000Z`));
+    discoverDispatchLinks(sessions, enabled, spy);
+    expect(grepped.length).toBe(10);
+    expect(grepped[0]).toBe("aaaa0011"); // newest first
+    expect(grepped[9]).toBe("aaaa0002");
+  });
+
+  test("peeks at most 3 grep candidates per probed session", () => {
+    const tapes = ["cafe0001", "cafe0002", "cafe0003", "cafe0004", "cafe0005"];
+    const peeked: string[] = [];
+    const exec: Exec = (argv) => {
+      if (argv[1] === "grep") return { ok: true, stdout: grepResponse(tapes), stderr: "" };
+      peeked.push(argv[2]!);
+      return { ok: true, stdout: peekResponse([]), stderr: "" };
+    };
+    discoverDispatchLinks([lineageSession(ORCH)], enabled, exec);
+    expect(peeked).toEqual(["cafe0001", "cafe0002", "cafe0003"]);
+  });
+
+  test("a failing peek on one candidate doesn't stop the next candidate from linking", () => {
+    const exec: Exec = (argv) => {
+      if (argv[1] === "grep" && argv[2] === ORCH) {
+        return { ok: true, stdout: grepResponse([PARENT_TAPE, CHILD_TAPE]), stderr: "" };
+      }
+      if (argv[1] === "grep") return { ok: true, stdout: cliStdout({ error: "no_results" }), stderr: "" };
+      if (argv[2] === PARENT_TAPE) return { ok: false, stdout: "", stderr: "boom" };
+      return { ok: true, stdout: peekResponse([markerEvent(ORCH, SUB)]), stderr: "" };
+    };
+    const links = discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, exec);
+    expect(links).toEqual([{ parentSessionId: ORCH, childSessionId: SUB }]);
   });
 });

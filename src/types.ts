@@ -89,6 +89,15 @@ export interface Narrative {
   standup: string;          // 2–4 sentences, first person, the agent speaking at standup
 }
 
+// One end of an orchestrator → subagent dispatch-marker link discovered by
+// the Engram connector (src/connectors/engram.ts, discoverDispatchLinks):
+// the other party's harness session uuid, plus its profile display name when
+// that session belongs to a profile in this report window.
+export interface DispatchRef {
+  sessionId: string;
+  profile?: string;
+}
+
 export interface AgentReport {
   profileId: string;
   displayName: string;
@@ -112,6 +121,13 @@ export interface AgentReport {
   // Additive + optional, absent when empty or when no history exists —
   // schemaVersion stays 1 (same contract as Report.trivialProfiles).
   trends?: string[];
+  // Engram dispatch-marker lineage (src/connectors/engram.ts): sessions of
+  // this profile that were dispatched by another session's `<engram-src/>`
+  // marker (dispatchedBy) and sessions this profile's runs dispatched
+  // (dispatched). Additive + optional, absent when empty — schemaVersion
+  // stays 1 (same contract as trends above).
+  dispatchedBy?: DispatchRef[];
+  dispatched?: DispatchRef[];
 }
 
 export interface Report {

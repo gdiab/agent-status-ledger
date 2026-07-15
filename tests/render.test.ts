@@ -118,6 +118,63 @@ describe("renderers", () => {
     expect(renderMarkdown(report)).not.toContain("Evidence citation");
   });
 
+  test("markdown: dispatch lineage renders on both ends, md-escaped, absent otherwise", () => {
+    const parent = agent({
+      dispatched: [
+        { sessionId: "bbbb0000-0000-4000-8000-00000000000b", profile: "my_sub (claude-code)" },
+        { sessionId: "cccc0000-0000-4000-8000-00000000000c" }, // profile unresolvable
+      ],
+    });
+    const child = agent({
+      profileId: "claude-code:/sub", displayName: "my_sub (claude-code)", workdir: "/sub",
+      dispatchedBy: [{ sessionId: "aaaa0000-0000-4000-8000-00000000000a", profile: "w (claude-code)" }],
+    });
+    const md = renderMarkdown({ ...report, agents: [parent, child], exceptions: [] });
+    expect(md).toContain("- Dispatched 2 subagent runs: my\\_sub (claude-code) (session bbbb0000), session cccc0000");
+    expect(md).toContain("- Dispatched by: w (claude-code) (session aaaa0000)");
+    // baseline report has no lineage fields → no lines
+    const plain = renderMarkdown(report);
+    expect(plain).not.toContain("Dispatched by");
+    expect(plain).not.toContain("subagent run");
+  });
+
+  test("html: dispatch lineage renders as dl rows with the dispatch class in both layouts, absent otherwise", () => {
+    const parent = agent({
+      dispatched: [{ sessionId: "bbbb0000-0000-4000-8000-00000000000b", profile: "sub (claude-code)" }],
+    });
+    const child = agent({
+      profileId: "claude-code:/sub", displayName: "sub (claude-code)", workdir: "/sub",
+      dispatchedBy: [{ sessionId: "aaaa0000-0000-4000-8000-00000000000a", profile: "w (claude-code)" }],
+    });
+    for (const layout of ["cards", "flat"] as const) {
+      const html = renderHtml({ ...report, agents: [parent, child], exceptions: [] }, { layout });
+      expect(html).toContain(`<dt>Dispatched</dt><dd class="dispatch">1 subagent run: sub (claude-code) (session bbbb0000)</dd>`);
+      expect(html).toContain(`<dt>Dispatched by</dt><dd class="dispatch">w (claude-code) (session aaaa0000)</dd>`);
+      const plain = renderHtml(report, { layout });
+      expect(plain).not.toContain("Dispatched");
+    }
+  });
+
+  test("html: a hostile profile name in a dispatch ref is escaped", () => {
+    const a = agent({
+      dispatchedBy: [{ sessionId: "aaaa0000-0000-4000-8000-00000000000a", profile: `<img src=x onerror=alert(1)> (codex)` }],
+    });
+    const html = renderHtml({ ...report, agents: [a], exceptions: [] });
+    expect(html).not.toContain("<img src=x");
+    expect(html).toContain("&lt;img src=x");
+  });
+
+  test("json: dispatch lineage fields round-trip through the json renderer", () => {
+    const a = agent({
+      dispatched: [{ sessionId: "bbbb0000-0000-4000-8000-00000000000b", profile: "sub (claude-code)" }],
+    });
+    const parsed = JSON.parse(renderJson({ ...report, agents: [a], exceptions: [] }));
+    expect(parsed.agents[0].dispatched).toEqual([
+      { sessionId: "bbbb0000-0000-4000-8000-00000000000b", profile: "sub (claude-code)" },
+    ]);
+    expect(parsed.agents[0].dispatchedBy).toBeUndefined();
+  });
+
   test("html: evidenceCitation renders in the card, escaped", () => {
     const a = agent({
       evidence: "partially_proven",

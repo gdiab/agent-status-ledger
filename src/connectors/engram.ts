@@ -303,3 +303,167 @@ export function corroborateSessions(
     return { matched: false };
   }
 }
+
+// ── Dispatch-marker lineage (orchestrator → subagent runs) ──────────────────
+//
+// Engram's dispatch-marker convention (engram specs/core/dispatch-marker.md):
+// the dispatching party prepends `<engram-src id="<uuid>"/>` to the handoff
+// prompt, so the uuid lands verbatim in both transcripts and engram records a
+// dispatch_links row per tape at ingest. Engram's own chain traversal is only
+// reachable through `explain <file/span/literal>` (grep emits a top-level
+// `dispatch_lineage` key but always `[]`, and `explain --dispatch` was removed
+// from the CLI), so ASL reconstructs the one hop it needs from the same two
+// proven primitives the evidence upgrade uses — grep by uuid, peek by tape id:
+//
+//   1. In ASL's dispatch SOP the marker id is the ORCHESTRATOR's harness
+//      session uuid, so `engram grep <parent-uuid>` finds every tape whose
+//      transcript contains it — the orchestrator's own tape plus each
+//      dispatched subagent's tape.
+//   2. `engram peek <tape> --grep-filter <parent-uuid>` returns the tape
+//      lines naming that uuid (the marker line and its context). A tape
+//      counts as a dispatched child only when BOTH hold:
+//        - some returned line carries the literal marker
+//          `<engram-src id="<parent-uuid>"/>` (quotes may be JSON-escaped in
+//          raw tape text), and
+//        - some returned tape event carries a source.session_id that is a
+//          DIFFERENT session known to this report (the mention-only guard,
+//          inverted: here the mention IS the evidence, but it must resolve
+//          to a session ASL can name).
+//      The orchestrator's own tape fails the second test (its events carry
+//      its own session_id), so it never self-links.
+//
+// Same discipline as the evidence upgrade: never throws, allowlisted argv
+// only, bounded subprocess budget, and consuming CLI JSON only (never the
+// SQLite dispatch_links table — the DB schema has no stability contract).
+
+// Report-wide probe budget: lineage is a cross-profile query (one grep per
+// candidate parent session, newest-first), so the cap lives here rather than
+// per profile. Worst case: 10 × (1 grep + MAX_GREP_CANDIDATES peeks) = 40
+// bounded subprocess calls per report, ~60ms each observed.
+const MAX_LINEAGE_SESSIONS = 10;
+
+// The literal dispatch marker for a validated session uuid, tolerating the
+// JSON-escaped quotes peek returns inside raw tape-line text. Safe to build
+// as a regex: the uuid has already passed SESSION_ID_SHAPE (hex and dashes
+// only), so it contains no regex metacharacters.
+function markerPattern(sessionUuid: string): RegExp {
+  return new RegExp(`<engram-src id=\\\\?"${sessionUuid}\\\\?"`);
+}
+
+export interface DispatchLink {
+  parentSessionId: string; // orchestrator harness session uuid (the marker id)
+  childSessionId: string;  // dispatched subagent harness session uuid
+}
+
+// The slice of RawSession lineage needs; report.ts flattens every profile's
+// sessions into this shape so the connector never learns about profiles.
+export interface LineageSession {
+  sessionId: string;
+  startedAt: string;
+}
+
+// Session uuids owning the tape events on the peeked lines — the tape's
+// identity, per the same source.session_id block upgradeEvidence verifies.
+function eventSessionIds(peekResponse: Record<string, unknown>): Set<string> {
+  const session = peekResponse.session as Record<string, unknown> | undefined;
+  const content = Array.isArray(session?.content) ? (session.content as unknown[]) : [];
+  const ids = new Set<string>();
+  for (const entry of content) {
+    const text = (entry as Record<string, unknown> | null)?.text;
+    if (typeof text !== "string") continue;
+    let ev: unknown;
+    try {
+      ev = JSON.parse(text);
+    } catch {
+      continue; // context line or partial content, not a tape event
+    }
+    const source = (ev as Record<string, unknown> | null)?.source as Record<string, unknown> | undefined;
+    const sid = source?.session_id;
+    if (typeof sid === "string" && SESSION_ID_SHAPE.test(sid)) ids.add(sid);
+  }
+  return ids;
+}
+
+// True when any peeked line carries the dispatch marker for `sessionUuid`.
+function hasDispatchMarker(peekResponse: Record<string, unknown>, sessionUuid: string): boolean {
+  const session = peekResponse.session as Record<string, unknown> | undefined;
+  const content = Array.isArray(session?.content) ? (session.content as unknown[]) : [];
+  const marker = markerPattern(sessionUuid);
+  return content.some((entry) => {
+    const text = (entry as Record<string, unknown> | null)?.text;
+    return typeof text === "string" && marker.test(text);
+  });
+}
+
+// Sessions dispatched BY `parentUuid`, resolved against the report's own
+// session set (grep parent uuid, peek each candidate tape, keep tapes that
+// carry the marker and belong to another known session). Never throws.
+export function findDispatchedSessions(
+  parentUuid: string,
+  knownSessionIds: ReadonlySet<string>,
+  binaryPath: string,
+  exec: Exec,
+): string[] {
+  try {
+    if (!SESSION_ID_SHAPE.test(parentUuid)) return [];
+    const grep = exec([binaryPath, "grep", parentUuid]);
+    if (!grep.ok) return [];
+    const grepObj = parseCliResponse(grep.stdout);
+    if (!grepObj) return [];
+
+    const candidates = Array.isArray(grepObj.sessions)
+      ? (grepObj.sessions as unknown[]).slice(0, MAX_GREP_CANDIDATES)
+      : [];
+    const children = new Set<string>();
+    for (const candidate of candidates) {
+      const engramSid = (candidate as Record<string, unknown> | null)?.session_id;
+      if (typeof engramSid !== "string" || !SESSION_ID_SHAPE.test(engramSid)) continue;
+
+      const peek = exec([binaryPath, "peek", engramSid, "--grep-filter", parentUuid]);
+      if (!peek.ok) continue;
+      const peekObj = parseCliResponse(peek.stdout);
+      if (!peekObj) continue;
+
+      if (!hasDispatchMarker(peekObj, parentUuid)) continue;
+      for (const sid of eventSessionIds(peekObj)) {
+        if (sid !== parentUuid && knownSessionIds.has(sid)) children.add(sid);
+      }
+    }
+    return [...children].sort();
+  } catch {
+    return [];
+  }
+}
+
+// The lineage entry point for report generation: owns the enabled switch,
+// the newest-first ordering, the report-wide probe budget, the default real
+// exec seam, and the one fail-soft boundary — the corroborateSessions
+// contract, verbatim. Every session in the report window is a candidate
+// parent; links only ever join two sessions the report already knows.
+export function discoverDispatchLinks(
+  sessions: LineageSession[],
+  cfg: EngramConfig,
+  exec?: Exec,
+): DispatchLink[] {
+  if (!cfg.enabled) return [];
+  try {
+    const realExec = exec ?? makeSpawnExec(ENGRAM_TIMEOUT_MS);
+    const knownIds = new Set(
+      sessions.map((s) => s.sessionId).filter((id) => SESSION_ID_SHAPE.test(id)),
+    );
+    const newestFirst = [...sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    const links: DispatchLink[] = [];
+    const seen = new Set<string>();
+    for (const session of newestFirst.slice(0, MAX_LINEAGE_SESSIONS)) {
+      for (const child of findDispatchedSessions(session.sessionId, knownIds, cfg.binaryPath, realExec)) {
+        const key = `${session.sessionId} ${child}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        links.push({ parentSessionId: session.sessionId, childSessionId: child });
+      }
+    }
+    return links;
+  } catch {
+    return [];
+  }
+}
