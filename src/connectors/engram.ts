@@ -212,14 +212,14 @@ function parseCliResponse(stdout: string): Record<string, unknown> | undefined {
 }
 
 // The parse-each-content-line-as-JSON loop shared by every tape reader:
-// yields each peeked line's raw text alongside its parsed tape event.
-// Non-JSON lines (context lines, partial content) are skipped silently.
-// Both halves are yielded because consumers need both: ownership checks
-// read the parsed event, marker checks read the raw text (where peek
-// JSON-escapes quotes inside the line).
+// yields each peeked line's parsed tape event. Non-JSON lines (context
+// lines, partial content) are skipped silently. All consumers work on the
+// parsed event — ownership checks read `source`, marker checks read the
+// parsed `content` string (real quotes, no JSON escaping); the raw line
+// text has no consumer and is deliberately not yielded.
 function* tapeEvents(
   peekResponse: Record<string, unknown>,
-): Generator<{ text: string; event: Record<string, unknown> }> {
+): Generator<Record<string, unknown>> {
   const session = peekResponse.session as Record<string, unknown> | undefined;
   const content = Array.isArray(session?.content) ? (session.content as unknown[]) : [];
   for (const entry of content) {
@@ -232,7 +232,7 @@ function* tapeEvents(
       continue; // context line or partial content, not a tape event
     }
     if (typeof ev !== "object" || ev === null) continue;
-    yield { text, event: ev as Record<string, unknown> };
+    yield ev as Record<string, unknown>;
   }
 }
 
@@ -277,7 +277,7 @@ function* grepPeekCandidates(
 // Empty array = this candidate fails the guard (no verified edits).
 function verifiedEditedFiles(peekResponse: Record<string, unknown>, sessionUuid: string): string[] {
   const files = new Set<string>();
-  for (const { event } of tapeEvents(peekResponse)) {
+  for (const event of tapeEvents(peekResponse)) {
     if (event.k !== "code.edit") continue;
     const source = event.source as Record<string, unknown> | undefined;
     if (source?.session_id !== sessionUuid) continue; // mention-only guard
@@ -381,9 +381,12 @@ export function corroborateSessions(
 //        - the event is an inbound message (k == "msg.in" — the dispatch
 //          prompt arrives as the subagent's incoming message; engram
 //          specs/core/event-contract.md is the kind registry),
-//        - its raw line text carries the literal marker
-//          `<engram-src id="<parent-uuid>"/>` (quotes may be JSON-escaped
-//          in raw tape text), and
+//        - its parsed `content` is a string that STARTS with the literal
+//          marker `<engram-src id="<parent-uuid>"/>` (leading whitespace
+//          only) — the spec says "The marker is prepended to the handoff
+//          message" (engram specs/core/dispatch-marker.md), so a genuine
+//          dispatch always carries it as a prefix; a marker quoted
+//          mid-conversation or mid-text never matches — and
 //        - its source.session_id is a DIFFERENT session known to this
 //          report (the mention-only guard, inverted: here the mention IS
 //          the evidence, but it must resolve to a session ASL can name).
@@ -398,12 +401,22 @@ export function corroborateSessions(
 // only, bounded subprocess budget, and consuming CLI JSON only (never the
 // SQLite dispatch_links table — the DB schema has no stability contract).
 
-// The literal dispatch marker for a validated session uuid, tolerating the
-// JSON-escaped quotes peek returns inside raw tape-line text. Safe to build
-// as a regex: the uuid has already passed SESSION_ID_SHAPE (hex and dashes
-// only), so it contains no regex metacharacters.
-function markerPattern(sessionUuid: string): RegExp {
-  return new RegExp(`<engram-src id=\\\\?"${sessionUuid}\\\\?"`);
+// The dispatch marker as a content PREFIX (leading whitespace only) for a
+// validated session uuid, tested against a parsed event's `content` string
+// (real quotes — JSON escaping is already undone by the parse). Safe to
+// build as a regex: the uuid has already passed SESSION_ID_SHAPE (hex and
+// dashes only), so it contains no regex metacharacters.
+//
+// Residual ambiguity, accepted: a user PASTING a dispatch prompt that
+// BEGINS their message with someone else's marker produces a msg.in that is
+// indistinguishable from a real dispatch with the data Engram exposes today
+// (the marker text and the quoting session's own session_id are both
+// genuine). The prefix rule eliminates the common quote positions
+// (mid-conversation, mid-text); the message-initial paste stays a known
+// false-lineage hole. Revisit if Engram ever exposes a checked provenance
+// bit for dispatch links.
+function markerPrefixPattern(sessionUuid: string): RegExp {
+  return new RegExp(`^\\s*<engram-src id="${sessionUuid}"/>`);
 }
 
 export interface DispatchLink {
@@ -430,7 +443,7 @@ export function findDispatchedSessions(
 ): string[] {
   try {
     if (!SESSION_ID_SHAPE.test(parentUuid)) return [];
-    const marker = markerPattern(parentUuid);
+    const marker = markerPrefixPattern(parentUuid);
     const children = new Set<string>();
     // Internal partial-results flag: true when grep found more candidate
     // tapes than MAX_LINEAGE_CANDIDATES allowed peeking, i.e. the returned
@@ -440,11 +453,12 @@ export function findDispatchedSessions(
     for (const { response } of grepPeekCandidates(
       parentUuid, binaryPath, exec, parentUuid, MAX_LINEAGE_CANDIDATES, meta,
     )) {
-      for (const { text, event } of tapeEvents(response)) {
+      for (const event of tapeEvents(response)) {
         // All three checks correlate to this ONE event: inbound-message
-        // kind, marker on its own raw line, and its owning session_id.
+        // kind, marker as the prefix of its own parsed content, and its
+        // owning session_id.
         if (event.k !== "msg.in") continue;
-        if (!marker.test(text)) continue;
+        if (typeof event.content !== "string" || !marker.test(event.content)) continue;
         const source = event.source as Record<string, unknown> | undefined;
         const sid = source?.session_id;
         if (typeof sid !== "string" || !SESSION_ID_SHAPE.test(sid)) continue;

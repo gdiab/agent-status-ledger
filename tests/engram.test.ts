@@ -351,9 +351,9 @@ describe("discoverDispatchLinks", () => {
     return { sessionId, startedAt };
   }
 
-  // The subagent's tape: its first user message carries the dispatch marker
-  // (quotes JSON-escaped inside the raw tape line, as peek returns them),
-  // and every event carries the subagent's own source.session_id block.
+  // The subagent's tape: its first user message BEGINS with the dispatch
+  // marker (the spec prepends it to the handoff prompt), and every event
+  // carries the subagent's own source.session_id block.
   function markerEvent(markerUuid: string, ownerUuid: string): unknown {
     return {
       k: "msg.in",
@@ -562,6 +562,56 @@ describe("discoverDispatchLinks", () => {
       exec,
     );
     expect(links).toEqual([{ parentSessionId: ORCH, childSessionId: SUB }]);
+  });
+
+  // ── Marker-prefix guard ────────────────────────────────────────────────────
+  // A genuine dispatch PREPENDS the marker to the handoff message (engram
+  // specs/core/dispatch-marker.md), so it must be a prefix of the parsed
+  // msg.in content. A user pasting a dispatch prompt mid-message produces a
+  // genuine msg.in with the marker text and the quoting session's own
+  // session_id — prefix position is the only distinguishing signal available.
+
+  test("no edge when the marker sits mid-content in a msg.in (pasted dispatch prompt)", () => {
+    const pastedPrompt = {
+      k: "msg.in",
+      role: "user",
+      content: `please review this dispatch prompt: <engram-src id="${ORCH}"/> implement the thing`,
+      source: { harness: "claude-code", session_id: SUB },
+      t: "2026-07-14T13:00:00.000Z",
+    };
+    const exec = twoStepExec(grepResponse([CHILD_TAPE]), {
+      [CHILD_TAPE]: peekResponse([pastedPrompt]),
+    });
+    expect(discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, exec)).toEqual([]);
+  });
+
+  test("marker at content start (after leading whitespace only) still links, with dispatch text following", () => {
+    const whitespacePrefixed = {
+      k: "msg.in",
+      role: "user",
+      content: `\n  <engram-src id="${ORCH}"/> You are applying review findings to a branch. Work in the worktree.`,
+      source: { harness: "claude-code", session_id: SUB },
+      t: "2026-07-14T13:00:00.000Z",
+    };
+    const exec = twoStepExec(grepResponse([CHILD_TAPE]), {
+      [CHILD_TAPE]: peekResponse([whitespacePrefixed]),
+    });
+    const links = discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, exec);
+    expect(links).toEqual([{ parentSessionId: ORCH, childSessionId: SUB }]);
+  });
+
+  test("no edge when a msg.in has non-string content, even if a raw line mentions the marker", () => {
+    const structuredContent = {
+      k: "msg.in",
+      role: "user",
+      content: [{ type: "text", text: `<engram-src id="${ORCH}"/> do work` }],
+      source: { harness: "claude-code", session_id: SUB },
+      t: "2026-07-14T13:00:00.000Z",
+    };
+    const exec = twoStepExec(grepResponse([CHILD_TAPE]), {
+      [CHILD_TAPE]: peekResponse([structuredContent]),
+    });
+    expect(discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, exec)).toEqual([]);
   });
 
   test("a marker on a raw non-event context line cannot vouch for a session named by other lines", () => {

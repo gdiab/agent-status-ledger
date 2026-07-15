@@ -345,8 +345,9 @@ describe("buildReport", () => {
 
     // Engram CLI double: grep on the orchestrator uuid finds the subagent's
     // tape; peeking that tape returns the subagent's first user message,
-    // whose raw tape line carries the dispatch marker (quotes JSON-escaped,
-    // as the real CLI returns them) and the subagent's source.session_id.
+    // whose parsed content begins with the dispatch marker (the spec
+    // prepends it to the handoff prompt) and carries the subagent's
+    // source.session_id.
     const exec: Exec = (argv) => {
       if (argv[1] === "grep" && argv[2] === ORCH) {
         return {
