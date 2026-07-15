@@ -191,12 +191,17 @@ function parseCliResponse(stdout: string): Record<string, unknown> | undefined {
   return obj;
 }
 
-// Files edited under the queried harness UUID, per the peeked tape events.
-// Empty array = this candidate fails the guard (no verified edits).
-function verifiedEditedFiles(peekResponse: Record<string, unknown>, sessionUuid: string): string[] {
+// The parse-each-content-line-as-JSON loop shared by every tape reader:
+// yields each peeked line's raw text alongside its parsed tape event.
+// Non-JSON lines (context lines, partial content) are skipped silently.
+// Both halves are yielded because consumers need both: ownership checks
+// read the parsed event, marker checks read the raw text (where peek
+// JSON-escapes quotes inside the line).
+function* tapeEvents(
+  peekResponse: Record<string, unknown>,
+): Generator<{ text: string; event: Record<string, unknown> }> {
   const session = peekResponse.session as Record<string, unknown> | undefined;
   const content = Array.isArray(session?.content) ? (session.content as unknown[]) : [];
-  const files = new Set<string>();
   for (const entry of content) {
     const text = (entry as Record<string, unknown> | null)?.text;
     if (typeof text !== "string") continue;
@@ -207,7 +212,52 @@ function verifiedEditedFiles(peekResponse: Record<string, unknown>, sessionUuid:
       continue; // context line or partial content, not a tape event
     }
     if (typeof ev !== "object" || ev === null) continue;
-    const event = ev as Record<string, unknown>;
+    yield { text, event: ev as Record<string, unknown> };
+  }
+}
+
+// The canonical grep→peek candidate walk shared by the evidence upgrade and
+// dispatch lineage: validated uuid → grep → parsed response → capped
+// candidate list → validated tape ids → peek (with the caller's filter) →
+// parsed peek responses, yielded lazily so a caller that stops at its first
+// hit never spends the remaining peek budget. Every reject path (invalid
+// uuid, failed exec, malformed JSON, hostile tape id) is a silent skip —
+// the fail-soft boundary lives in the entry points, not here.
+// `meta.truncated` reports when grep returned more candidates than the cap
+// allowed probing — internal partial-results flag, not a report field.
+function* grepPeekCandidates(
+  sessionUuid: string,
+  binaryPath: string,
+  exec: Exec,
+  peekFilter: string,
+  maxCandidates: number,
+  meta?: { truncated: boolean },
+): Generator<{ engramSid: string; response: Record<string, unknown> }> {
+  if (!SESSION_ID_SHAPE.test(sessionUuid)) return;
+  const grep = exec([binaryPath, "grep", sessionUuid]);
+  if (!grep.ok) return;
+  const grepObj = parseCliResponse(grep.stdout);
+  if (!grepObj) return;
+
+  const all = Array.isArray(grepObj.sessions) ? (grepObj.sessions as unknown[]) : [];
+  if (meta) meta.truncated = all.length > maxCandidates;
+  for (const candidate of all.slice(0, maxCandidates)) {
+    const engramSid = (candidate as Record<string, unknown> | null)?.session_id;
+    if (typeof engramSid !== "string" || !SESSION_ID_SHAPE.test(engramSid)) continue;
+
+    const peek = exec([binaryPath, "peek", engramSid, "--grep-filter", peekFilter]);
+    if (!peek.ok) continue;
+    const response = parseCliResponse(peek.stdout);
+    if (!response) continue;
+    yield { engramSid, response };
+  }
+}
+
+// Files edited under the queried harness UUID, per the peeked tape events.
+// Empty array = this candidate fails the guard (no verified edits).
+function verifiedEditedFiles(peekResponse: Record<string, unknown>, sessionUuid: string): string[] {
+  const files = new Set<string>();
+  for (const { event } of tapeEvents(peekResponse)) {
     if (event.k !== "code.edit") continue;
     const source = event.source as Record<string, unknown> | undefined;
     if (source?.session_id !== sessionUuid) continue; // mention-only guard
@@ -230,25 +280,10 @@ export function upgradeEvidence(
   extraPatterns: string[],
 ): UpgradeResult {
   try {
-    if (!SESSION_ID_SHAPE.test(sessionUuid)) return { matched: false };
-    const grep = exec([binaryPath, "grep", sessionUuid]);
-    if (!grep.ok) return { matched: false };
-    const grepObj = parseCliResponse(grep.stdout);
-    if (!grepObj) return { matched: false };
-
-    const candidates = Array.isArray(grepObj.sessions)
-      ? (grepObj.sessions as unknown[]).slice(0, MAX_GREP_CANDIDATES)
-      : [];
-    for (const candidate of candidates) {
-      const engramSid = (candidate as Record<string, unknown> | null)?.session_id;
-      if (typeof engramSid !== "string" || !SESSION_ID_SHAPE.test(engramSid)) continue;
-
-      const peek = exec([binaryPath, "peek", engramSid, "--grep-filter", CODE_EDIT_FILTER]);
-      if (!peek.ok) continue;
-      const peekObj = parseCliResponse(peek.stdout);
-      if (!peekObj) continue;
-
-      const files = verifiedEditedFiles(peekObj, sessionUuid);
+    for (const { engramSid, response } of grepPeekCandidates(
+      sessionUuid, binaryPath, exec, CODE_EDIT_FILTER, MAX_GREP_CANDIDATES,
+    )) {
+      const files = verifiedEditedFiles(response, sessionUuid);
       if (files.length === 0) continue;
 
       const shown = files.slice(0, MAX_CITED_FILES).join(", ");
@@ -365,19 +400,9 @@ export interface LineageSession {
 // Session uuids owning the tape events on the peeked lines — the tape's
 // identity, per the same source.session_id block upgradeEvidence verifies.
 function eventSessionIds(peekResponse: Record<string, unknown>): Set<string> {
-  const session = peekResponse.session as Record<string, unknown> | undefined;
-  const content = Array.isArray(session?.content) ? (session.content as unknown[]) : [];
   const ids = new Set<string>();
-  for (const entry of content) {
-    const text = (entry as Record<string, unknown> | null)?.text;
-    if (typeof text !== "string") continue;
-    let ev: unknown;
-    try {
-      ev = JSON.parse(text);
-    } catch {
-      continue; // context line or partial content, not a tape event
-    }
-    const source = (ev as Record<string, unknown> | null)?.source as Record<string, unknown> | undefined;
+  for (const { event } of tapeEvents(peekResponse)) {
+    const source = event.source as Record<string, unknown> | undefined;
     const sid = source?.session_id;
     if (typeof sid === "string" && SESSION_ID_SHAPE.test(sid)) ids.add(sid);
   }
@@ -405,27 +430,12 @@ export function findDispatchedSessions(
   exec: Exec,
 ): string[] {
   try {
-    if (!SESSION_ID_SHAPE.test(parentUuid)) return [];
-    const grep = exec([binaryPath, "grep", parentUuid]);
-    if (!grep.ok) return [];
-    const grepObj = parseCliResponse(grep.stdout);
-    if (!grepObj) return [];
-
-    const candidates = Array.isArray(grepObj.sessions)
-      ? (grepObj.sessions as unknown[]).slice(0, MAX_GREP_CANDIDATES)
-      : [];
     const children = new Set<string>();
-    for (const candidate of candidates) {
-      const engramSid = (candidate as Record<string, unknown> | null)?.session_id;
-      if (typeof engramSid !== "string" || !SESSION_ID_SHAPE.test(engramSid)) continue;
-
-      const peek = exec([binaryPath, "peek", engramSid, "--grep-filter", parentUuid]);
-      if (!peek.ok) continue;
-      const peekObj = parseCliResponse(peek.stdout);
-      if (!peekObj) continue;
-
-      if (!hasDispatchMarker(peekObj, parentUuid)) continue;
-      for (const sid of eventSessionIds(peekObj)) {
+    for (const { response } of grepPeekCandidates(
+      parentUuid, binaryPath, exec, parentUuid, MAX_GREP_CANDIDATES,
+    )) {
+      if (!hasDispatchMarker(response, parentUuid)) continue;
+      for (const sid of eventSessionIds(response)) {
         if (sid !== parentUuid && knownSessionIds.has(sid)) children.add(sid);
       }
     }
