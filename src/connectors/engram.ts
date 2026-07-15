@@ -63,10 +63,14 @@ const SESSION_ID_SHAPE = /^[0-9a-fA-F][0-9a-fA-F-]{7,63}$/;
 // (today: file paths; soon: quoted DIALOGUE), which is untrusted AND
 // unredacted — engram stores verbatim transcripts. Neutralize at ingestion —
 // control chars (incl. newlines, which would let "#"/markdown structures
-// start a line), DEL, and angle brackets are stripped so the text is inert
-// before it reaches any renderer. This deliberately does not depend on
-// renderer-side escaping (asl-xis).
-const TAPE_UNSAFE = /[\x00-\x1f\x7f<>]/g;
+// start a line), DEL, angle brackets, and Unicode format characters (\p{Cf}:
+// zero-width space/joiners, word joiner, BOM, soft hyphen, bidi controls —
+// all invisible in renderers, so a secret split by one would reconstruct on
+// copy-paste and bidi controls could reorder the citation display) are
+// stripped so the text is inert before it reaches any renderer. Citations
+// are file paths plus counts, where no \p{Cf} character is load-bearing.
+// This deliberately does not depend on renderer-side escaping (asl-xis).
+const TAPE_UNSAFE = /[\x00-\x1f\x7f<>]|\p{Cf}/gu;
 
 // Branded string: proof a tape-sourced value went through sanitizeTapeText.
 // The symbol is declared but never exported/created, so the only way to
@@ -82,11 +86,20 @@ export type SanitizedTapeText = string & { readonly [sanitizedTape]: true };
 // no future render path can bypass it. Composes the shared secret-matching
 // rules from src/redact.ts (builtin + user extraPatterns — no new matching
 // logic here, per asl-2u3) with the tape-specific structural hardening
-// above. Strip runs BEFORE redact: a secret split by a control char would
-// otherwise slip past the redactor as two short fragments and be glued back
-// into a live key by the strip.
+// above. Redact runs on BOTH sides of the strip, because each order has an
+// inverse evasion:
+//  - strip-then-redact only: a boundary-dependent rule that matched the raw
+//    text stops matching once the strip glues adjacent chars onto the secret
+//    ("AKIA…F\x00X" → "AKIA…FX" breaks the \b…{16}\b rule);
+//  - redact-then-strip only: a secret split by a stripped char slips past
+//    the redactor as short fragments and is glued back into a live key
+//    ("sk-fix\x00ture…" reassembles).
+// Running redact → strip → redact covers both representations. Cost: redact
+// runs twice per tape string — citations are one-liners and redact is a
+// fixed list of regex passes, so this is noise next to the subprocess calls.
 export function sanitizeTapeText(s: string, extraPatterns: string[] = []): SanitizedTapeText {
-  return redact(s.replace(TAPE_UNSAFE, ""), extraPatterns) as SanitizedTapeText;
+  const preStripped = redact(s, extraPatterns);
+  return redact(preStripped.replace(TAPE_UNSAFE, ""), extraPatterns) as SanitizedTapeText;
 }
 
 export interface UpgradeResult {

@@ -105,13 +105,51 @@ describe("sanitizeTapeText (the choke point)", () => {
     expect(out).toContain("img src=x");
   });
 
-  test("strips unsafe chars BEFORE redacting, so a control-char-split secret cannot reassemble past redaction", () => {
-    // If redaction ran first it would see two too-short fragments; the strip
-    // would then glue them back into a live key. Order must be strip → redact.
+  test("a control-char-split secret cannot reassemble past redaction (strip glues, post-strip redact catches)", () => {
+    // The pre-strip redact pass sees two too-short fragments; the strip then
+    // glues them into a live key, so a second redact pass must run after it.
     const split = "sk-fixture\x00secret1234567890abcdef";
-    const out = sanitizeTapeText(`key ${split} end`);
+    const out = sanitizeTapeText(`key ${split} end`, []);
     expect(out).not.toContain(SECRET);
     expect(out).toContain("[REDACTED]");
+  });
+
+  test("inverse glue evasion: stripping must not un-match a boundary-dependent builtin rule (AWS)", () => {
+    // Pre-strip, "AKIA…F\x00X" matches \bAKIA[0-9A-Z]{16}\b (the \x00 is a
+    // word boundary). Strip-first would glue the X on and produce a 17-char
+    // run the rule no longer matches — so redaction must ALSO run pre-strip.
+    const out = sanitizeTapeText("key AKIA1234567890ABCDEF\x00X end", []);
+    expect(out).not.toContain("AKIA1234567890ABCDEF");
+    expect(out).toContain("[REDACTED]");
+  });
+
+  test("inverse glue evasion: boundary-dependent user extraPattern still matches", () => {
+    const out = sanitizeTapeText("pw hunter2\x00suffix end", ["hunter2\\b"]);
+    expect(out).not.toContain("hunter2");
+    expect(out).toContain("[REDACTED]");
+  });
+
+  test("zero-width characters cannot split a secret past redaction (ZWSP)", () => {
+    // U+200B is invisible in every renderer but breaks the sk- rule's char
+    // class; a downstream copy-paste reconstructs the live key. The strip
+    // set must cover Unicode format chars, and the post-strip redact pass
+    // must catch the reassembled key.
+    const out = sanitizeTapeText("key sk-fixture\u200Bsecret1234567890abcdef end", []);
+    expect(out).not.toContain(SECRET);
+    expect(out).not.toContain("\u200B");
+    expect(out).toContain("[REDACTED]");
+  });
+
+  test("zero-width joiner cannot split a builtin AWS key past redaction", () => {
+    const out = sanitizeTapeText("key AKIA1234\u200D567890ABCDEF end", []);
+    expect(out).not.toContain("AKIA1234567890ABCDEF");
+    expect(out).toContain("[REDACTED]");
+  });
+
+  test("bidi controls, word joiner, and BOM are stripped from the citation text", () => {
+    const out = sanitizeTapeText("/repo/\u202Esrc\u2066/x\u2060.ts\uFEFF done", []);
+    for (const ch of ["\u202E", "\u2066", "\u2060", "\uFEFF"]) expect(out).not.toContain(ch);
+    expect(out).toContain("done");
   });
 });
 
