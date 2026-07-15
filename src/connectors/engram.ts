@@ -70,7 +70,35 @@ const SESSION_ID_SHAPE = /^[0-9a-fA-F][0-9a-fA-F-]{7,63}$/;
 // stripped so the text is inert before it reaches any renderer. Citations
 // are file paths plus counts, where no \p{Cf} character is load-bearing.
 // This deliberately does not depend on renderer-side escaping (asl-xis).
-const TAPE_UNSAFE = /[\x00-\x1f\x7f<>]|\p{Cf}/gu;
+//
+// \p{Cf} alone is not enough: Unicode's Default_Ignorable_Code_Point
+// property (DerivedCoreProperties.txt) also contains characters in other
+// general categories that render as nothing — notably COMBINING GRAPHEME
+// JOINER U+034F and the variation selectors U+FE00–FE0F / U+E0100–E01EF,
+// which are nonspacing marks (\p{Mn}) — so they too can invisibly split a
+// secret that reconstructs on copy-paste. JS regex cannot express
+// \p{Default_Ignorable_Code_Point} directly, so the non-Cf members are
+// enumerated explicitly below (do NOT widen to all of \p{Mn}: legitimate
+// combining marks are load-bearing in NFD file paths, e.g. "café.ts" from
+// macOS filesystems):
+//   U+034F        COMBINING GRAPHEME JOINER (Mn)
+//   U+115F..1160  HANGUL CHOSEONG/JUNGSEONG FILLER (Lo)
+//   U+17B4..17B5  KHMER VOWEL INHERENT AQ/AA (Mn)
+//   U+180B..180F  MONGOLIAN FREE VARIATION SELECTORS + VOWEL SEPARATOR
+//   U+2065        reserved, default-ignorable (Cn)
+//   U+3164        HANGUL FILLER (Lo)
+//   U+FE00..FE0F  VARIATION SELECTOR-1..16 (Mn)
+//   U+FFA0        HALFWIDTH HANGUL FILLER (Lo)
+//   U+FFF0..FFF8  reserved, default-ignorable (Cn)
+//   U+E0000..E0FFF plane-14 tags + VARIATION SELECTOR-17..256 + reserved
+//
+// Known fidelity tradeoff (accepted, security over fidelity): SOFT HYPHEN
+// U+00AD is \p{Cf} but is a legal filename character, so a citation for
+// "/repo/co­operate.ts" comes out naming "/repo/cooperate.ts" — a
+// different file than the one actually edited. We accept the mislabeled
+// citation rather than let an invisible character through the boundary.
+const TAPE_UNSAFE =
+  /[\x00-\x1f\x7f<>]|\p{Cf}|[\u034F\u115F\u1160\u17B4\u17B5\u180B-\u180F\u2065\u3164\uFE00-\uFE0F\uFFA0\uFFF0-\uFFF8]|[\u{E0000}-\u{E0FFF}]/gu;
 
 // Branded string marking a tape-sourced value that went through
 // sanitizeTapeText. This is a compile-time convention against ACCIDENTAL

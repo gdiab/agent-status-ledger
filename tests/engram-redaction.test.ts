@@ -92,6 +92,41 @@ describe("sanitizeTapeText (the choke point)", () => {
     expect(out).toContain("[REDACTED]");
   });
 
+  test("combining grapheme joiner (U+034F, Mn not Cf) cannot invisibly split a builtin secret", () => {
+    // CGJ is default-ignorable (renders as nothing) but is a nonspacing mark,
+    // not a format char — a \p{Cf}-only strip leaves it in place, the sk-
+    // rule's char class never matches across it, and the rendered/copied text
+    // visually reconstructs the live key.
+    const out = sanitizeTapeText("key sk-fixture\u034Fsecret1234567890abcdef end", []);
+    expect(out).not.toContain(SECRET);
+    expect(out).not.toContain("\u034F");
+    expect(out).toContain("[REDACTED]");
+  });
+
+  test("variation selector (U+FE00, Mn not Cf) cannot invisibly split a builtin secret", () => {
+    const out = sanitizeTapeText("key sk-fixture\uFE00secret1234567890abcdef end", []);
+    expect(out).not.toContain(SECRET);
+    expect(out).not.toContain("\uFE00");
+    expect(out).toContain("[REDACTED]");
+  });
+
+  test("plane-14 variation selector (U+E0100) cannot invisibly split a builtin secret", () => {
+    const out = sanitizeTapeText("key sk-fixture\u{E0100}secret1234567890abcdef end", []);
+    expect(out).not.toContain(SECRET);
+    expect(out).not.toContain("\u{E0100}");
+    expect(out).toContain("[REDACTED]");
+  });
+
+  test("legitimate NFD combining marks in file paths survive intact (no blanket Mn strip)", () => {
+    // The default-ignorable strip must NOT widen to all of \p{Mn}: macOS
+    // (HFS+/APFS) stores filenames in NFD, so "café.ts" arrives as
+    // "café.ts" and the combining acute is load-bearing content.
+    const nfd = "/repo/cafe\u0301.ts";
+    // .toString() widens the SanitizedTapeText brand so toBe accepts the
+    // plain-string expected value.
+    expect(sanitizeTapeText(nfd, []).toString()).toBe(nfd);
+  });
+
   test("bidi controls, word joiner, and BOM are stripped from the citation text", () => {
     const out = sanitizeTapeText("/repo/\u202Esrc\u2066/x\u2060.ts\uFEFF done", []);
     for (const ch of ["\u202E", "\u2066", "\u2060", "\uFEFF"]) expect(out).not.toContain(ch);
