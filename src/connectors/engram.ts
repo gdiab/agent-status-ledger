@@ -72,11 +72,14 @@ const SESSION_ID_SHAPE = /^[0-9a-fA-F][0-9a-fA-F-]{7,63}$/;
 // This deliberately does not depend on renderer-side escaping (asl-xis).
 const TAPE_UNSAFE = /[\x00-\x1f\x7f<>]|\p{Cf}/gu;
 
-// Branded string: proof a tape-sourced value went through sanitizeTapeText.
-// The symbol is declared but never exported/created, so the only way to
-// produce a SanitizedTapeText outside this module is the choke point below —
-// a future field that quotes tape dialogue into an ASL data structure can
-// declare this type and the compiler will reject raw engram output.
+// Branded string marking a tape-sourced value that went through
+// sanitizeTapeText. This is a compile-time convention against ACCIDENTAL
+// misuse, not a proof: the brand can be forged with an assertion / `any` /
+// JSON.parse, and it widens back to plain string where the value is stored
+// (AgentReport.evidenceCitation). What it buys: sanitizeTapeText below is
+// the single sanctioned producer, so a future field that quotes tape
+// dialogue can declare this type and the compiler will flag any code path
+// that forgot the choke point — as long as nobody casts around it.
 declare const sanitizedTape: unique symbol;
 export type SanitizedTapeText = string & { readonly [sanitizedTape]: true };
 
@@ -108,8 +111,9 @@ export function sanitizeTapeText(s: string, extraPatterns: string[]): SanitizedT
 
 export interface UpgradeResult {
   matched: boolean;
-  // Branded: constructing an UpgradeResult with a raw (unsanitized) string
-  // here is a compile error — see SanitizedTapeText above.
+  // Branded: accidentally constructing an UpgradeResult with a raw
+  // (unsanitized) string here is a compile error — see the honest scope of
+  // that guarantee on SanitizedTapeText above.
   citation?: SanitizedTapeText;
 }
 
