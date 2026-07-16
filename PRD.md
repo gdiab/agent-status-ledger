@@ -4,7 +4,7 @@
 **Tagline:** A daily standup for every AI agent you run  
 **Owner:** George Diab  
 **Draft date:** 2026-06-27  
-**Status:** Draft v3, amended 2026-07-16 to reflect the 2026-07-15 Engram fidelity review
+**Status:** Draft v3. Amendments: 2026-07-07 connector reorder per ADR 0001; 2026-07-15 Engram fidelity review (body annotations are dated by decision date).
 
 ---
 
@@ -163,7 +163,7 @@ These projects suggest the local-first MVP is feasible.
 
 ## 7. Core Data Model
 
-The PRD uses four distinct objects:
+The PRD uses three ingestion objects plus one derived reporting construct (TaskThread):
 
 1. **Agent Profile**: the durable identity of an agent workstream.
 2. **Agent Run**: a specific execution/session/task performed by that profile.
@@ -561,7 +561,7 @@ The MVP is acceptable when the following are true.
 
 - Given three known agent runs from Claude Code/Codex CLI session history (per ADR 0001), the system creates distinct agent profiles and agent runs.
 - Given multiple runs in the same workdir/repo, the system attaches them to the same agent profile unless explicitly configured otherwise. (Reflects shipped workdir-based identity; to be superseded when the orchestrator-anchored model decided in §7 ships.)
-- Given a manually imported transcript, the system can attach it to an existing agent profile or create a new one. (Phase 1.5 — the manual import folder ships after MVP v0; see §11.)
+- ~~Given a manually imported transcript, the system can attach it to an existing agent profile or create a new one.~~ (Deferred to Phase 1.5 — the manual import folder ships after MVP v0; see §11.)
 
 ### Evidence correlation
 
@@ -616,7 +616,7 @@ Agent Status Ledger should be local-first by default.
 
 When the Engram connector is enabled, `~/.engram` holds Engram's local index of **verbatim, unredacted session tapes** — everything the harness said, ran, and read, fingerprinted into SQLite. Treat it accordingly:
 
-- `~/.engram` is a raw source, on the same footing as harness transcript directories. It never leaves the machine and is never quoted into report output directly.
+- `~/.engram` is a raw source, on the same footing as harness transcript directories. It never leaves the machine, and its content never enters report output except through the `sanitizeTapeText` choke point below.
 - Deleting a harness transcript does not delete its tape; retention of `~/.engram` is Engram's concern, but this product must assume the archive contains every secret that ever crossed a session.
 
 ### Redaction choke point for tape-sourced text (mandated 2026-07-15)
@@ -776,7 +776,7 @@ Amended 2026-07-15: email replaced Telegram as the canonical delivery channel. E
 
 ## 19. Open Questions
 
-1. ~~Should an agent profile map primarily to workdir, repo, user-assigned name, or tool session identity?~~ **Resolved 2026-07-15** (decided; not yet shipped — see §7). Agent identity will anchor to orchestrator runs; subagent runs will attach to their orchestrator as a lineage tree discovered via dispatch markers (`<engram-src id="<session-uuid>"/>` prepended to every Agent-tool dispatch prompt). Rationale: the orchestrator run is the unit the operator actually started and can be held accountable, and the dispatch marker gives deterministic lineage where workdir/timestamp correlation only guesses. Caveat: lineage history only accrues from adoption of the marker convention — pre-adoption subagent runs stay unattributed. See §7.
+1. ~~Should an agent profile map primarily to workdir, repo, user-assigned name, or tool session identity?~~ **Resolved 2026-07-15** (decided; not yet shipped). Identity anchors to orchestrator runs via dispatch-marker lineage — mechanism, rationale, and caveats in §7.
 2. What is the right default silent threshold: 2h, 6h, or 24h?
 3. Should summarization run entirely local by default, or is configurable cloud summarization acceptable?
 4. How much raw transcript should be retained?
