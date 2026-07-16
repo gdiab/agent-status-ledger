@@ -128,12 +128,19 @@ export interface AgentReport {
   // stays 1 (same contract as trends above).
   dispatchedBy?: DispatchRef[];
   dispatched?: DispatchRef[];
-  // True when the engram lineage probe hit its per-parent candidate cap for
-  // this profile's sessions, so `dispatched` may be an undercount (the walk
-  // could not peek every candidate tape). Renderers append "(list may be
-  // incomplete)" to the dispatched line — grounded language over false
-  // completeness. Additive + optional, absent when the walk was exhaustive —
-  // schemaVersion stays 1 (same contract as trends above).
+  // In-session subagent runs this profile's sessions dispatched with a
+  // marker (Task-tool runs): the subagent transcript inherits the
+  // dispatching session's harness session id, so the run is a genuine
+  // dispatch with no session of its own to link — a count is the honest
+  // representation. Additive + optional, absent when zero — schemaVersion
+  // stays 1 (same contract as trends above).
+  dispatchedRuns?: number;
+  // True when the engram lineage probe found more marker-carrying tapes for
+  // this profile's sessions than its per-parent cap allowed peeking, so
+  // `dispatched`/`dispatchedRuns` may be an undercount. Renderers append
+  // "(list may be incomplete)" to the dispatched line — grounded language
+  // over false completeness. Additive + optional, absent when the walk was
+  // exhaustive — schemaVersion stays 1 (same contract as trends above).
   dispatchTruncated?: true;
 }
 
