@@ -147,7 +147,7 @@ describe("buildReport", () => {
     const config = defaultConfig();
     config.connectors.claudeCode.rootDir = ccRoot;
     config.connectors.codex.enabled = false;
-    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram", beadPrefixes: [] };
 
     let inflight = 0;
     let maxInflight = 0;
@@ -221,7 +221,7 @@ describe("buildReport", () => {
     const config = defaultConfig();
     config.connectors.claudeCode.rootDir = ccRoot;
     config.connectors.codex.enabled = false;
-    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram", beadPrefixes: [] };
 
     const calls: string[][] = [];
     const alwaysMatchExec: Exec = async (argv) => {
@@ -274,7 +274,7 @@ describe("buildReport", () => {
     const config = defaultConfig();
     config.connectors.claudeCode.rootDir = ccRoot;
     config.connectors.codex.enabled = false;
-    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram", beadPrefixes: ["asl"] };
 
     const grepped: string[] = [];
     const spy: Exec = async (argv) => {
@@ -322,7 +322,7 @@ describe("buildReport", () => {
     const config = defaultConfig();
     config.connectors.claudeCode.rootDir = ccRoot;
     config.connectors.codex.enabled = false;
-    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram", beadPrefixes: [] };
 
     const matchExec: Exec = async (argv) => {
       if (argv[1] === "grep" && argv[2] === "cccc0000-0000-4000-8000-00000000000c") {
@@ -407,7 +407,7 @@ describe("buildReport", () => {
     const config = defaultConfig();
     config.connectors.claudeCode.rootDir = ccRoot;
     config.connectors.codex.enabled = false;
-    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram", beadPrefixes: [] };
 
     // Each run's tape carries a marker-prefixed msg.in owned by the
     // orchestrator's own uuid (Task transcripts inherit it) at a distinct
@@ -490,7 +490,7 @@ describe("buildReport", () => {
     const config = defaultConfig();
     config.connectors.claudeCode.rootDir = ccRoot;
     config.connectors.codex.enabled = false;
-    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram", beadPrefixes: [] };
 
     // Engram CLI double: grep on the orchestrator uuid finds the subagent's
     // tape; peeking that tape returns the subagent's first user message,
@@ -614,7 +614,7 @@ describe("buildReport", () => {
       const config = defaultConfig();
       config.connectors.claudeCode.rootDir = ccRoot;
       config.connectors.codex.enabled = false;
-      config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+      config.connectors.engram = { enabled: true, binaryPath: "/fake/engram", beadPrefixes: [] };
       return config;
     };
 
@@ -674,7 +674,7 @@ describe("buildReport", () => {
     const config = defaultConfig();
     config.connectors.claudeCode.rootDir = ccRoot;
     config.connectors.codex.enabled = false;
-    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram", beadPrefixes: [] };
 
     const exec: Exec = async (argv) => {
       if (argv[1] === "grep" && argv[2] === markerQuery(ORCH)) {
@@ -765,7 +765,7 @@ describe("buildReport", () => {
     const config = defaultConfig();
     config.connectors.claudeCode.rootDir = ccRoot;
     config.connectors.codex.enabled = false;
-    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram", beadPrefixes: ["asl"] };
 
     // Engram double: the bare-uuid grep finds each thread member's own tape;
     // peeking it with the message filter returns dialogue mentioning the
@@ -880,7 +880,7 @@ describe("buildReport", () => {
     expect(disabled.threads![0]!.sessions.map((s) => s.sessionId)).toEqual([S_A, S_B]);
 
     // engram enabled but broken: identical thread outcome, report intact
-    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram", beadPrefixes: ["asl"] };
     const failingExec: Exec = async () => ({ ok: false, stdout: "", stderr: "engram: not found" });
     const broken = await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: failingExec });
     expect(broken.agents).toHaveLength(2);

@@ -259,21 +259,21 @@ describe("checkEngram", () => {
       calls++;
       return { ok: true, stdout: "", stderr: "" };
     };
-    const r = await checkEngram({ enabled: false, binaryPath: "/opt/engram" }, spy);
+    const r = await checkEngram({ enabled: false, binaryPath: "/opt/engram", beadPrefixes: [] }, spy);
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("disabled");
     expect(calls).toBe(0);
   });
 
   test("passes when enabled and the binary responds", async () => {
-    const r = await checkEngram({ enabled: true, binaryPath: "/opt/engram" }, execOk("engram help text"));
+    const r = await checkEngram({ enabled: true, binaryPath: "/opt/engram", beadPrefixes: [] }, execOk("engram help text"));
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("/opt/engram");
     expect(r.fix).toBeUndefined();
   });
 
   test("fails with a build hint when enabled and the binary is missing or errors", async () => {
-    const r = await checkEngram({ enabled: true, binaryPath: "/opt/engram" }, execFail);
+    const r = await checkEngram({ enabled: true, binaryPath: "/opt/engram", beadPrefixes: [] }, execFail);
     expect(r.ok).toBe(false);
     expect(r.fix).toContain("cargo build");
   });
@@ -289,7 +289,7 @@ describe("runDoctor engram wiring", () => {
 
   test("probes the binary and passes when enabled and exec succeeds", async () => {
     const config = defaultConfig();
-    config.connectors.engram = { enabled: true, binaryPath: "/opt/engram" };
+    config.connectors.engram = { enabled: true, binaryPath: "/opt/engram", beadPrefixes: [] };
     const results = await runDoctor(fakeDeps({ config, exec: execOk("engram help text") }));
     const engram = results.find((r) => r.name === "engram binary")!;
     expect(engram.ok).toBe(true);
@@ -298,7 +298,7 @@ describe("runDoctor engram wiring", () => {
 
   test("fails with a build hint when enabled and exec fails", async () => {
     const config = defaultConfig();
-    config.connectors.engram = { enabled: true, binaryPath: "/opt/engram" };
+    config.connectors.engram = { enabled: true, binaryPath: "/opt/engram", beadPrefixes: [] };
     const results = await runDoctor(fakeDeps({ config, exec: execFail }));
     const engram = results.find((r) => r.name === "engram binary")!;
     expect(engram.ok).toBe(false);

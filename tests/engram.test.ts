@@ -230,8 +230,8 @@ describe("upgradeEvidence", () => {
 // newest-first sort, both query budgets, the default real exec, and the one
 // fail-soft boundary. buildReport's per-profile loop calls only this.
 describe("corroborateSessions", () => {
-  const enabled = { enabled: true, binaryPath: BIN };
-  const disabled = { enabled: false, binaryPath: BIN };
+  const enabled = { enabled: true, binaryPath: BIN, beadPrefixes: [] };
+  const disabled = { enabled: false, binaryPath: BIN, beadPrefixes: [] };
 
   const matchingExec = (uuid: string): Exec =>
     twoStepExec(grepResponse([ENGRAM_SID]), {
@@ -326,7 +326,7 @@ describe("corroborateSessions", () => {
     // degrades to no match, quickly and without throwing.
     const r = await corroborateSessions(
       [rawSession(UUID, "2026-07-07T12:00:00.000Z")],
-      { enabled: true, binaryPath: "/no/such/binary-xyz" },
+      { enabled: true, binaryPath: "/no/such/binary-xyz", beadPrefixes: [] },
       { redactPatterns: [] },
     );
     expect(r.matched).toBe(false);
@@ -344,8 +344,8 @@ describe("corroborateSessions", () => {
 // in-session subagent run (Task-tool transcripts inherit the parent's
 // sessionId).
 describe("discoverDispatchLinks", () => {
-  const enabled = { enabled: true, binaryPath: BIN };
-  const disabled = { enabled: false, binaryPath: BIN };
+  const enabled = { enabled: true, binaryPath: BIN, beadPrefixes: [] };
+  const disabled = { enabled: false, binaryPath: BIN, beadPrefixes: [] };
 
   const ORCH = "aaaa0000-0000-4000-8000-00000000000a"; // orchestrator (parent)
   const SUB = "bbbb0000-0000-4000-8000-00000000000b"; // subagent (child)
@@ -1024,10 +1024,11 @@ describe("discoverDispatchLinks", () => {
 // dialogue, for TaskThread grouping. Reuses the evidence upgrade's query
 // shape (grep the bare uuid, peek candidates) with a message-event filter
 // and the same mention-only ownership guard; extracted tokens are strict
-// shape-validated keys only, never quoted dialogue.
+// prefix-allowlisted keys only, never quoted dialogue.
 describe("findTaskKeys / discoverTaskKeys", () => {
-  const enabled = { enabled: true, binaryPath: BIN };
-  const disabled = { enabled: false, binaryPath: BIN };
+  const PREFIXES = ["asl", "zzz"];
+  const enabled = { enabled: true, binaryPath: BIN, beadPrefixes: PREFIXES };
+  const disabled = { enabled: false, binaryPath: BIN, beadPrefixes: PREFIXES };
   const MSG_FILTER = '"k":"msg.';
 
   function msgEvent(kind: "msg.in" | "msg.out", content: string, ownerUuid: string): unknown {
@@ -1040,21 +1041,46 @@ describe("findTaskKeys / discoverTaskKeys", () => {
     };
   }
 
-  test("extracts bead-shaped keys from msg.in and msg.out owned by the queried session, sorted and deduped", async () => {
+  test("extracts allowlisted-prefix keys from msg.in and msg.out owned by the queried session, sorted and deduped", async () => {
     const exec = twoStepExec(grepResponse([ENGRAM_SID]), {
       [ENGRAM_SID]: peekResponse([
         msgEvent("msg.in", "please implement bead asl-1wm today", UUID),
         msgEvent("msg.out", "working asl-1wm; also touched zzz-9x8.", UUID),
       ]),
     });
-    expect(await findTaskKeys(UUID, BIN, exec, [])).toEqual(["asl-1wm", "zzz-9x8"]);
+    expect(await findTaskKeys(UUID, PREFIXES, BIN, exec, [])).toEqual(["asl-1wm", "zzz-9x8"]);
+  });
+
+  test("tokens outside the prefix allowlist never become keys (live-validated: generic shapes drown in hyphenated English)", async () => {
+    const exec = twoStepExec(grepResponse([ENGRAM_SID]), {
+      [ENGRAM_SID]: peekResponse([
+        msgEvent("msg.in", "run apt-get, this is a one-off in-app fix for beads-xyz; also asl-1wm", UUID),
+      ]),
+    });
+    expect(await findTaskKeys(UUID, PREFIXES, BIN, exec, [])).toEqual(["asl-1wm"]);
+  });
+
+  test("no configured prefixes disables the pass without calling exec", async () => {
+    let calls = 0;
+    const spy: Exec = async () => {
+      calls++;
+      return { ok: true, stdout: cliStdout({ error: "no_results" }), stderr: "" };
+    };
+    expect(await findTaskKeys(UUID, [], BIN, spy, [])).toEqual([]);
+    const r = await discoverTaskKeys(
+      [{ sessionId: UUID, startedAt: "2026-07-07T12:00:00.000Z" }],
+      { enabled: true, binaryPath: BIN, beadPrefixes: [] },
+      { redactPatterns: [], exec: spy },
+    );
+    expect(r.size).toBe(0);
+    expect(calls).toBe(0);
   });
 
   test("rejects mention-only events (another session's dialogue must not donate keys)", async () => {
     const exec = twoStepExec(grepResponse([ENGRAM_SID]), {
       [ENGRAM_SID]: peekResponse([msgEvent("msg.in", "quoting asl-1wm here", "some-other-uuid")]),
     });
-    expect(await findTaskKeys(UUID, BIN, exec, [])).toEqual([]);
+    expect(await findTaskKeys(UUID, PREFIXES, BIN, exec, [])).toEqual([]);
   });
 
   test("ignores non-message events and non-string content", async () => {
@@ -1064,31 +1090,30 @@ describe("findTaskKeys / discoverTaskKeys", () => {
         { k: "msg.in", content: [{ type: "text", text: "asl-1wm" }], source: { session_id: UUID }, t: "t" },
       ]),
     });
-    expect(await findTaskKeys(UUID, BIN, exec, [])).toEqual([]);
+    expect(await findTaskKeys(UUID, PREFIXES, BIN, exec, [])).toEqual([]);
   });
 
-  test("composite tokens never shed a false key: markers, worktree names, hyphenated prose", async () => {
+  test("composite tokens never shed a false key: markers, worktree names, branch names", async () => {
     const exec = twoStepExec(grepResponse([ENGRAM_SID]), {
       [ENGRAM_SID]: peekResponse([
         msgEvent(
           "msg.in",
-          `<engram-src id="${UUID}"/> work in asl-wt-1wm on branch asl-1wm-task-threads; see task-threads docs`,
+          `<engram-src id="${UUID}"/> work in asl-wt-1wm on branch asl-1wm-task-threads`,
           UUID,
         ),
       ]),
     });
-    // "engram-src" (marker), "wt-1wm" (inside the worktree name), "asl-1wm"
-    // (embedded in the branch name, dash-adjacent) are all rejected by the
-    // shape's boundary rules; nothing in this dialogue is a clean bead
-    // mention.
-    expect(await findTaskKeys(UUID, BIN, exec, [])).toEqual([]);
+    // "asl-wt" (trailing dash), "wt-1wm" (leading dash, foreign prefix) and
+    // "asl-1wm" embedded dash-adjacent in the branch name are all rejected
+    // by the boundary rules; nothing here is a clean bead mention.
+    expect(await findTaskKeys(UUID, PREFIXES, BIN, exec, [])).toEqual([]);
   });
 
   test("drops a key a redact pattern would alter (fail closed) instead of surfacing or mangling it", async () => {
     const exec = twoStepExec(grepResponse([ENGRAM_SID]), {
-      [ENGRAM_SID]: peekResponse([msgEvent("msg.in", "work on asl-1wm and sec-4u2", UUID)]),
+      [ENGRAM_SID]: peekResponse([msgEvent("msg.in", "work on asl-1wm and zzz-4u2", UUID)]),
     });
-    expect(await findTaskKeys(UUID, BIN, exec, ["sec-\\w+"])).toEqual(["asl-1wm"]);
+    expect(await findTaskKeys(UUID, PREFIXES, BIN, exec, ["zzz-\\w+"])).toEqual(["asl-1wm"]);
   });
 
   test("reads every grep candidate up to the cap (tape slices can split the dialogue)", async () => {
@@ -1097,7 +1122,7 @@ describe("findTaskKeys / discoverTaskKeys", () => {
       [ENGRAM_SID]: peekResponse([msgEvent("msg.in", "start asl-1wm", UUID)]),
       [otherSlice]: peekResponse([msgEvent("msg.out", "finish asl-9pd", UUID)]),
     });
-    expect(await findTaskKeys(UUID, BIN, exec, [])).toEqual(["asl-1wm", "asl-9pd"]);
+    expect(await findTaskKeys(UUID, PREFIXES, BIN, exec, [])).toEqual(["asl-1wm", "asl-9pd"]);
   });
 
   test("issues the exact grep and peek argv shapes (message filter)", async () => {
@@ -1109,15 +1134,15 @@ describe("findTaskKeys / discoverTaskKeys", () => {
       calls.push(argv);
       return inner(argv);
     };
-    await findTaskKeys(UUID, BIN, exec, []);
+    await findTaskKeys(UUID, PREFIXES, BIN, exec, []);
     expect(calls[0]).toEqual([BIN, "grep", UUID, "--limit", "3"]);
     expect(calls[1]).toEqual([BIN, "peek", ENGRAM_SID, "--grep-filter", MSG_FILTER]);
   });
 
   test("never throws: hostile uuid, failing exec, malformed JSON all yield no keys", async () => {
-    expect(await findTaskKeys("--help", BIN, execFail, [])).toEqual([]);
-    expect(await findTaskKeys(UUID, BIN, execFail, [])).toEqual([]);
-    expect(await findTaskKeys(UUID, BIN, execOk("garbage{{"), [])).toEqual([]);
+    expect(await findTaskKeys("--help", PREFIXES, BIN, execFail, [])).toEqual([]);
+    expect(await findTaskKeys(UUID, PREFIXES, BIN, execFail, [])).toEqual([]);
+    expect(await findTaskKeys(UUID, PREFIXES, BIN, execOk("garbage{{"), [])).toEqual([]);
   });
 
   test("discoverTaskKeys: disabled connector returns an empty map without calling exec", async () => {
@@ -1153,7 +1178,7 @@ describe("findTaskKeys / discoverTaskKeys", () => {
       enabled,
       { redactPatterns: [], exec },
     );
-    expect(grepped).toEqual([UUID, OTHER]); // duplicate skipped; newest (13:00 dup of UUID) first
+    expect(grepped).toEqual([UUID, OTHER]); // duplicate skipped; newest first
     expect(r.get(UUID)).toEqual(["asl-1wm"]);
     expect(r.has(OTHER)).toBe(false); // no keys → no entry
   });

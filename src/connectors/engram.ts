@@ -88,7 +88,9 @@ export const ENGRAM_TIMEOUT_MS = 5_000;
 //             = 5 × 4 = 20 calls per claimed_only profile
 //   task keys: (window sessions) × (1 grep + up to MAX_KEY_TAPES peeks)
 //             = 4 calls per session worst-case — linear in the report
-//             window; an unindexed session costs exactly 1 grep (no_results).
+//             window; an unindexed session costs exactly 1 grep
+//             (no_results), and the whole pass costs 0 calls when no bead
+//             prefixes are configured.
 //   report total: lineage + task keys + 20 × (number of claimed_only
 //             profiles) — every term linear in the window or the profile
 //             count, no quadratic axis.
@@ -680,23 +682,28 @@ export async function discoverDispatchLinks(
 //
 // Redaction posture (the reason this stays count-and-key shaped): dialogue
 // content is unredacted verbatim, so nothing free-text leaves this pass.
-// A key must match TASK_KEY_SHAPE — a short, lowercase, bd-conventioned
-// token — and additionally survive redact() unchanged (builtin + user
-// patterns), else it is dropped, fail-closed. A ≤13-char shape-validated
-// token cannot carry a usable secret, so no sanitizeTapeText call site is
-// needed (the preferred design recorded on the bead).
+// A key must match taskKeyPattern — a configured tracker prefix plus a
+// short base36 suffix — and additionally survive redact() unchanged
+// (builtin + user patterns), else it is dropped, fail-closed. A ≤17-char
+// shape-validated token cannot carry a usable secret, so no
+// sanitizeTapeText call site is needed (the preferred design recorded on
+// the bead).
 
-// A bd-style bead ID as mentioned in dialogue: short lowercase prefix, dash,
-// exactly-3 base36 suffix — the shape of this tracker's IDs (asl-1wm,
-// asl-9pd, asl-cey). Boundaries reject dash/word/'<' neighbors on both
-// sides, so composite tokens never shed a false key: `<engram-src` (the
-// dispatch marker, present verbatim in every dispatch prompt), `asl-wt-1wm`
-// (worktree names), `task-threads`. Known precision limit, accepted:
-// hyphenated English that happens to fit ("sha-256", "one-off") can mint a
-// key; it forms a thread only when ≥2 sessions share it (src/threads.ts),
-// and the rendered surface is the token plus counts — a mislabeled grouping
-// at worst, never leaked content.
-const TASK_KEY_SHAPE = /(?<![<\w-])[a-z]{2,8}-[a-z0-9]{3}(?![\w-])/g;
+// A bead ID as mentioned in dialogue: a CONFIGURED tracker prefix, dash,
+// short base36 suffix (asl-1wm, asl-9pd, asl-cey). The prefix is an
+// allowlist (EngramConfig.beadPrefixes), not a shape guess: live validation
+// of a generic lowercase-word-dash-3 pattern minted 10 false keys for every
+// real one — hyphenated English ("apt-get", "one-off", "in-app") repeated
+// across sessions by shared prompt boilerplate groups exactly like a bead.
+// Boundaries reject dash/word/'<' neighbors on both sides, so composite
+// tokens never shed a false key: `<engram-src` (the dispatch marker,
+// present verbatim in every dispatch prompt), `asl-wt-1wm` (worktree
+// names), `asl-1wm-task-threads` (branch names). Prefixes have passed
+// BEAD_PREFIX_SHAPE at config load — lowercase alphanumerics only — so
+// interpolating them is regex-inert.
+function taskKeyPattern(beadPrefixes: string[]): RegExp {
+  return new RegExp(`(?<![<\\w-])(?:${beadPrefixes.join("|")})-[a-z0-9]{2,4}(?![\\w-])`, "g");
+}
 
 // Peek filter for dialogue lines: matches the raw tape line's kind field for
 // both msg.in and msg.out ("k":"msg.in" / "k":"msg.out"); like every peek
@@ -709,12 +716,14 @@ const MSG_FILTER = '"k":"msg.';
 // keys are enrichment, not evidence). Never throws.
 export async function findTaskKeys(
   sessionUuid: string,
+  beadPrefixes: string[],
   binaryPath: string,
   exec: Exec,
   extraPatterns: string[],
 ): Promise<string[]> {
   try {
-    if (!SESSION_ID_SHAPE.test(sessionUuid)) return [];
+    if (!SESSION_ID_SHAPE.test(sessionUuid) || beadPrefixes.length === 0) return [];
+    const pattern = taskKeyPattern(beadPrefixes);
     const keys = new Set<string>();
     // Every candidate up to the cap is read (no early stop): engram watch
     // slices a session's tape per debounce, so mentions can live in any of
@@ -727,7 +736,7 @@ export async function findTaskKeys(
         if (typeof event.content !== "string") continue;
         const source = event.source as Record<string, unknown> | undefined;
         if (source?.session_id !== sessionUuid) continue; // mention-only guard
-        for (const key of event.content.match(TASK_KEY_SHAPE) ?? []) {
+        for (const key of event.content.match(pattern) ?? []) {
           // Fail-closed redaction backstop: a token a redact pattern would
           // alter is dropped rather than surfaced or marker-mangled.
           if (redact(key, extraPatterns) === key) keys.add(key);
@@ -754,7 +763,9 @@ export async function discoverTaskKeys(
   opts: CorroborateOptions,
 ): Promise<Map<string, string[]>> {
   const keysBySession = new Map<string, string[]>();
-  if (!cfg.enabled) return keysBySession;
+  // No configured prefixes = bead-key threading off: the whole pass (and its
+  // per-session subprocess budget) is skipped, not just its matches.
+  if (!cfg.enabled || cfg.beadPrefixes.length === 0) return keysBySession;
   try {
     const realExec = opts.exec ?? makeSpawnExec(ENGRAM_TIMEOUT_MS);
     const newestFirst = [...sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
@@ -765,7 +776,7 @@ export async function discoverTaskKeys(
     for (const session of newestFirst) {
       if (!SESSION_ID_SHAPE.test(session.sessionId) || probed.has(session.sessionId)) continue;
       probed.add(session.sessionId);
-      const keys = await findTaskKeys(session.sessionId, cfg.binaryPath, realExec, opts.redactPatterns);
+      const keys = await findTaskKeys(session.sessionId, cfg.beadPrefixes, cfg.binaryPath, realExec, opts.redactPatterns);
       if (keys.length > 0) keysBySession.set(session.sessionId, keys);
     }
     return keysBySession;

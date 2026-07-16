@@ -148,7 +148,7 @@ export interface AgentReport {
 // only (edits, commits, errors). Counts, not content, by design: thread
 // membership can be keyed off unredacted Engram dialogue, and a surface that
 // carries only shape-validated keys and counts needs no tape sanitization
-// (see TASK_KEY_SHAPE in src/connectors/engram.ts). profile is the owning
+// (see taskKeyPattern in src/connectors/engram.ts). profile is the owning
 // card's displayName, so renderers can name it exactly like a DispatchRef.
 export interface ThreadSession {
   sessionId: string;
