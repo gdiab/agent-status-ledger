@@ -9,8 +9,19 @@ export interface ConnectorConfig { enabled: boolean; rootDir: string; }
 // Engram (github.com/clickety-clacks/engram) is an optional fail-soft
 // enrichment connector, not a log source — it has a binary path instead of a
 // rootDir, and defaults to disabled until proven in real use (see
-// src/connectors/engram.ts).
-export interface EngramConfig { enabled: boolean; binaryPath: string; }
+// src/connectors/engram.ts). beadPrefixes are the issue-tracker prefixes
+// task-key discovery may extract from dialogue (e.g. ["asl"] accepts
+// asl-1wm); empty = bead-key threading off. An allowlist, not a shape guess:
+// live validation showed a generic bead-shaped pattern drowns in hyphenated
+// English ("apt-get", "one-off") minted from shared prompt boilerplate —
+// 10 of 11 threads were false. Same posture as `enabled` itself: dormant
+// until the operator names their tracker.
+export interface EngramConfig { enabled: boolean; binaryPath: string; beadPrefixes: string[]; }
+
+// A usable bead prefix: short, lowercase, letter-first — composable into the
+// task-key regex verbatim (no metacharacters possible). Anything else in the
+// config list is dropped, fail-closed.
+export const BEAD_PREFIX_SHAPE = /^[a-z][a-z0-9]{0,11}$/;
 
 // No whitespace of any kind (space, tab, CR, LF) in either address part.
 const EMAIL_ADDRESS_SHAPE = /^[^\s@]+@[^\s@]+$/;
@@ -40,7 +51,7 @@ export function defaultConfig(): Config {
     connectors: {
       claudeCode: { enabled: true, rootDir: join(homedir(), ".claude", "projects") },
       codex: { enabled: true, rootDir: join(homedir(), ".codex") },
-      engram: { enabled: false, binaryPath: "engram" },
+      engram: { enabled: false, binaryPath: "engram", beadPrefixes: [] },
     },
     redactPatterns: [],
   };
@@ -75,6 +86,11 @@ export function loadConfig(path: string = configPath()): Config {
   const engramSection = conns?.engram;
   if (typeof engramSection?.enabled === "boolean") c.connectors.engram.enabled = engramSection.enabled;
   if (typeof engramSection?.binary_path === "string") c.connectors.engram.binaryPath = engramSection.binary_path;
+  if (Array.isArray(engramSection?.bead_prefixes)) {
+    c.connectors.engram.beadPrefixes = engramSection.bead_prefixes.filter(
+      (p): p is string => typeof p === "string" && BEAD_PREFIX_SHAPE.test(p),
+    );
+  }
   const em = raw.email as Record<string, unknown> | undefined;
   // TOML multiline strings can smuggle CR/LF (and other control chars) into
   // values that later land in RFC 5322 headers or a curl.cfg directive line

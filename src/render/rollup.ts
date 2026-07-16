@@ -1,10 +1,6 @@
-import type { DispatchRef, Report, Status } from "../types";
+import type { DispatchRef, Report, Status, ThreadSession } from "../types";
+import { STATUS_RANK } from "../status";
 
-// Exhaustive by construction: adding a Status member without a display rank
-// is a compile error, so new statuses can't silently vanish from the rollup.
-const STATUS_RANK: Record<Status, number> = {
-  failed: 0, silent: 1, blocked: 2, needs_human: 3, active: 4, idle: 5, completed: 6,
-};
 const STATUS_ORDER = (Object.keys(STATUS_RANK) as Status[]).sort((a, b) => STATUS_RANK[a] - STATUS_RANK[b]);
 
 export interface RollupCounts {
@@ -66,6 +62,14 @@ export function dispatchedBody(labels: string[], runs: number, truncated: boolea
   if (total === 0) return truncated ? "subagent runs: none identified (list may be incomplete)" : undefined;
   const parts = [...labels, ...(runs ? [plural(runs, "in-session run")] : [])];
   return `${plural(total, "subagent run")}: ${parts.join(", ")}${truncated ? " (list may be incomplete)" : ""}`;
+}
+
+// Per-member evidence phrase of a task-thread run, shared by the markdown
+// and html renderers so the phrasing rule never drifts: zero errors are
+// suppressed (an error count is an exception signal, not a baseline fact),
+// zero files/commits are not (their absence is itself informative).
+export function threadSessionSummary(s: ThreadSession): string {
+  return [plural(s.files, "file"), plural(s.commits, "commit"), ...(s.errors ? [plural(s.errors, "error")] : [])].join(", ");
 }
 
 export function rollupLine(report: Report): string {

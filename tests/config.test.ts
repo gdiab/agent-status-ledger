@@ -76,6 +76,20 @@ describe("config", () => {
     const c = loadConfig(join(tmpdir(), "does-not-exist.toml"));
     expect(c.connectors.engram.enabled).toBe(false);
     expect(c.connectors.engram.binaryPath).toBe("engram");
+    expect(c.connectors.engram.beadPrefixes).toEqual([]);
+  });
+
+  test("engram bead_prefixes keeps only usable prefixes (lowercase alphanumeric, letter-first)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "asl-config-"));
+    const p = join(dir, "config.toml");
+    writeFileSync(p, [
+      "[connectors.engram]",
+      'bead_prefixes = ["asl", "bd2", "ASL", "a(sl", "-asl", "", "waytoolongprefix1"]',
+    ].join("\n"));
+    // uppercase, regex metacharacters, dash-leading, empty, and overlong
+    // entries are dropped fail-closed — they could not compose into the
+    // task-key pattern safely.
+    expect(loadConfig(p).connectors.engram.beadPrefixes).toEqual(["asl", "bd2"]);
   });
 });
 

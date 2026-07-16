@@ -172,7 +172,7 @@ describe("boundary guard: engram parsing never returns raw tape text", () => {
     });
     const r = await corroborateSessions(
       [rawSession(UUID, "2026-07-07T12:00:00.000Z")],
-      { enabled: true, binaryPath: BIN },
+      { enabled: true, binaryPath: BIN, beadPrefixes: [] },
       { redactPatterns: ["customsecretvalue"], exec },
     );
     expect(r.matched).toBe(true);
@@ -188,7 +188,7 @@ describe("boundary guard: engram parsing never returns raw tape text", () => {
 // cannot be) builds its fixture report from this result.
 const upgrade = await corroborateSessions(
   [rawSession(UUID, "2026-07-07T12:00:00.000Z")],
-  { enabled: true, binaryPath: BIN },
+  { enabled: true, binaryPath: BIN, beadPrefixes: [] },
   { redactPatterns: [], exec: leakyExec },
 );
 

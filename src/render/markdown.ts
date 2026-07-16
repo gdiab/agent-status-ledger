@@ -1,5 +1,5 @@
-import type { AgentReport, Report } from "../types";
-import { dispatchRefLabel, dispatchedBody, plural, rollupLine } from "./rollup";
+import type { AgentReport, Report, TaskThread } from "../types";
+import { dispatchRefLabel, dispatchedBody, plural, rollupLine, threadSessionSummary } from "./rollup";
 import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 
 // Names come from workdir basenames and platform labels; escape markdown
@@ -74,6 +74,21 @@ function agentSection(a: AgentReport): string {
   return lines.join("\n");
 }
 
+// One task thread (src/threads.ts): heading is the key/title (a
+// shape-validated bead ID, or redacted shared-file basenames — mdEscape
+// either way), then one line per member run with its evidence counts.
+// Session refs reuse dispatchRefLabel so threads and dispatch lineage name
+// runs identically.
+function threadSection(t: TaskThread): string {
+  const lines = [
+    `### ${mdEscape(t.title)}${t.source === "files" ? " (file cluster)" : ""} — ${t.status}, ${plural(t.sessions.length, "session")}`,
+  ];
+  for (const s of t.sessions) {
+    lines.push(`- ${s.startedAt} — ${mdEscape(dispatchRefLabel({ sessionId: s.sessionId, profile: s.profile }))}: ${threadSessionSummary(s)}`);
+  }
+  return lines.join("\n");
+}
+
 export function renderMarkdown(report: Report): string {
   const day = report.windowEnd.slice(0, 10);
   const parts = [
@@ -93,6 +108,13 @@ export function renderMarkdown(report: Report): string {
     for (const a of report.exceptions) {
       parts.push(`- **${mdEscape(a.displayName)}** — ${a.status} (${a.severity}): ${mdText(a.narrative.recommendation)}`);
     }
+  }
+  // Task threads sit between the exceptions triage and the per-agent cards:
+  // the operator's question is "how is the task going", answered before the
+  // run-by-run detail. Absent threads = absent section, byte-identical output.
+  if (report.threads?.length) {
+    parts.push("", "## Task threads", "");
+    parts.push(report.threads.map(threadSection).join("\n\n"));
   }
   parts.push("", "## Agents", "");
   parts.push(report.agents.map(agentSection).join("\n\n---\n\n"));
