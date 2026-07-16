@@ -188,10 +188,46 @@ describe("renderers", () => {
 
     for (const layout of ["cards", "flat"] as const) {
       const html = renderHtml({ ...report, agents: [truncatedNoLinks], exceptions: [] }, { layout });
-      expect(html).toContain(`<dt>Dispatched</dt><dd class="dispatch">none identified (list may be incomplete)</dd>`);
+      expect(html).toContain(`<dt>Dispatched</dt><dd class="dispatch">subagent runs: none identified (list may be incomplete)</dd>`);
       const htmlPlain = renderHtml({ ...report, agents: [noProbe], exceptions: [] }, { layout });
       expect(htmlPlain).not.toContain("Dispatched");
     }
+  });
+
+  test("markdown+html: in-session runs render as a count, alone and alongside named refs", () => {
+    // In-session subagent runs (Task tool) share the dispatching session's
+    // harness id, so there's no session to name — the count is the fact.
+    const runsOnly = agent({ dispatchedRuns: 2 });
+    const mixed = agent({
+      dispatched: [{ sessionId: "bbbb0000-0000-4000-8000-00000000000b", profile: "sub (claude-code)" }],
+      dispatchedRuns: 2,
+    });
+
+    const mdRuns = renderMarkdown({ ...report, agents: [runsOnly], exceptions: [] });
+    expect(mdRuns).toContain("- Dispatched 2 subagent runs: 2 in-session runs");
+    const mdMixed = renderMarkdown({ ...report, agents: [mixed], exceptions: [] });
+    expect(mdMixed).toContain("- Dispatched 3 subagent runs: sub (claude-code) (session bbbb0000), 2 in-session runs");
+
+    for (const layout of ["cards", "flat"] as const) {
+      const htmlRuns = renderHtml({ ...report, agents: [runsOnly], exceptions: [] }, { layout });
+      expect(htmlRuns).toContain(`<dt>Dispatched</dt><dd class="dispatch">2 subagent runs: 2 in-session runs</dd>`);
+      const htmlMixed = renderHtml({ ...report, agents: [mixed], exceptions: [] }, { layout });
+      expect(htmlMixed).toContain(`<dt>Dispatched</dt><dd class="dispatch">3 subagent runs: sub (claude-code) (session bbbb0000), 2 in-session runs</dd>`);
+    }
+  });
+
+  test("markdown: a truncated in-session run count carries the incomplete-list suffix", () => {
+    const a = agent({ dispatchedRuns: 1, dispatchTruncated: true });
+    const md = renderMarkdown({ ...report, agents: [a], exceptions: [] });
+    expect(md).toContain("- Dispatched 1 subagent run: 1 in-session run (list may be incomplete)");
+  });
+
+  test("json: dispatchedRuns rides the agent natively", () => {
+    const a = agent({ dispatchedRuns: 3 });
+    const parsed = JSON.parse(renderJson({ ...report, agents: [a], exceptions: [] }));
+    expect(parsed.agents[0].dispatchedRuns).toBe(3);
+    const plain = JSON.parse(renderJson(report));
+    expect(plain.agents[0].dispatchedRuns).toBeUndefined();
   });
 
   test("json: dispatchTruncated rides the agent natively", () => {

@@ -15,8 +15,11 @@ export function cliStdout(json: unknown): string {
   return `config: /Users/gd/.engram/config.yml\ndb: /Users/gd/.engram/index.sqlite\n${JSON.stringify(json)}\n`;
 }
 
-export function grepResponse(sessionIds: string[]): string {
+// `total` is grep's index-wide match count; it exceeds sessions.length when
+// --limit (or the CLI's default cap) hid candidates — the truncation signal.
+export function grepResponse(sessionIds: string[], total = sessionIds.length): string {
   return cliStdout({
+    total,
     returned: sessionIds.length,
     sessions: sessionIds.map((session_id, i) => ({
       session_id,
@@ -26,6 +29,13 @@ export function grepResponse(sessionIds: string[]): string {
       timestamp: "2026-07-14T13:39:18.481Z",
     })),
   });
+}
+
+// The dispatch marker as it appears in a RAW tape line: tape events are JSON
+// objects, so the quotes inside the event's content string are escaped. The
+// lineage probe greps and peek-filters this literal.
+export function markerQuery(uuid: string): string {
+  return `<engram-src id=\\"${uuid}\\"/>`;
 }
 
 // peek returns raw tape event JSON, one event per content line, in

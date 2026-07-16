@@ -74,12 +74,12 @@ export function isTrivialProfile(profile: AgentProfile, commits: CommitEvidence[
 function attachDispatchLineage(agents: AgentReport[], profiles: AgentProfile[], opts: BuildReportOptions): void {
   const liveIds = new Set(agents.map((a) => a.profileId));
   const liveProfiles = profiles.filter((p) => liveIds.has(p.profileId));
-  const { links: dispatchLinks, truncatedParents } = discoverDispatchLinks(
+  const { links: dispatchLinks, runsByParent, truncatedParents } = discoverDispatchLinks(
     liveProfiles.flatMap((p) => p.sessions.map((s) => ({ sessionId: s.sessionId, startedAt: s.startedAt }))),
     opts.config.connectors.engram,
     opts.engramExec,
   );
-  if (dispatchLinks.length === 0 && truncatedParents.length === 0) return;
+  if (dispatchLinks.length === 0 && runsByParent.length === 0 && truncatedParents.length === 0) return;
 
   // Session uuid → owning live profile, for naming the other end of a link.
   // Every link end and every truncated parent came from liveProfiles'
@@ -107,7 +107,15 @@ function attachDispatchLineage(agents: AgentReport[], profiles: AgentProfile[], 
     slot(child.profileId).dispatchedBy.push({ sessionId: link.parentSessionId, profile: parent.displayName });
   }
 
-  // A truncated parent's dispatched list may be an undercount: mark the
+  // In-session subagent runs attach to the profile owning the dispatching
+  // session; a profile whose several sessions each dispatched runs sums them.
+  const runsByProfile = new Map<string, number>();
+  for (const { parentSessionId, runCount } of runsByParent) {
+    const profile = profileBySession.get(parentSessionId);
+    if (profile) runsByProfile.set(profile.profileId, (runsByProfile.get(profile.profileId) ?? 0) + runCount);
+  }
+
+  // A truncated parent's dispatched lineage may be an undercount: mark the
   // owning profile so renderers can say "list may be incomplete".
   const truncatedProfileIds = new Set<string>();
   for (const parentSessionId of truncatedParents) {
@@ -119,6 +127,8 @@ function attachDispatchLineage(agents: AgentReport[], profiles: AgentProfile[], 
     const links = linksByProfile.get(agent.profileId);
     if (links?.dispatchedBy.length) agent.dispatchedBy = links.dispatchedBy;
     if (links?.dispatched.length) agent.dispatched = links.dispatched;
+    const runs = runsByProfile.get(agent.profileId);
+    if (runs) agent.dispatchedRuns = runs;
     if (truncatedProfileIds.has(agent.profileId)) agent.dispatchTruncated = true;
   }
 }

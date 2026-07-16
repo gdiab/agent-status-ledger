@@ -40,33 +40,42 @@ export const ENGRAM_TIMEOUT_MS = 5_000;
 //   stronger than a mention (hundreds of touch-count points vs a handful),
 //   so if the real session is indexed at all it is in the first hits —
 //   trying more just burns subprocess time on mention-only transcripts.
-// - MAX_LINEAGE_CANDIDATES (dispatch lineage): the lineage grep must
-//   represent MULTIPLE children — the parent's own tape always consumes one
-//   slot (it matches its own uuid strongest), so an evidence-sized cap of 3
-//   silently reported at most 2 of a 4-subagent fan-out. A parent-uuid grep
-//   ranks real dispatch tapes high, so 6 covers realistic fan-out (parent
-//   tape + 5 children) without an unbounded probe. When grep returns more
-//   candidates than this cap, the walk flags truncation (see
-//   grepPeekCandidates' `meta.truncated`), discoverDispatchLinks reports
-//   the affected parents in `truncatedParents`, and report.ts surfaces it
-//   as AgentReport.dispatchTruncated — rendered as "(list may be
-//   incomplete)" so partial lineage is never presented as the whole truth.
+// - MAX_MARKER_TAPES (dispatch lineage): unlike the evidence grep, the
+//   lineage grep queries the dispatch-marker LITERAL, so it returns ONLY
+//   marker-carrying tapes — one per dispatched run plus the occasional tape
+//   quoting the marker verbatim (rejected by the event guards, but still a
+//   peek each). The cap must cover a realistic fan-out whole: the live
+//   validation shape was a 9-run fan-out plus 2 quoting tapes = 11 tapes,
+//   so 16 gives headroom without an unbounded probe. The cap is also passed
+//   as grep's --limit; grep's `total` still reports the index-wide match
+//   count, and when it exceeds what the walk could peek the probe flags
+//   truncation (see grepPeekCandidates' `meta.truncated`),
+//   discoverDispatchLinks reports the affected parents in
+//   `truncatedParents`, and report.ts surfaces it as
+//   AgentReport.dispatchTruncated — rendered as "(list may be incomplete)"
+//   so partial lineage is never presented as the whole truth.
 // - MAX_SESSIONS_PER_PROFILE (evidence upgrade): sessions are tried
 //   newest-first (recent sessions are the ones most likely to be in the
 //   index and most relevant to today's report).
-// - MAX_LINEAGE_SESSIONS (dispatch lineage): report-wide, because lineage
-//   is a cross-profile query — one grep per candidate parent session,
-//   newest-first.
+// - Dispatch lineage has NO report-wide session cap: every session in the
+//   window is probed (newest-first, for log readability). The bead's
+//   contract is O(report sessions) and deterministic — a cap would silently
+//   drop the oldest orchestrators exactly on busy multi-project days (live
+//   validation: >10 sessions started after the day's real orchestrator, so
+//   a 10-session budget never reached it). A session that dispatched
+//   nothing costs exactly 1 grep (no_results); peeks are spent only on
+//   marker-carrying tapes, which exist only where dispatches (or verbatim
+//   quotes) exist.
 // Worst-case ledger, per report:
-//   lineage:  MAX_LINEAGE_SESSIONS × (1 grep + MAX_LINEAGE_CANDIDATES peeks)
-//             = 10 × 7 = 70 calls
+//   lineage:  (window sessions) × 1 grep + (marker tapes that exist, up to
+//             MAX_MARKER_TAPES per parent) peeks — linear in the report
+//             window, ~1 call per session in the common case.
 //   evidence: MAX_SESSIONS_PER_PROFILE × (1 grep + MAX_GREP_CANDIDATES peeks)
 //             = 5 × 4 = 20 calls per claimed_only profile
-//   report total: 70 + 20 × (number of claimed_only profiles)
+//   report total: lineage + 20 × (number of claimed_only profiles)
 const MAX_GREP_CANDIDATES = 3;
-const MAX_LINEAGE_CANDIDATES = 6;
+const MAX_MARKER_TAPES = 16;
 const MAX_SESSIONS_PER_PROFILE = 5;
-const MAX_LINEAGE_SESSIONS = 10;
 
 // Session ids reach argv from two untrusted sources: harness transcripts
 // (RawSession.sessionId is parsed from log files) and engram's own grep
@@ -79,6 +88,13 @@ const MAX_LINEAGE_SESSIONS = 10;
 // (option-looking strings, shell metacharacters, empty) is rejected before
 // any exec, so a hostile id can never become an engram CLI option.
 const SESSION_ID_SHAPE = /^[0-9a-fA-F][0-9a-fA-F-]{7,63}$/;
+
+// The ISO-8601 instant engram stamps on every tape event's `t`. Used to
+// validate a timestamp before it anchors an in-session run identity in
+// findDispatches: an empty or garbage `t` must be rejected outright, not
+// used as a dedupe key (a degenerate key like "" would collapse every
+// distinct dispatch that shares the junk value into one run).
+const TAPE_TIMESTAMP_SHAPE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
 // Tape-sourced strings end up in every consumer surface (JSON, markdown,
 // html, digest, email) and are assembled from engram-reported content
@@ -239,32 +255,49 @@ function* tapeEvents(
 }
 
 // The canonical grep→peek candidate walk shared by the evidence upgrade and
-// dispatch lineage: validated uuid → grep → parsed response → capped
-// candidate list → validated tape ids → peek (with the caller's filter) →
-// parsed peek responses, yielded lazily so a caller that stops at its first
-// hit never spends the remaining peek budget. Every reject path (invalid
-// uuid, failed exec, malformed JSON, hostile tape id) is a silent skip —
-// the fail-soft boundary lives in the entry points, not here.
-// `meta.truncated` reports when grep returned more candidates than the cap
-// allowed probing — the partial-results signal lineage callers propagate
-// up to the report (evidence-upgrade callers don't pass meta and treat a
-// truncated walk as an ordinary miss).
+// dispatch lineage: grep query → parsed response → capped candidate list →
+// validated tape ids → peek (with the caller's filter) → parsed peek
+// responses, yielded lazily so a caller that stops at its first hit never
+// spends the remaining peek budget. Every reject path (failed exec,
+// malformed JSON, hostile tape id) is a silent skip — the fail-soft
+// boundary lives in the entry points, not here.
+// `grepQuery` is caller-constructed from a SESSION_ID_SHAPE-validated uuid
+// — the bare uuid (evidence upgrade) or the marker literal built around one
+// (dispatch lineage) — so it is never option-shaped; the caller owns that
+// validation because only it knows which shape it is building. The
+// option-shape rejection below is a fail-closed backstop for future
+// callers, not a substitute for that validation.
+// `meta.truncated` reports when grep matched more tapes index-wide (its
+// `total`) than the cap allowed probing — the partial-results signal
+// lineage callers propagate up to the report (evidence-upgrade callers
+// don't pass meta and treat a truncated walk as an ordinary miss).
 function* grepPeekCandidates(
-  sessionUuid: string,
+  grepQuery: string,
   binaryPath: string,
   exec: Exec,
   peekFilter: string,
   maxCandidates: number,
   meta?: { truncated: boolean },
 ): Generator<{ engramSid: string; response: Record<string, unknown> }> {
-  if (!SESSION_ID_SHAPE.test(sessionUuid)) return;
-  const grep = exec([binaryPath, "grep", sessionUuid]);
+  if (grepQuery.startsWith("-")) return;
+  const grep = exec([binaryPath, "grep", grepQuery, "--limit", String(maxCandidates)]);
   if (!grep.ok) return;
   const grepObj = parseCliResponse(grep.stdout);
   if (!grepObj) return;
 
   const all = Array.isArray(grepObj.sessions) ? (grepObj.sessions as unknown[]) : [];
-  if (meta) meta.truncated = all.length > maxCandidates;
+  // `total` is grep's index-wide match count. An older CLI without the
+  // field leaves truncation unknowable: below the cap the returned list is
+  // necessarily complete (no fabricated truncation), but a response that
+  // fills the cap may have been cut exactly at it, so it is conservatively
+  // flagged truncated rather than presenting possibly-partial results as
+  // the whole truth.
+  if (meta) {
+    meta.truncated =
+      typeof grepObj.total === "number"
+        ? Math.max(grepObj.total, all.length) > Math.min(all.length, maxCandidates)
+        : all.length >= maxCandidates;
+  }
   for (const candidate of all.slice(0, maxCandidates)) {
     const engramSid = (candidate as Record<string, unknown> | null)?.session_id;
     if (typeof engramSid !== "string" || !SESSION_ID_SHAPE.test(engramSid)) continue;
@@ -304,6 +337,9 @@ export function upgradeEvidence(
   extraPatterns: string[],
 ): UpgradeResult {
   try {
+    // The uuid is the grep query verbatim; reject hostile shapes before any
+    // exec (grepPeekCandidates trusts its caller to have validated).
+    if (!SESSION_ID_SHAPE.test(sessionUuid)) return { matched: false };
     for (const { engramSid, response } of grepPeekCandidates(
       sessionUuid, binaryPath, exec, CODE_EDIT_FILTER, MAX_GREP_CANDIDATES,
     )) {
@@ -367,39 +403,66 @@ export function corroborateSessions(
 //
 // Engram's dispatch-marker convention (engram specs/core/dispatch-marker.md):
 // the dispatching party prepends `<engram-src id="<uuid>"/>` to the handoff
-// prompt, so the uuid lands verbatim in both transcripts and engram records a
-// dispatch_links row per tape at ingest. Engram's own chain traversal is only
-// reachable through `explain <file/span/literal>` (grep emits a top-level
-// `dispatch_lineage` key but always `[]`, and `explain --dispatch` was removed
-// from the CLI), so ASL reconstructs the one hop it needs from the same two
-// proven primitives the evidence upgrade uses — grep by uuid, peek by tape id:
+// prompt, so the marker lands verbatim at the START of the dispatched agent's
+// transcript. Engram's own chain traversal is only reachable through
+// `explain <file/span/literal>` (grep emits a top-level `dispatch_lineage`
+// key but always `[]`, and `explain --dispatch` was removed from the CLI),
+// so ASL reconstructs the one hop it needs from the same two proven
+// primitives the evidence upgrade uses — grep, then peek by tape id.
 //
-//   1. In ASL's dispatch SOP the marker id is the ORCHESTRATOR's harness
-//      session uuid, so `engram grep <parent-uuid>` finds every tape whose
-//      transcript contains it — the orchestrator's own tape plus each
-//      dispatched subagent's tape.
-//   2. `engram peek <tape> --grep-filter <parent-uuid>` returns the tape
-//      lines naming that uuid (the marker line and its context). A session
-//      counts as a dispatched child only when ONE parsed tape event
-//      satisfies ALL of, on that same event:
-//        - the event is an inbound message (k == "msg.in" — the dispatch
-//          prompt arrives as the subagent's incoming message; engram
-//          specs/core/event-contract.md is the kind registry),
-//        - its parsed `content` is a string that STARTS with the literal
-//          marker `<engram-src id="<parent-uuid>"/>` (leading whitespace
-//          only) — the spec says "The marker is prepended to the handoff
-//          message" (engram specs/core/dispatch-marker.md), so a genuine
-//          dispatch always carries it as a prefix; a marker quoted
-//          mid-conversation or mid-text never matches — and
-//        - its source.session_id is a DIFFERENT session known to this
-//          report (the mention-only guard, inverted: here the mention IS
-//          the evidence, but it must resolve to a session ASL can name).
-//      Same-event correlation is load-bearing: a session merely QUOTING the
-//      marker in a msg.out/tool.result (code review, test fixture), or a
-//      peek response mixing an A-owned marker line with unrelated B-owned
-//      context lines, must not mint an edge. The orchestrator's own tape
-//      fails on both kind (it SENT the marker inside a tool call, k ==
-//      "msg.out") and ownership, so it never self-links.
+// The probe queries the marker LITERAL, not the parent uuid (asl-9pd). Live
+// validation killed the parent-uuid grep: a session uuid matches hundreds
+// of tapes (harness tool results embed session-scoped paths naming it, and
+// engram watch emits per-debounce tape slices, so the parent's own slices
+// flood the ranking), which meant genuine dispatch tapes lost the ranking
+// race and every candidate cap truncated before reaching them. The marker
+// literal is immune to both noise sources, because it is queried AS IT
+// APPEARS IN A RAW TAPE LINE: tape events are JSON objects, so the marker
+// inside a `content` string carries escaped quotes
+// (`<engram-src id=\"<uuid>\"/>`), and grep is a literal substring search
+// over raw lines. That shape is doubly selective:
+//   - a tape matches only where the marker reached a content STRING — the
+//     dispatched side's own transcript (its first inbound message starts
+//     with the marker) or a transcript quoting the marker verbatim;
+//   - the DISPATCHING side's own tape does NOT match: there the marker sits
+//     inside a tool-call prompt argument, nested one JSON level deeper, so
+//     its quotes are double-escaped in the raw line.
+// So the uuid grep is noise-dominated while the marker-literal grep returns
+// only dispatch tapes plus the rare verbatim quote (rejected by the event
+// guards below). Deterministic, O(report sessions) greps, no ranking
+// dependence.
+//
+// `engram peek <tape> --grep-filter <marker-literal>` then returns the tape
+// lines carrying the marker (and their context). A parsed tape event mints
+// lineage only when ALL of, on that same event:
+//   - the event is an inbound message (k == "msg.in" — the dispatch prompt
+//     arrives as the dispatched agent's incoming message; engram
+//     specs/core/event-contract.md is the kind registry),
+//   - its parsed `content` is a string that STARTS with the literal marker
+//     `<engram-src id="<parent-uuid>"/>` (leading whitespace only) — the
+//     spec says "The marker is prepended to the handoff message" (engram
+//     specs/core/dispatch-marker.md), so a genuine dispatch always carries
+//     it as a prefix; a marker quoted mid-conversation or mid-text never
+//     matches — and
+//   - its source.session_id classifies the dispatch:
+//       - ANOTHER session known to this report → a cross-session link,
+//         parent → child (the mention-only guard, inverted: here the
+//         mention IS the evidence, but it must resolve to a session ASL
+//         can name);
+//       - the parent uuid ITSELF → an in-session subagent run: Claude Code
+//         Task-tool subagent transcripts inherit the dispatching session's
+//         sessionId, so engram records the run's events under the parent's
+//         own uuid. A genuine dispatch with no harness session of its own —
+//         counted per run (deduped by the inbound message's timestamp +
+//         content, the closest thing to a per-run identity the tape
+//         exposes; see findDispatches for the validation and the residual
+//         precision limit) and attributed to the parent, never minted as a
+//         self-link;
+//       - anything else → a session outside the report window; skipped.
+// Same-event correlation is load-bearing: a session merely QUOTING the
+// marker in a msg.out/tool.result (code review, test fixture), or a peek
+// response mixing an A-owned marker line with unrelated B-owned context
+// lines, must not mint lineage.
 //
 // Same discipline as the evidence upgrade: never throws, allowlisted argv
 // only, bounded subprocess budget, and consuming CLI JSON only (never the
@@ -423,6 +486,15 @@ function markerPrefixPattern(sessionUuid: string): RegExp {
   return new RegExp(`^\\s*<engram-src id="${sessionUuid}"/>`);
 }
 
+// The marker as it appears in a RAW tape line (JSON-escaped quotes) — the
+// grep query and peek filter for the lineage probe (see the pipeline
+// comment above for why this shape, not the uuid, is what gets queried).
+// Built only from a SESSION_ID_SHAPE-validated uuid, and it starts with
+// '<', so it can never be mistaken for a CLI option.
+function markerTapeLiteral(sessionUuid: string): string {
+  return `<engram-src id=\\"${sessionUuid}\\"/>`;
+}
+
 export interface DispatchLink {
   parentSessionId: string; // orchestrator harness session uuid (the marker id)
   childSessionId: string;  // dispatched subagent harness session uuid
@@ -435,27 +507,34 @@ export interface LineageSession {
   startedAt: string;
 }
 
-// Sessions dispatched BY `parentUuid`, resolved against the report's own
-// session set (grep parent uuid, peek each candidate tape, keep sessions
-// whose own inbound-message event carries the marker — see the pipeline
-// comment above for the same-event correlation rule). `truncated` is true
-// when grep found more candidate tapes than MAX_LINEAGE_CANDIDATES allowed
-// peeking, i.e. `children` may be an undercount — surfaced so the report
-// can say "list may be incomplete" rather than dropping the fact. Never
-// throws.
-export function findDispatchedSessions(
+// Dispatches made BY `parentUuid`, resolved against the report's own
+// session set (grep the marker literal, peek each marker-carrying tape,
+// classify the inbound marker events — see the pipeline comment above for
+// the same-event correlation rule). `children` are cross-session dispatch
+// targets; `runCount` counts in-session subagent runs (marker events owned
+// by the parent itself, deduped by inbound-message timestamp + content —
+// engram exposes no run/event id, see the identity comment in the msg.in
+// classification below). `truncated`
+// is true when grep matched more marker tapes index-wide than
+// MAX_MARKER_TAPES allowed peeking, i.e. the discovered lineage may be an
+// undercount — surfaced so the report can say "list may be incomplete"
+// rather than dropping the fact. Never throws.
+export function findDispatches(
   parentUuid: string,
   knownSessionIds: ReadonlySet<string>,
   binaryPath: string,
   exec: Exec,
-): { children: string[]; truncated: boolean } {
+): { children: string[]; runCount: number; truncated: boolean } {
+  const nothing = { children: [], runCount: 0, truncated: false };
   try {
-    if (!SESSION_ID_SHAPE.test(parentUuid)) return { children: [], truncated: false };
+    if (!SESSION_ID_SHAPE.test(parentUuid)) return nothing;
+    const literal = markerTapeLiteral(parentUuid);
     const marker = markerPrefixPattern(parentUuid);
     const children = new Set<string>();
+    const runs = new Set<string>();
     const meta = { truncated: false };
     for (const { response } of grepPeekCandidates(
-      parentUuid, binaryPath, exec, parentUuid, MAX_LINEAGE_CANDIDATES, meta,
+      literal, binaryPath, exec, literal, MAX_MARKER_TAPES, meta,
     )) {
       for (const event of tapeEvents(response)) {
         // All three checks correlate to this ONE event: inbound-message
@@ -466,31 +545,62 @@ export function findDispatchedSessions(
         const source = event.source as Record<string, unknown> | undefined;
         const sid = source?.session_id;
         if (typeof sid !== "string" || !SESSION_ID_SHAPE.test(sid)) continue;
-        if (sid !== parentUuid && knownSessionIds.has(sid)) children.add(sid);
+        if (sid === parentUuid) {
+          // In-session run identity: engram exposes no run or event id, so
+          // the honest best discriminator the peeked msg.in carries is its
+          // own timestamp plus its content (the full marker-prefixed
+          // dispatch prompt). The same run's msg.in repeated across tape
+          // slices carries both verbatim and counts once; two dispatches
+          // recorded in the same instant still differ by prompt and count
+          // separately. Residual precision limit, accepted: two dispatches
+          // with an IDENTICAL prompt in the same recorded instant collapse
+          // to one — nothing in the tape can tell them apart today. A
+          // timestamp that fails the shape check (empty, garbage) can't
+          // anchor an identity at all, so the event is skipped rather than
+          // counted (risking slice overcount) or deduped on the junk
+          // (collapsing distinct dispatches).
+          // Shape alone admits impossible instants ("2026-99-99T…"), so the
+          // value must also parse to a real date before anchoring identity.
+          if (
+            typeof event.t !== "string" ||
+            !TAPE_TIMESTAMP_SHAPE.test(event.t) ||
+            !Number.isFinite(Date.parse(event.t))
+          )
+            continue;
+          runs.add(`${event.t}\u0000${event.content}`);
+        } else if (knownSessionIds.has(sid)) {
+          children.add(sid);
+        }
       }
     }
-    return { children: [...children].sort(), truncated: meta.truncated };
+    return { children: [...children].sort(), runCount: runs.size, truncated: meta.truncated };
   } catch {
-    return { children: [], truncated: false };
+    return nothing;
   }
 }
 
 // What the lineage walk hands back to report generation: the discovered
-// edges, plus the parents whose candidate walk was truncated (their
-// `dispatched` list may be an undercount — report.ts turns each into
-// AgentReport.dispatchTruncated on the owning profile's card).
+// cross-session edges, the in-session subagent run counts per dispatching
+// parent (report.ts sums them onto the owning profile's card as
+// AgentReport.dispatchedRuns), plus the parents whose candidate walk was
+// truncated (their discovered lineage may be an undercount — report.ts
+// turns each into AgentReport.dispatchTruncated on the owning profile's
+// card).
 export interface DispatchDiscovery {
   links: DispatchLink[];
+  runsByParent: { parentSessionId: string; runCount: number }[]; // runCount > 0 only, in probe order
   truncatedParents: string[]; // parent session uuids, in probe order
 }
 
-const EMPTY_DISCOVERY: DispatchDiscovery = { links: [], truncatedParents: [] };
+const EMPTY_DISCOVERY: DispatchDiscovery = { links: [], runsByParent: [], truncatedParents: [] };
 
 // The lineage entry point for report generation: owns the enabled switch,
-// the newest-first ordering, the report-wide probe budget, the default real
-// exec seam, and the one fail-soft boundary — the corroborateSessions
-// contract, verbatim. Every session in the report window is a candidate
-// parent; links only ever join two sessions the report already knows.
+// the newest-first ordering, the default real exec seam, and the one
+// fail-soft boundary — the corroborateSessions contract, verbatim. Every
+// session in the report window is probed as a candidate parent (see the
+// budget block for why there is deliberately no session cap here); links
+// only ever join two sessions the report already knows, and run counts
+// only ever attach to a session the report already knows.
 export function discoverDispatchLinks(
   sessions: LineageSession[],
   cfg: EngramConfig,
@@ -501,26 +611,36 @@ export function discoverDispatchLinks(
     const knownIds = new Set(
       sessions.map((s) => s.sessionId).filter((id) => SESSION_ID_SHAPE.test(id)),
     );
-    // A link joins two known sessions, so a report with fewer than two can
-    // never produce one — return before spending any of the subprocess
-    // budget proving it.
-    if (knownIds.size < 2) return EMPTY_DISCOVERY;
+    // A cross-session link needs two known sessions, but an in-session
+    // subagent run needs only its dispatching parent — so any usable
+    // session at all is worth probing; only an empty set short-circuits.
+    if (knownIds.size === 0) return EMPTY_DISCOVERY;
     const realExec = exec ?? makeSpawnExec(ENGRAM_TIMEOUT_MS);
     const newestFirst = [...sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
     const links: DispatchLink[] = [];
+    const runsByParent: DispatchDiscovery["runsByParent"] = [];
     const truncatedParents: string[] = [];
     const seen = new Set<string>();
-    for (const session of newestFirst.slice(0, MAX_LINEAGE_SESSIONS)) {
-      const { children, truncated } = findDispatchedSessions(session.sessionId, knownIds, cfg.binaryPath, realExec);
+    // Probe each parent id ONCE, even when the window carries it several
+    // times (Task-tool subagent transcripts inherit the dispatching
+    // session's sessionId, and profile resolution doesn't dedupe sessions).
+    // A duplicate would re-run the same grep AND mint a second identical
+    // runsByParent entry, which report.ts sums — doubling dispatchedRuns.
+    const probed = new Set<string>();
+    for (const session of newestFirst) {
+      if (!knownIds.has(session.sessionId) || probed.has(session.sessionId)) continue;
+      probed.add(session.sessionId);
+      const { children, runCount, truncated } = findDispatches(session.sessionId, knownIds, cfg.binaryPath, realExec);
       if (truncated) truncatedParents.push(session.sessionId);
+      if (runCount > 0) runsByParent.push({ parentSessionId: session.sessionId, runCount });
       for (const child of children) {
-        const key = `${session.sessionId} ${child}`;
+        const key = `${session.sessionId}\u0000${child}`;
         if (seen.has(key)) continue;
         seen.add(key);
         links.push({ parentSessionId: session.sessionId, childSessionId: child });
       }
     }
-    return { links, truncatedParents };
+    return { links, runsByParent, truncatedParents };
   } catch {
     return EMPTY_DISCOVERY;
   }

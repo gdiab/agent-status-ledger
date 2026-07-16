@@ -6,6 +6,7 @@ import { buildReport, isTrivialProfile } from "../src/report";
 import { defaultConfig } from "../src/config";
 import type { AgentProfile, CommitEvidence, RawSession } from "../src/types";
 import type { Exec } from "../src/exec";
+import { markerQuery } from "./helpers/engram-fixtures";
 
 const NOW = new Date("2026-07-08T07:00:00.000Z");
 const SINCE = new Date("2026-07-07T07:00:00.000Z");
@@ -219,11 +220,12 @@ describe("buildReport", () => {
     // Newest first: recent sessions are the ones most likely to be in the
     // index and most relevant to today's report. Two engram passes share the
     // seam and both order newest-first: the per-profile evidence upgrade
-    // (inside the profile loop), then the report-wide dispatch-lineage probe
-    // over the post-filter profiles.
+    // (inside the profile loop) greps the bare uuid, then the report-wide
+    // dispatch-lineage probe over the post-filter profiles greps each
+    // session's marker literal.
     expect(grepped).toEqual([
       "bbbb0000-0000-4000-8000-00000000000b", "aaaa0000-0000-4000-8000-00000000000a", // evidence
-      "bbbb0000-0000-4000-8000-00000000000b", "aaaa0000-0000-4000-8000-00000000000a", // lineage
+      markerQuery("bbbb0000-0000-4000-8000-00000000000b"), markerQuery("aaaa0000-0000-4000-8000-00000000000a"), // lineage
     ]);
   });
 
@@ -308,6 +310,86 @@ describe("buildReport", () => {
     expect(agent3.evidenceCitation).not.toContain("app.ts");
   });
 
+  // End-to-end acceptance for asl-9pd: in-session subagent runs (Task-tool
+  // dispatches, whose transcripts inherit the dispatching session's harness
+  // id) land on the orchestrator's card as a run count and render.
+  test("in-session subagent runs attach to the orchestrator profile as dispatchedRuns and render", async () => {
+    const ORCH = "aaaa0000-0000-4000-8000-00000000000a";
+    const RUN_TAPES = [
+      "2222222222222222222222222222222222222222222222222222222222222222",
+      "3333333333333333333333333333333333333333333333333333333333333333",
+    ];
+
+    const world = mkdtempSync(join(tmpdir(), "asl-report-"));
+    const ccRoot = join(world, "claude-projects");
+    const dir = join(ccRoot, "-work-orch");
+    mkdirSync(dir, { recursive: true });
+    const f = join(dir, "s.jsonl");
+    writeFileSync(f, [
+      JSON.stringify({
+        type: "user", timestamp: "2026-07-07T12:00:00.000Z", cwd: "/work/orch",
+        sessionId: ORCH, message: { role: "user", content: "task" },
+      }),
+      JSON.stringify({
+        type: "assistant", timestamp: "2026-07-07T12:05:00.000Z", cwd: "/work/orch",
+        sessionId: ORCH, message: { role: "assistant", content: "done" },
+      }),
+    ].join("\n") + "\n");
+    utimesSync(f, MTIME, MTIME);
+
+    const config = defaultConfig();
+    config.connectors.claudeCode.rootDir = ccRoot;
+    config.connectors.codex.enabled = false;
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+
+    // Each run's tape carries a marker-prefixed msg.in owned by the
+    // orchestrator's own uuid (Task transcripts inherit it) at a distinct
+    // timestamp — two tapes, two runs.
+    const exec: Exec = (argv) => {
+      if (argv[1] === "grep" && argv[2] === markerQuery(ORCH)) {
+        return {
+          ok: true,
+          stdout: JSON.stringify({
+            total: 2,
+            sessions: RUN_TAPES.map((session_id) => ({ session_id, confidence: 1.0 })),
+          }),
+          stderr: "",
+        };
+      }
+      if (argv[1] === "peek" && RUN_TAPES.includes(argv[2]!)) {
+        return {
+          ok: true,
+          stdout: JSON.stringify({
+            session: {
+              content: [{
+                line: 1,
+                text: JSON.stringify({
+                  k: "msg.in", role: "user",
+                  content: `<engram-src id="${ORCH}"/> implement the thing`,
+                  source: { harness: "claude-code", session_id: ORCH },
+                  t: `2026-07-07T12:0${RUN_TAPES.indexOf(argv[2]!)}:30.000Z`,
+                }),
+              }],
+            },
+          }),
+          stderr: "",
+        };
+      }
+      return { ok: true, stdout: JSON.stringify({ error: "no_results" }), stderr: "" };
+    };
+
+    const report = await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: exec });
+    const orch = report.agents.find((a) => a.workdir === "/work/orch")!;
+    expect(orch.dispatchedRuns).toBe(2);
+    expect(orch.dispatched).toBeUndefined();
+    expect(orch.dispatchedBy).toBeUndefined();
+    expect(orch.dispatchTruncated).toBeUndefined();
+
+    const { renderMarkdown } = await import("../src/render/markdown");
+    const md = renderMarkdown(report);
+    expect(md).toContain("- Dispatched 2 subagent runs: 2 in-session runs");
+  });
+
   // End-to-end acceptance for asl-69s: two sessions linked by an engram
   // dispatch marker end up cross-referenced in the report — the orchestrator
   // card says what it dispatched, the subagent card says who dispatched it,
@@ -349,7 +431,7 @@ describe("buildReport", () => {
     // prepends it to the handoff prompt) and carries the subagent's
     // source.session_id.
     const exec: Exec = (argv) => {
-      if (argv[1] === "grep" && argv[2] === ORCH) {
+      if (argv[1] === "grep" && argv[2] === markerQuery(ORCH)) {
         return {
           ok: true,
           stdout: JSON.stringify({ sessions: [{ session_id: CHILD_TAPE, confidence: 325.0 }] }),
@@ -411,7 +493,7 @@ describe("buildReport", () => {
 
     // engram double that would happily link ORCH → SUB if asked
     const exec: Exec = (argv) => {
-      if (argv[1] === "grep" && argv[2] === ORCH) {
+      if (argv[1] === "grep" && argv[2] === markerQuery(ORCH)) {
         return {
           ok: true,
           stdout: JSON.stringify({ sessions: [{ session_id: CHILD_TAPE, confidence: 325.0 }] }),
@@ -496,8 +578,10 @@ describe("buildReport", () => {
     const ORCH = "aaaa0000-0000-4000-8000-00000000000a";
     const SUB = "bbbb0000-0000-4000-8000-00000000000b";
     const CHILD_TAPE = "2222222222222222222222222222222222222222222222222222222222222222";
-    // 8 candidate tapes > the 6-candidate lineage cap → ORCH is truncated
+    // grep reports 17 marker tapes index-wide but returns fewer than the
+    // 16-tape cap → ORCH's discovered lineage may be an undercount
     const NOISE_TAPES = Array.from({ length: 7 }, (_, i) => String(i + 3).repeat(64));
+    const GREP_TOTAL = 17;
 
     const world = mkdtempSync(join(tmpdir(), "asl-report-"));
     const ccRoot = join(world, "claude-projects");
@@ -526,10 +610,11 @@ describe("buildReport", () => {
     config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
 
     const exec: Exec = (argv) => {
-      if (argv[1] === "grep" && argv[2] === ORCH) {
+      if (argv[1] === "grep" && argv[2] === markerQuery(ORCH)) {
         return {
           ok: true,
           stdout: JSON.stringify({
+            total: GREP_TOTAL,
             sessions: [CHILD_TAPE, ...NOISE_TAPES].map((session_id) => ({ session_id, confidence: 325.0 })),
           }),
           stderr: "",

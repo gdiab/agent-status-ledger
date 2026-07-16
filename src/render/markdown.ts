@@ -1,5 +1,5 @@
 import type { AgentReport, Report } from "../types";
-import { dispatchRefLabel, plural, rollupLine } from "./rollup";
+import { dispatchRefLabel, dispatchedBody, plural, rollupLine } from "./rollup";
 import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 
 // Names come from workdir basenames and platform labels; escape markdown
@@ -15,6 +15,14 @@ const mdText = (s: string) => s.replace(/\s+/g, " ").trim().replace(/([\\_*<>&[\
 
 function agentSection(a: AgentReport): string {
   const blurb = mdText(a.narrative.standup);
+  // Both dispatch kinds — cross-session links as named refs, in-session
+  // subagent runs as a count — plus truncation phrasing live in
+  // dispatchedBody; only the escaping is renderer-side.
+  const dispatched = dispatchedBody(
+    (a.dispatched ?? []).map((r) => mdEscape(dispatchRefLabel(r))),
+    a.dispatchedRuns ?? 0,
+    a.dispatchTruncated ?? false,
+  );
   const lines = [
     `### ${mdEscape(a.displayName)}`,
     "",
@@ -36,15 +44,7 @@ function agentSection(a: AgentReport): string {
     ...(a.dispatchedBy?.length
       ? [`- Dispatched by: ${a.dispatchedBy.map((r) => mdEscape(dispatchRefLabel(r))).join(", ")}`]
       : []),
-    // dispatchTruncated: the lineage probe hit its candidate cap, so the
-    // dispatched list may be an undercount — say so instead of implying
-    // completeness. A truncated probe that found NO links still gets a line:
-    // silence would be indistinguishable from an exhaustive "no dispatches".
-    ...(a.dispatched?.length
-      ? [`- Dispatched ${plural(a.dispatched.length, "subagent run")}: ${a.dispatched.map((r) => mdEscape(dispatchRefLabel(r))).join(", ")}${a.dispatchTruncated ? " (list may be incomplete)" : ""}`]
-      : a.dispatchTruncated
-        ? ["- Dispatched subagent runs: none identified (list may be incomplete)"]
-        : []),
+    ...(dispatched ? [`- Dispatched ${dispatched}`] : []),
     "",
     `**Worked on:** ${mdText(a.narrative.workedOn)}`,
     `**Completed:** ${mdText(a.narrative.completed)}`,
