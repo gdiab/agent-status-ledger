@@ -538,6 +538,7 @@ describe("discoverDispatchLinks", () => {
           markerEvent(ORCH, ORCH, "", "first"),
           markerEvent(ORCH, ORCH, "", "second"),
           markerEvent(ORCH, ORCH, "definitely not a timestamp", "third"),
+          markerEvent(ORCH, ORCH, "2026-99-99T99:99:99Z", "shape-valid but impossible instant"),
           markerEvent(ORCH, ORCH, "2026-07-14T13:00:00.000Z", "the one valid run"),
         ]),
         stderr: "",
@@ -996,7 +997,7 @@ describe("discoverDispatchLinks", () => {
       const i = tapes.indexOf(argv[2]!);
       return {
         ok: true,
-        stdout: peekResponse([markerEvent(ORCH, ORCH, `2026-07-15T2${i}:00:00.000Z`)]),
+        stdout: peekResponse([markerEvent(ORCH, ORCH, `2026-07-15T0${i}:00:00.000Z`)]),
         stderr: "",
       };
     };

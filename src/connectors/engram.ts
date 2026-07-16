@@ -556,7 +556,14 @@ export function findDispatches(
           // anchor an identity at all, so the event is skipped rather than
           // counted (risking slice overcount) or deduped on the junk
           // (collapsing distinct dispatches).
-          if (typeof event.t !== "string" || !TAPE_TIMESTAMP_SHAPE.test(event.t)) continue;
+          // Shape alone admits impossible instants ("2026-99-99T…"), so the
+          // value must also parse to a real date before anchoring identity.
+          if (
+            typeof event.t !== "string" ||
+            !TAPE_TIMESTAMP_SHAPE.test(event.t) ||
+            !Number.isFinite(Date.parse(event.t))
+          )
+            continue;
           runs.add(`${event.t} ${event.content}`);
         } else if (knownSessionIds.has(sid)) {
           children.add(sid);
