@@ -46,26 +46,48 @@ interface Member {
 }
 
 // Evidence counts for one member (ThreadSession contract: counts only, no
-// content). Commits reuse attributeCommits so "authored inside this
-// session's window" means exactly what profile-level attribution means,
-// grace period included.
-function toThreadSession(m: Member): ThreadSession {
-  const window = { startedAt: m.session.startedAt, lastEventAt: m.session.lastEventAt };
+// content). The commit count is supplied by exclusiveCommitCounts below.
+function toThreadSession(m: Member, commits: number): ThreadSession {
   return {
     sessionId: m.session.sessionId,
     profile: m.agent.displayName,
     startedAt: m.session.startedAt,
     lastEventAt: m.session.lastEventAt,
     files: m.session.filesTouched.length,
-    commits: attributeCommits(m.agent.commits, [window]).filter((c) => c.attributed).length,
+    commits,
     errors: m.session.errors.length,
   };
 }
 
+// Exclusive per-member commit counts. Member windows can overlap — two runs
+// on the same task in one afternoon, or adjacent runs bridged by
+// attributeCommits' 5-minute grace — and counting each member's window
+// independently would report one commit twice, making the thread's implied
+// total dishonest. Each commit (keyed by sha, so the same commit surfacing
+// via two members' agents also counts once) is assigned to exactly one
+// member: the first, in (startedAt, sessionId) order, whose grace-extended
+// window contains it — i.e. the earliest member window, deterministically
+// tie-broken. attributeCommits is reused per window so "inside this
+// session's window" means exactly what profile-level attribution means.
+function exclusiveCommitCounts(ordered: Member[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  const assigned = new Set<string>();
+  for (const m of ordered) {
+    const window = { startedAt: m.session.startedAt, lastEventAt: m.session.lastEventAt };
+    for (const c of attributeCommits(m.agent.commits, [window])) {
+      if (!c.attributed || assigned.has(c.sha)) continue;
+      assigned.add(c.sha);
+      counts.set(m.session.sessionId, (counts.get(m.session.sessionId) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
 function buildThread(threadKey: string, source: TaskThread["source"], title: string, members: Member[]): TaskThread {
-  const sessions = members
-    .map(toThreadSession)
-    .sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.sessionId.localeCompare(b.sessionId));
+  const ordered = [...members].sort((a, b) =>
+    a.session.startedAt.localeCompare(b.session.startedAt) || a.session.sessionId.localeCompare(b.session.sessionId));
+  const commitCounts = exclusiveCommitCounts(ordered);
+  const sessions = ordered.map((m) => toThreadSession(m, commitCounts.get(m.session.sessionId) ?? 0));
   const worst = members.reduce((acc, m) => (STATUS_RANK[m.agent.status] < STATUS_RANK[acc.agent.status] ? m : acc));
   const strongest = members.reduce((acc, m) => (EVIDENCE_RANK[m.agent.evidence] < EVIDENCE_RANK[acc.agent.evidence] ? m : acc));
   const workdirs = new Set(members.map((m) => m.agent.workdir));

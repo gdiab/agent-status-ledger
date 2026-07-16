@@ -96,17 +96,44 @@ describe("deriveTaskThreads: bead keys", () => {
     const s1 = sess({ sessionId: "a1", startedAt: "2026-07-07T09:00:00.000Z", lastEventAt: "2026-07-07T09:30:00.000Z" });
     const s2 = sess({ sessionId: "a2", startedAt: "2026-07-07T12:00:00.000Z", lastEventAt: "2026-07-07T12:30:00.000Z" });
     const p = prof("/w", [s1, s2]);
-    const commit = (authorDate: string): CommitEvidence =>
-      ({ sha: "a".repeat(40), authorDate, subject: "x", attributed: true });
+    // Distinct shas per commit: commit identity is the sha, and exclusive
+    // assignment dedupes on it — same-sha-different-date cannot occur.
+    const commit = (sha: string, authorDate: string): CommitEvidence =>
+      ({ sha: sha.repeat(40), authorDate, subject: "x", attributed: true });
     const a = agent(p, {
       commits: [
-        commit("2026-07-07T09:10:00.000Z"),   // inside a1
-        commit("2026-07-07T12:33:00.000Z"),   // 3 min after a2's last event: inside the grace window
-        { ...commit("2026-07-07T15:00:00.000Z"), attributed: false }, // outside both
+        commit("a", "2026-07-07T09:10:00.000Z"),   // inside a1
+        commit("b", "2026-07-07T12:33:00.000Z"),   // 3 min after a2's last event: inside the grace window
+        { ...commit("c", "2026-07-07T15:00:00.000Z"), attributed: false }, // outside both
       ],
     });
     const threads = deriveTaskThreads([a], [p], keys([["a1", ["asl-1wm"]], ["a2", ["asl-1wm"]]]), []);
     expect(threads[0]!.sessions.map((s) => s.commits)).toEqual([1, 1]);
+  });
+
+  test("a commit inside two overlapping member windows lands on exactly one member (earliest window)", () => {
+    const s1 = sess({ sessionId: "a1", startedAt: "2026-07-07T09:00:00.000Z", lastEventAt: "2026-07-07T10:00:00.000Z" });
+    const s2 = sess({ sessionId: "a2", startedAt: "2026-07-07T09:30:00.000Z", lastEventAt: "2026-07-07T10:30:00.000Z" });
+    const p = prof("/w", [s1, s2]);
+    const a = agent(p, {
+      commits: [{ sha: "a".repeat(40), authorDate: "2026-07-07T09:45:00.000Z", subject: "x", attributed: true }],
+    });
+    const threads = deriveTaskThreads([a], [p], keys([["a1", ["asl-1wm"]], ["a2", ["asl-1wm"]]]), []);
+    // 09:45 sits inside both windows; an honest thread total is 1, not 2,
+    // and the deterministic owner is the earliest-starting member.
+    expect(threads[0]!.sessions.map((s) => s.commits)).toEqual([1, 0]);
+  });
+
+  test("grace-created overlap does not double-count either: the grace window of an earlier member wins", () => {
+    const s1 = sess({ sessionId: "a1", startedAt: "2026-07-07T09:00:00.000Z", lastEventAt: "2026-07-07T09:30:00.000Z" });
+    const s2 = sess({ sessionId: "a2", startedAt: "2026-07-07T09:32:00.000Z", lastEventAt: "2026-07-07T10:00:00.000Z" });
+    const p = prof("/w", [s1, s2]);
+    const a = agent(p, {
+      // 09:33 is within a1's 5-minute grace AND inside a2's window proper.
+      commits: [{ sha: "b".repeat(40), authorDate: "2026-07-07T09:33:00.000Z", subject: "x", attributed: true }],
+    });
+    const threads = deriveTaskThreads([a], [p], keys([["a1", ["asl-1wm"]], ["a2", ["asl-1wm"]]]), []);
+    expect(threads[0]!.sessions.map((s) => s.commits)).toEqual([1, 0]);
   });
 
   test("duplicate session ids (Task-tool transcripts inherit the parent id) count as one member", () => {
