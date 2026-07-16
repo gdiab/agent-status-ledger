@@ -59,7 +59,19 @@ export const ENGRAM_TIMEOUT_MS = 5_000;
 // - MAX_SESSIONS_PER_PROFILE (evidence upgrade): sessions are tried
 //   newest-first (recent sessions are the ones most likely to be in the
 //   index and most relevant to today's report).
-// - Dispatch lineage has NO report-wide session cap: every session in the
+// - MAX_KEY_TAPES (task-key discovery): like the evidence grep, the key
+//   probe greps the bare session UUID, where the session's OWN tape slices
+//   rank far above mention-only transcripts (hundreds of touch-count points
+//   vs a handful) — but engram watch emits per-debounce tape SLICES, so the
+//   dialogue may be split across several top hits. Unlike the evidence walk
+//   (which stops at its first verified hit), the key walk reads every
+//   candidate up to the cap, because a bead mention can live in any slice.
+//   3 matches MAX_GREP_CANDIDATES: the same ranking argument bounds both.
+//   Keys are best-effort grouping hints, not completeness claims, so a
+//   truncated walk is NOT surfaced (missing a mention degrades to a smaller
+//   thread or none, never to a false statement).
+// - Dispatch lineage and task-key discovery have NO report-wide session
+//   cap: every session in the
 //   window is probed (newest-first, for log readability). The bead's
 //   contract is O(report sessions) and deterministic — a cap would silently
 //   drop the oldest orchestrators exactly on busy multi-project days (live
@@ -74,10 +86,16 @@ export const ENGRAM_TIMEOUT_MS = 5_000;
 //             window, ~1 call per session in the common case.
 //   evidence: MAX_SESSIONS_PER_PROFILE × (1 grep + MAX_GREP_CANDIDATES peeks)
 //             = 5 × 4 = 20 calls per claimed_only profile
-//   report total: lineage + 20 × (number of claimed_only profiles)
+//   task keys: (window sessions) × (1 grep + up to MAX_KEY_TAPES peeks)
+//             = 4 calls per session worst-case — linear in the report
+//             window; an unindexed session costs exactly 1 grep (no_results).
+//   report total: lineage + task keys + 20 × (number of claimed_only
+//             profiles) — every term linear in the window or the profile
+//             count, no quadratic axis.
 const MAX_GREP_CANDIDATES = 3;
 const MAX_MARKER_TAPES = 16;
 const MAX_SESSIONS_PER_PROFILE = 5;
+const MAX_KEY_TAPES = 3;
 
 // Session ids reach argv from two untrusted sources: harness transcripts
 // (RawSession.sessionId is parsed from log files) and engram's own grep
@@ -645,5 +663,113 @@ export async function discoverDispatchLinks(
     return { links, runsByParent, truncatedParents };
   } catch {
     return EMPTY_DISCOVERY;
+  }
+}
+
+// ── Task-key discovery (bead IDs mentioned in dialogue) ─────────────────────
+//
+// The third engram pass (asl-1wm): TaskThread derivation (src/threads.ts)
+// keys threads off bead IDs mentioned in session dialogue, and dialogue
+// lives only in engram's tapes — harness parsing keeps no message text. The
+// pass reuses the evidence upgrade's proven query shape: grep the bare
+// session UUID (the session's own tape slices rank far above mention-only
+// transcripts), peek each candidate filtered to message events, and accept
+// tokens only from events whose source.session_id is the probed uuid (the
+// same mention-only guard) — a transcript QUOTING another session's
+// dialogue must not donate keys to it.
+//
+// Redaction posture (the reason this stays count-and-key shaped): dialogue
+// content is unredacted verbatim, so nothing free-text leaves this pass.
+// A key must match TASK_KEY_SHAPE — a short, lowercase, bd-conventioned
+// token — and additionally survive redact() unchanged (builtin + user
+// patterns), else it is dropped, fail-closed. A ≤13-char shape-validated
+// token cannot carry a usable secret, so no sanitizeTapeText call site is
+// needed (the preferred design recorded on the bead).
+
+// A bd-style bead ID as mentioned in dialogue: short lowercase prefix, dash,
+// exactly-3 base36 suffix — the shape of this tracker's IDs (asl-1wm,
+// asl-9pd, asl-cey). Boundaries reject dash/word/'<' neighbors on both
+// sides, so composite tokens never shed a false key: `<engram-src` (the
+// dispatch marker, present verbatim in every dispatch prompt), `asl-wt-1wm`
+// (worktree names), `task-threads`. Known precision limit, accepted:
+// hyphenated English that happens to fit ("sha-256", "one-off") can mint a
+// key; it forms a thread only when ≥2 sessions share it (src/threads.ts),
+// and the rendered surface is the token plus counts — a mislabeled grouping
+// at worst, never leaked content.
+const TASK_KEY_SHAPE = /(?<![<\w-])[a-z]{2,8}-[a-z0-9]{3}(?![\w-])/g;
+
+// Peek filter for dialogue lines: matches the raw tape line's kind field for
+// both msg.in and msg.out ("k":"msg.in" / "k":"msg.out"); like every peek
+// filter it over-matches context lines, so each parsed event's kind is
+// checked explicitly below.
+const MSG_FILTER = '"k":"msg.';
+
+// Bead IDs mentioned in `sessionUuid`'s own dialogue, per engram's tapes.
+// Empty array = none found or any failure (indistinguishable by design —
+// keys are enrichment, not evidence). Never throws.
+export async function findTaskKeys(
+  sessionUuid: string,
+  binaryPath: string,
+  exec: Exec,
+  extraPatterns: string[],
+): Promise<string[]> {
+  try {
+    if (!SESSION_ID_SHAPE.test(sessionUuid)) return [];
+    const keys = new Set<string>();
+    // Every candidate up to the cap is read (no early stop): engram watch
+    // slices a session's tape per debounce, so mentions can live in any of
+    // the top hits — see the MAX_KEY_TAPES ledger entry.
+    for await (const { response } of grepPeekCandidates(
+      sessionUuid, binaryPath, exec, MSG_FILTER, MAX_KEY_TAPES,
+    )) {
+      for (const event of tapeEvents(response)) {
+        if (event.k !== "msg.in" && event.k !== "msg.out") continue;
+        if (typeof event.content !== "string") continue;
+        const source = event.source as Record<string, unknown> | undefined;
+        if (source?.session_id !== sessionUuid) continue; // mention-only guard
+        for (const key of event.content.match(TASK_KEY_SHAPE) ?? []) {
+          // Fail-closed redaction backstop: a token a redact pattern would
+          // alter is dropped rather than surfaced or marker-mangled.
+          if (redact(key, extraPatterns) === key) keys.add(key);
+        }
+      }
+    }
+    return [...keys].sort();
+  } catch {
+    return [];
+  }
+}
+
+// The task-key entry point for report generation: owns the enabled switch,
+// the newest-first ordering, the probe-once dedupe, the default real exec
+// seam, and the one fail-soft boundary — the discoverDispatchLinks contract,
+// verbatim. Returns sessionId → sorted bead keys, entries only for sessions
+// that yielded at least one key; disabled or failing engram returns an empty
+// map, and TaskThread derivation degrades to file-cluster keys alone.
+// Options shape matches corroborateSessions: redactPatterns is required so
+// dropping the user's patterns is never a silent default.
+export async function discoverTaskKeys(
+  sessions: LineageSession[],
+  cfg: EngramConfig,
+  opts: CorroborateOptions,
+): Promise<Map<string, string[]>> {
+  const keysBySession = new Map<string, string[]>();
+  if (!cfg.enabled) return keysBySession;
+  try {
+    const realExec = opts.exec ?? makeSpawnExec(ENGRAM_TIMEOUT_MS);
+    const newestFirst = [...sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    // Probe each id once — Task-tool subagent transcripts inherit the
+    // dispatching session's sessionId, so windows can carry duplicates
+    // (same rationale as discoverDispatchLinks' probed set).
+    const probed = new Set<string>();
+    for (const session of newestFirst) {
+      if (!SESSION_ID_SHAPE.test(session.sessionId) || probed.has(session.sessionId)) continue;
+      probed.add(session.sessionId);
+      const keys = await findTaskKeys(session.sessionId, cfg.binaryPath, realExec, opts.redactPatterns);
+      if (keys.length > 0) keysBySession.set(session.sessionId, keys);
+    }
+    return keysBySession;
+  } catch {
+    return keysBySession;
   }
 }
