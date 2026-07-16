@@ -168,13 +168,15 @@ The PRD uses four distinct objects:
 1. **Agent Profile**: the durable identity of an agent workstream.
 2. **Agent Run**: a specific execution/session/task performed by that profile.
 3. **Event**: a normalized activity record produced by a connector.
-4. **TaskThread**: the report's primary grouping — runs from any profile, across sessions and days, stitched into one task-level narrative.
+4. **TaskThread** (decided, not yet shipped — tracked as bead asl-1wm): the report's decided primary grouping — runs from any profile, across sessions and days, stitched into one task-level narrative.
 
 This distinction matters. Without it, entity resolution becomes ambiguous.
 
-### Agent identity anchoring (resolved 2026-07-15)
+### Agent identity anchoring (decided 2026-07-15, not yet shipped)
 
-Agent identity anchors to **orchestrator runs**. The top-level session the operator started is the identity-bearing run; subagent runs do not get independent profiles. Instead they attach to their orchestrator as a **lineage tree**, discovered via dispatch markers: the dispatching session prepends `<engram-src id="<session-uuid>"/>` to every Agent-tool dispatch prompt, and the subagent's transcript carries that marker as a content prefix of its first inbound message. This gives deterministic parent→child linkage without timestamp/repo heuristics.
+**Decided target model (2026-07-15 fidelity review):** agent identity anchors to **orchestrator runs**. The top-level session the operator started is the identity-bearing run; subagent runs do not get independent profiles. Instead they attach to their orchestrator as a **lineage tree**, discovered via dispatch markers: the dispatching session prepends `<engram-src id="<session-uuid>"/>` to every Agent-tool dispatch prompt, and the subagent's transcript carries that marker as a content prefix of its first inbound message. This gives deterministic parent→child linkage without timestamp/repo heuristics.
+
+**Shipped behavior today:** profiles are still workdir-based (`platform:workdir`), subagent runs get their own profiles and their own report cards, and dispatch-marker lineage is used only to cross-reference profiles ("dispatched" / "dispatched by" links between cards) — it does not yet collapse subagent runs under their orchestrator. Migrating identity to the orchestrator-anchored model is decided but not implemented; the workdir-based acceptance criterion in §12 reflects shipped behavior until then.
 
 Two consequences to state plainly:
 
@@ -265,7 +267,7 @@ Optional fields:
 
 ### TaskThread
 
-The report's primary grouping (added 2026-07-15). A single task routinely spans multiple runs — an orchestrator session, its dispatched subagents, a follow-up session the next morning — and a run-by-run report fragments that story. A TaskThread groups those runs into one task-level narrative.
+The report's decided primary grouping (added 2026-07-15; not yet shipped — no TaskThread type, derivation, or rendering exists in code, where reports remain a flat list of per-profile cards. Tracked as bead asl-1wm.) A single task routinely spans multiple runs — an orchestrator session, its dispatched subagents, a follow-up session the next morning — and a run-by-run report fragments that story. A TaskThread groups those runs into one task-level narrative.
 
 Threads are keyed by, in preference order:
 
@@ -287,7 +289,7 @@ Optional fields:
 - `last_activity_at`
 - `evidence_level`: the strongest evidence any member run produced
 
-TaskThreads are derived at report time from runs and events (consistent with the stateless-scan architecture in ADR 0002); they are a reporting construct, not a fourth ingestion object. The per-agent sections remain, but the digest leads with threads: the operator's question is "how is the task going," not "what did session N do."
+TaskThreads will be derived at report time from runs and events (consistent with the stateless-scan architecture in ADR 0002); they are a reporting construct, not a fourth ingestion object. The per-agent sections will remain, but the digest will lead with threads: the operator's question is "how is the task going," not "what did session N do." Until asl-1wm ships, the digest continues to lead with the exceptions-first per-profile rollup.
 
 ---
 
@@ -322,14 +324,14 @@ These thresholds should be configurable, but MVP needs defaults.
 - **Claimed only:** based only on agent natural-language output.
 - **Unknown:** imported record exists, but source quality is insufficient.
 
-### Provenance axis (added 2026-07-15)
+### Provenance axis (decided 2026-07-15, not yet shipped)
 
-Evidence level answers "how well is this claim backed?" Provenance answers a different question: "who asked for this work?" Every run and reported claim carries one of two provenance values:
+Evidence level answers "how well is this claim backed?" Provenance answers a different question: "who asked for this work?" This axis is decided but not implemented — no provenance field exists on runs or claims and no inference runs today; tracked as bead asl-ami. Once shipped, every run and reported claim will carry one of two provenance values:
 
 - **`user_directed`**: the work traces to an explicit operator instruction — a prompt the operator typed, a bead the operator filed, a task the operator dispatched.
 - **`agent_initiated`**: the work was undertaken by an agent on its own judgment — a subagent fan-out, a self-filed follow-up, an autonomous fix.
 
-Provenance is orthogonal to evidence: an agent-initiated change can be fully proven, and a user-directed task can be claimed-only. The report surfaces both axes because they drive different operator behavior — proven-but-agent-initiated work still deserves a "did I want this?" review, which evidence level alone cannot flag. Subagent runs attached via dispatch-marker lineage default to `agent_initiated` unless the dispatch traces back to an explicit operator instruction in the orchestrator run.
+Provenance is orthogonal to evidence: an agent-initiated change can be fully proven, and a user-directed task can be claimed-only. The report will surface both axes because they drive different operator behavior — proven-but-agent-initiated work still deserves a "did I want this?" review, which evidence level alone cannot flag. Subagent runs attached via dispatch-marker lineage will default to `agent_initiated` unless the dispatch traces back to an explicit operator instruction in the orchestrator run.
 
 ### Severity values
 
@@ -517,17 +519,19 @@ Prove that agent work can be collected from reliable local sources, normalized i
 
 ### MVP v0 connectors
 
-1. **OpenClaw/Ralph/Hermes session history and completion signals**
-2. **Git activity correlation** for commits, branches, PRs, issues, and CI where accessible
-3. **Manual import folder** for transcripts, notes, or pasted agent reports
+Amended per ADR 0001 (2026-07-07), which reversed the original ordering: a machine survey showed heavy Claude Code and Codex activity and a dormant OpenClaw, so the first connectors target the sources with real daily work. This is what shipped.
+
+1. **Claude Code local JSONL logs**
+2. **Codex CLI local history/logs**
+3. **Git activity correlation** for commits, branches, PRs, issues, and CI where accessible
 
 ### Phase 1.5 connectors
 
 Add after MVP v0 proves the report format:
 
-- Claude Code local JSONL logs
-- Codex CLI local history/logs
+- OpenClaw/Ralph/Hermes session history and completion signals
 - Gemini CLI/OpenCode logs where practical
+- Manual import folder for transcripts, notes, or pasted agent reports
 
 ### MVP outputs
 
@@ -536,7 +540,7 @@ Add after MVP v0 proves the report format:
 - Per-agent sections
 - Exceptions-first rollup
 - Evidence links
-- Email digest with local path to the full report (amended 2026-07-15; originally a Telegram summary — see §16)
+- Email digest with the full HTML report attached (amended 2026-07-15; originally a Telegram summary — see §16)
 
 ### MVP exclusions
 
@@ -555,8 +559,8 @@ The MVP is acceptable when the following are true.
 
 ### Agent identity
 
-- Given three known agent runs from OpenClaw/Ralph/Hermes history, the system creates distinct agent profiles and agent runs.
-- Given multiple runs in the same workdir/repo, the system attaches them to the same agent profile unless explicitly configured otherwise.
+- Given three known agent runs from Claude Code/Codex CLI session history (per ADR 0001), the system creates distinct agent profiles and agent runs.
+- Given multiple runs in the same workdir/repo, the system attaches them to the same agent profile unless explicitly configured otherwise. (Reflects shipped workdir-based identity; to be superseded when the orchestrator-anchored model decided in §7 ships.)
 - Given a manually imported transcript, the system can attach it to an existing agent profile or create a new one.
 
 ### Evidence correlation
@@ -582,7 +586,7 @@ The MVP is acceptable when the following are true.
 ### Delivery
 
 - The system writes the full report to a configured local path.
-- The system sends an email digest containing exceptions and the local report path (amended 2026-07-15; originally a Telegram summary — see §16).
+- The system sends an email digest containing exceptions, with the full HTML report attached (amended 2026-07-15; originally a Telegram summary — see §16).
 - The email digest never includes raw transcripts by default.
 
 ### Validation
@@ -701,7 +705,7 @@ Amended 2026-07-15: email replaced Telegram as the canonical delivery channel. E
 - Full local Markdown file
 - Full local JSON file
 - Self-contained local HTML standup page (see ADR 0005)
-- **Email digest** (Gmail SMTP): exceptions-first summary with the local report path — the canonical remote channel, operational since 2026-07-14
+- **Email digest** (Gmail SMTP): exceptions-first inline summary with the full HTML report attached — the canonical remote channel, operational since 2026-07-14
 
 ### Future delivery (optional)
 
@@ -758,7 +762,7 @@ Amended 2026-07-15: email replaced Telegram as the canonical delivery channel. E
 - Completed, blocked, failed, and silent statuses are detected in fixtures.
 - Every report claim has an evidence level.
 - Report generation requires no manual editing.
-- Email digest points to a full local report.
+- Email digest carries the full report as an attachment.
 
 ### Product success
 
@@ -772,7 +776,7 @@ Amended 2026-07-15: email replaced Telegram as the canonical delivery channel. E
 
 ## 19. Open Questions
 
-1. ~~Should an agent profile map primarily to workdir, repo, user-assigned name, or tool session identity?~~ **Resolved 2026-07-15.** Agent identity anchors to orchestrator runs; subagent runs attach to their orchestrator as a lineage tree discovered via dispatch markers (`<engram-src id="<session-uuid>"/>` prepended to every Agent-tool dispatch prompt). Rationale: the orchestrator run is the unit the operator actually started and can be held accountable, and the dispatch marker gives deterministic lineage where workdir/timestamp correlation only guesses. Caveat: lineage history only accrues from adoption of the marker convention — pre-adoption subagent runs stay unattributed. See §7.
+1. ~~Should an agent profile map primarily to workdir, repo, user-assigned name, or tool session identity?~~ **Resolved 2026-07-15** (decided; not yet shipped — see §7). Agent identity will anchor to orchestrator runs; subagent runs will attach to their orchestrator as a lineage tree discovered via dispatch markers (`<engram-src id="<session-uuid>"/>` prepended to every Agent-tool dispatch prompt). Rationale: the orchestrator run is the unit the operator actually started and can be held accountable, and the dispatch marker gives deterministic lineage where workdir/timestamp correlation only guesses. Caveat: lineage history only accrues from adoption of the marker convention — pre-adoption subagent runs stay unattributed. See §7.
 2. What is the right default silent threshold: 2h, 6h, or 24h?
 3. Should summarization run entirely local by default, or is configurable cloud summarization acceptable?
 4. How much raw transcript should be retained?
