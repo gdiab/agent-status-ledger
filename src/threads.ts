@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import type { AgentProfile, AgentReport, EvidenceLevel, RawSession, TaskThread, ThreadSession } from "./types";
-import { STATUS_RANK } from "./render/rollup";
+import { STATUS_RANK } from "./status";
 import { attributeCommits } from "./git";
 import { redact } from "./redact";
 

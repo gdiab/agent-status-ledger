@@ -1,5 +1,5 @@
 import type { AgentReport, Report, TaskThread } from "../types";
-import { dispatchRefLabel, dispatchedBody, plural, rollupLine } from "./rollup";
+import { dispatchRefLabel, dispatchedBody, plural, rollupLine, threadSessionSummary } from "./rollup";
 import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 
 // Names come from workdir basenames and platform labels; escape markdown
@@ -84,8 +84,7 @@ function threadSection(t: TaskThread): string {
     `### ${mdEscape(t.title)}${t.source === "files" ? " (file cluster)" : ""} — ${t.status}, ${plural(t.sessions.length, "session")}`,
   ];
   for (const s of t.sessions) {
-    const evidence = [plural(s.files, "file"), plural(s.commits, "commit"), ...(s.errors ? [plural(s.errors, "error")] : [])];
-    lines.push(`- ${s.startedAt} — ${mdEscape(dispatchRefLabel({ sessionId: s.sessionId, profile: s.profile }))}: ${evidence.join(", ")}`);
+    lines.push(`- ${s.startedAt} — ${mdEscape(dispatchRefLabel({ sessionId: s.sessionId, profile: s.profile }))}: ${threadSessionSummary(s)}`);
   }
   return lines.join("\n");
 }

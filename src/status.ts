@@ -11,6 +11,15 @@ export const STATUS_SEVERITY: Record<Status, Severity> = {
   active: "info", idle: "info", completed: "info",
 };
 
+// Worst-first display ordering shared by the rollup line (src/render/rollup.ts)
+// and TaskThread status rollup (src/threads.ts), defined once beside the
+// sibling status semantics. Exhaustive by construction: adding a Status
+// member without a display rank is a compile error, so new statuses can't
+// silently vanish from either consumer.
+export const STATUS_RANK: Record<Status, number> = {
+  failed: 0, silent: 1, blocked: 2, needs_human: 3, active: 4, idle: 5, completed: 6,
+};
+
 // Statuses that demand attention (severity above info). Derived from
 // STATUS_SEVERITY so a new Status can't silently miss the exception filter
 // or the trend-streak set — one partition, defined once.

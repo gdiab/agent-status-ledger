@@ -1,5 +1,5 @@
 import type { AgentReport, Report, Severity, TaskThread } from "../types";
-import { dispatchRefLabel, dispatchedBody, plural, rollupCounts, rollupLine } from "./rollup";
+import { dispatchRefLabel, dispatchedBody, plural, rollupCounts, rollupLine, threadSessionSummary } from "./rollup";
 import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 import { STATUS_SEVERITY } from "../status";
 import { FILLER_BLOCKED, FILLER_COMPLETED, FILLER_IN_PROGRESS, FILLER_RECOMMENDATION } from "../narrative";
@@ -143,10 +143,9 @@ function cardBody(a: AgentReport): string {
 // dispatch lineage name runs identically; timestamps follow the window's
 // fmtUtc convention with the full ISO in a title.
 function threadBlock(t: TaskThread): string {
-  const runs = t.sessions.map((s) => {
-    const evidence = [plural(s.files, "file"), plural(s.commits, "commit"), ...(s.errors ? [plural(s.errors, "error")] : [])];
-    return `<li title="${esc(s.startedAt)}">${esc(fmtUtc(s.startedAt))} — ${esc(dispatchRefLabel({ sessionId: s.sessionId, profile: s.profile }))}: ${esc(evidence.join(", "))}</li>`;
-  }).join("");
+  const runs = t.sessions.map((s) =>
+    `<li title="${esc(s.startedAt)}">${esc(fmtUtc(s.startedAt))} — ${esc(dispatchRefLabel({ sessionId: s.sessionId, profile: s.profile }))}: ${esc(threadSessionSummary(s))}</li>`,
+  ).join("");
   return `<div class="thread ${sevClass(STATUS_SEVERITY[t.status])}">
   <h3>${esc(t.title)}${t.source === "files" ? ` <span class="thread-source">(file cluster)</span>` : ""}
     <span class="badge ${sevClass(STATUS_SEVERITY[t.status])}" title="${esc(STATUS_HELP[t.status])}">${esc(t.status)}</span>
