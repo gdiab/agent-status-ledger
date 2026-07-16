@@ -561,7 +561,7 @@ The MVP is acceptable when the following are true.
 
 - Given three known agent runs from Claude Code/Codex CLI session history (per ADR 0001), the system creates distinct agent profiles and agent runs.
 - Given multiple runs in the same workdir/repo, the system attaches them to the same agent profile unless explicitly configured otherwise. (Reflects shipped workdir-based identity; to be superseded when the orchestrator-anchored model decided in §7 ships.)
-- Given a manually imported transcript, the system can attach it to an existing agent profile or create a new one.
+- Given a manually imported transcript, the system can attach it to an existing agent profile or create a new one. (Phase 1.5 — the manual import folder ships after MVP v0; see §11.)
 
 ### Evidence correlation
 
@@ -606,7 +606,7 @@ Agent Status Ledger should be local-first by default.
 ### MVP privacy rules
 
 - Raw transcripts are never sent externally by default.
-- Delivery summaries (the email digest, and any future channel such as Telegram) include only concise summaries, statuses, and local report paths.
+- Delivery summaries (the email digest, and any future channel such as Telegram) include only concise summaries and statuses, with the full HTML report as an attachment — never raw transcript content.
 - Reports include local artifact paths or links, not full sensitive content, unless explicitly configured.
 - A redaction pass runs before report generation to catch obvious secrets, tokens, API keys, credentials, and private keys.
 - Source sensitivity labels propagate to events and reports.
@@ -728,9 +728,10 @@ Amended 2026-07-15: email replaced Telegram as the canonical delivery channel. E
 - Generate Markdown and JSON reports from fixtures.
 - Add golden-file tests.
 
-### Week 2: OpenClaw/Ralph/Hermes + Git correlation
+### Week 2: Claude Code/Codex + Git correlation (amended per ADR 0001; originally OpenClaw/Ralph/Hermes)
 
-- Build OpenClaw/Ralph/Hermes connector.
+- Build Claude Code log parser.
+- Build Codex CLI parser.
 - Build Git connector for commits, branches, PRs/issues where available.
 - Correlate events by repo/workdir/time window.
 - Implement status inference and evidence levels.
@@ -744,10 +745,9 @@ Amended 2026-07-15: email replaced Telegram as the canonical delivery channel. E
 - Add config file for thresholds and source paths.
 - Run daily on real activity.
 
-### Week 4: CLI agent expansion
+### Week 4: Connector expansion (amended per ADR 0001; originally Claude Code/Codex)
 
-- Add Claude Code log parser.
-- Add Codex CLI parser.
+- Add OpenClaw/Ralph/Hermes connector.
 - Add import folder for web/app exports.
 - Improve agent profile resolution.
 
@@ -783,7 +783,7 @@ Amended 2026-07-15: email replaced Telegram as the canonical delivery channel. E
 5. How should manually imported ChatGPT/Claude exports be assigned to durable agent profiles?
 6. Should the report distinguish “agent did work” from “agent helped human think through work”?
 7. Should Beads be used as the user-visible ledger, or remain an implementation detail?
-8. ~~What is the best long-term delivery surface: Telegram, Slack, email, dashboard, or all of them?~~ **Resolved 2026-07-15.** Email is the shipped canonical delivery channel, operational since 2026-07-14. Rationale: email needed no bot setup or third-party account, the digest-plus-local-path pattern fits it naturally, and it proved itself in daily use before any alternative was built. The local static HTML page (ADR 0005) covers the dashboard need. Telegram, Slack, SMS, and webhooks remain optional future channels layered on the versioned JSON report. See §16.
+8. ~~What is the best long-term delivery surface: Telegram, Slack, email, dashboard, or all of them?~~ **Resolved 2026-07-15.** Email is the shipped canonical delivery channel, operational since 2026-07-14. Rationale: email needed no bot setup or third-party account, the digest-plus-attached-report pattern fits it naturally, and it proved itself in daily use before any alternative was built. The local static HTML page (ADR 0005) covers the dashboard need. Telegram, Slack, SMS, and webhooks remain optional future channels layered on the versioned JSON report. See §16.
 
 ---
 
