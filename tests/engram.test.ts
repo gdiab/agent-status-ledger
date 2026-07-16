@@ -770,6 +770,36 @@ describe("discoverDispatchLinks", () => {
     expect(grepped[11]).toBe(markerQuery("aaaa0000")); // oldest still probed
   });
 
+  test("duplicate session ids in the window probe once and never overcount runs", () => {
+    // Claude Code Task-tool subagent transcripts inherit the dispatching
+    // session's sessionId, and profile resolution doesn't dedupe sessions —
+    // so the report window can legitimately carry the same id several
+    // times. Each duplicate must not re-probe the parent (wasted greps) nor
+    // mint another runsByParent entry (report.ts SUMS entries per profile,
+    // so duplicates would double the rendered run count).
+    const grepped: string[] = [];
+    const exec: Exec = (argv) => {
+      if (argv[1] === "grep") {
+        grepped.push(argv[2]!);
+        return argv[2] === markerQuery(ORCH)
+          ? { ok: true, stdout: grepResponse([RUN_TAPE]), stderr: "" }
+          : { ok: true, stdout: cliStdout({ error: "no_results" }), stderr: "" };
+      }
+      return { ok: true, stdout: peekResponse([markerEvent(ORCH, ORCH)]), stderr: "" };
+    };
+    const r = discoverDispatchLinks(
+      [
+        lineageSession(ORCH),
+        lineageSession(ORCH, "2026-07-07T13:00:00.000Z"), // same id, later slice
+        lineageSession(SUB),
+      ],
+      enabled,
+      exec,
+    );
+    expect(grepped.filter((q) => q === markerQuery(ORCH)).length).toBe(1);
+    expect(r.runsByParent).toEqual([{ parentSessionId: ORCH, runCount: 1 }]);
+  });
+
   test("peeks at most 16 grep candidates per probed session (marker-tape cap)", () => {
     const tapes = Array.from({ length: 18 }, (_, i) => `cafe${String(i + 1).padStart(4, "0")}`);
     const peeked: string[] = [];

@@ -583,7 +583,15 @@ export function discoverDispatchLinks(
     const runsByParent: DispatchDiscovery["runsByParent"] = [];
     const truncatedParents: string[] = [];
     const seen = new Set<string>();
+    // Probe each parent id ONCE, even when the window carries it several
+    // times (Task-tool subagent transcripts inherit the dispatching
+    // session's sessionId, and profile resolution doesn't dedupe sessions).
+    // A duplicate would re-run the same grep AND mint a second identical
+    // runsByParent entry, which report.ts sums — doubling dispatchedRuns.
+    const probed = new Set<string>();
     for (const session of newestFirst) {
+      if (!knownIds.has(session.sessionId) || probed.has(session.sessionId)) continue;
+      probed.add(session.sessionId);
       const { children, runCount, truncated } = findDispatches(session.sessionId, knownIds, cfg.binaryPath, realExec);
       if (truncated) truncatedParents.push(session.sessionId);
       if (runCount > 0) runsByParent.push({ parentSessionId: session.sessionId, runCount });
