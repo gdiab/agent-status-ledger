@@ -56,12 +56,16 @@ export function dispatchRefLabel(ref: DispatchRef): string {
 // so the phrasing never drifts apart: cross-session links arrive as
 // pre-escaped labels (escaping stays renderer-side); in-session subagent
 // runs (AgentReport.dispatchedRuns) have no session of their own to name,
-// so they contribute a count. undefined = nothing was dispatched, no line.
-export function dispatchedBody(labels: string[], runs: number): string | undefined {
+// so they contribute a count. truncated: the lineage probe hit its
+// marker-tape cap, so the discovered lineage may be an undercount — say so
+// instead of implying completeness. A truncated probe that found NOTHING
+// still gets a body: silence would be indistinguishable from an exhaustive
+// "no dispatches". undefined = nothing dispatched and nothing hidden, no line.
+export function dispatchedBody(labels: string[], runs: number, truncated: boolean): string | undefined {
   const total = labels.length + runs;
-  if (total === 0) return undefined;
+  if (total === 0) return truncated ? "subagent runs: none identified (list may be incomplete)" : undefined;
   const parts = [...labels, ...(runs ? [plural(runs, "in-session run")] : [])];
-  return `${plural(total, "subagent run")}: ${parts.join(", ")}`;
+  return `${plural(total, "subagent run")}: ${parts.join(", ")}${truncated ? " (list may be incomplete)" : ""}`;
 }
 
 export function rollupLine(report: Report): string {

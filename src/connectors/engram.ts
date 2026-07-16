@@ -264,7 +264,9 @@ function* tapeEvents(
 // `grepQuery` is caller-constructed from a SESSION_ID_SHAPE-validated uuid
 // — the bare uuid (evidence upgrade) or the marker literal built around one
 // (dispatch lineage) — so it is never option-shaped; the caller owns that
-// validation because only it knows which shape it is building.
+// validation because only it knows which shape it is building. The
+// option-shape rejection below is a fail-closed backstop for future
+// callers, not a substitute for that validation.
 // `meta.truncated` reports when grep matched more tapes index-wide (its
 // `total`) than the cap allowed probing — the partial-results signal
 // lineage callers propagate up to the report (evidence-upgrade callers
@@ -277,6 +279,7 @@ function* grepPeekCandidates(
   maxCandidates: number,
   meta?: { truncated: boolean },
 ): Generator<{ engramSid: string; response: Record<string, unknown> }> {
+  if (grepQuery.startsWith("-")) return;
   const grep = exec([binaryPath, "grep", grepQuery, "--limit", String(maxCandidates)]);
   if (!grep.ok) return;
   const grepObj = parseCliResponse(grep.stdout);
@@ -424,10 +427,10 @@ export function corroborateSessions(
 //   - the DISPATCHING side's own tape does NOT match: there the marker sits
 //     inside a tool-call prompt argument, nested one JSON level deeper, so
 //     its quotes are double-escaped in the raw line.
-// Live shape (2026-07-16 index): parent-uuid grep matched 214 tapes; the
-// marker-literal grep matched 11 — 9 genuine dispatch tapes + 2 quoting
-// tapes, rejected by the event guards below. Deterministic, O(report
-// sessions) greps, no ranking dependence.
+// So the uuid grep is noise-dominated while the marker-literal grep returns
+// only dispatch tapes plus the rare verbatim quote (rejected by the event
+// guards below). Deterministic, O(report sessions) greps, no ranking
+// dependence.
 //
 // `engram peek <tape> --grep-filter <marker-literal>` then returns the tape
 // lines carrying the marker (and their context). A parsed tape event mints
@@ -564,7 +567,7 @@ export function findDispatches(
             !Number.isFinite(Date.parse(event.t))
           )
             continue;
-          runs.add(`${event.t} ${event.content}`);
+          runs.add(`${event.t}\u0000${event.content}`);
         } else if (knownSessionIds.has(sid)) {
           children.add(sid);
         }
@@ -631,7 +634,7 @@ export function discoverDispatchLinks(
       if (truncated) truncatedParents.push(session.sessionId);
       if (runCount > 0) runsByParent.push({ parentSessionId: session.sessionId, runCount });
       for (const child of children) {
-        const key = `${session.sessionId} ${child}`;
+        const key = `${session.sessionId}\u0000${child}`;
         if (seen.has(key)) continue;
         seen.add(key);
         links.push({ parentSessionId: session.sessionId, childSessionId: child });

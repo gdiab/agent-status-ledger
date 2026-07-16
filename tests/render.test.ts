@@ -188,7 +188,7 @@ describe("renderers", () => {
 
     for (const layout of ["cards", "flat"] as const) {
       const html = renderHtml({ ...report, agents: [truncatedNoLinks], exceptions: [] }, { layout });
-      expect(html).toContain(`<dt>Dispatched</dt><dd class="dispatch">none identified (list may be incomplete)</dd>`);
+      expect(html).toContain(`<dt>Dispatched</dt><dd class="dispatch">subagent runs: none identified (list may be incomplete)</dd>`);
       const htmlPlain = renderHtml({ ...report, agents: [noProbe], exceptions: [] }, { layout });
       expect(htmlPlain).not.toContain("Dispatched");
     }

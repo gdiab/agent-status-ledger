@@ -100,6 +100,14 @@ function cardBody(a: AgentReport): string {
   const next: Row = ["Next", a.narrative.recommendation, FILLER_RECOMMENDATION, hasCommits || hasErrors];
   const shows = ([, text, filler, backed]: Row) => backed || text !== filler;
   const kept = mid.filter(shows);
+  // Both dispatch kinds — cross-session links as named refs, in-session
+  // subagent runs as a count — plus truncation phrasing live in
+  // dispatchedBody; only the escaping is renderer-side.
+  const dispatched = dispatchedBody(
+    (a.dispatched ?? []).map(dispatchRefLabel),
+    a.dispatchedRuns ?? 0,
+    a.dispatchTruncated ?? false,
+  );
   const rows = [
     `<dt>Worked on</dt><dd>${esc(a.narrative.workedOn)}</dd>`,
     ...(kept.length === 0
@@ -114,21 +122,7 @@ function cardBody(a: AgentReport): string {
     ...(a.dispatchedBy?.length
       ? [`<dt>Dispatched by</dt><dd class="dispatch">${esc(a.dispatchedBy.map(dispatchRefLabel).join(", "))}</dd>`]
       : []),
-    // The dispatched row covers both dispatch kinds (dispatchedBody):
-    // cross-session links as named refs, in-session subagent runs as a
-    // count. dispatchTruncated: the lineage probe hit its marker-tape cap,
-    // so the discovered lineage may be an undercount — say so instead of
-    // implying completeness. A truncated probe that found NOTHING still
-    // gets a row: silence would be indistinguishable from an exhaustive
-    // "no dispatches".
-    ...(() => {
-      const body = dispatchedBody((a.dispatched ?? []).map(dispatchRefLabel), a.dispatchedRuns ?? 0);
-      return body
-        ? [`<dt>Dispatched</dt><dd class="dispatch">${esc(`${body}${a.dispatchTruncated ? " (list may be incomplete)" : ""}`)}</dd>`]
-        : a.dispatchTruncated
-          ? [`<dt>Dispatched</dt><dd class="dispatch">none identified (list may be incomplete)</dd>`]
-          : [];
-    })(),
+    ...(dispatched ? [`<dt>Dispatched</dt><dd class="dispatch">${esc(dispatched)}</dd>`] : []),
     // Corroboration from an enrichment connector (engram); absent = no row.
     // Distinct class: "evidence" is the badge span on every card, so the
     // citation needs its own marker for styling and testability.
