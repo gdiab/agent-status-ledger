@@ -168,7 +168,7 @@ The PRD uses three ingestion objects plus one derived reporting construct (TaskT
 1. **Agent Profile**: the durable identity of an agent workstream.
 2. **Agent Run**: a specific execution/session/task performed by that profile.
 3. **Event**: a normalized activity record produced by a connector.
-4. **TaskThread** (decided, not yet shipped — tracked as bead asl-1wm): the report's decided primary grouping — runs from any profile, across sessions and days, stitched into one task-level narrative.
+4. **TaskThread** (shipped 2026-07-16, asl-1wm): the report's primary task-level grouping — runs from any profile, across sessions and days, stitched into one task-level narrative.
 
 This distinction matters. Without it, entity resolution becomes ambiguous.
 
@@ -267,7 +267,7 @@ Optional fields:
 
 ### TaskThread
 
-The report's decided primary grouping (added 2026-07-15; not yet shipped — no TaskThread type, derivation, or rendering exists in code, where reports remain a flat list of per-profile cards. Tracked as bead asl-1wm.) A single task routinely spans multiple runs — an orchestrator session, its dispatched subagents, a follow-up session the next morning — and a run-by-run report fragments that story. A TaskThread groups those runs into one task-level narrative.
+The report's primary task-level grouping (added 2026-07-15; shipped 2026-07-16 as asl-1wm: TaskThread type, derivation in src/threads.ts, and a Task threads section in the Markdown/HTML/JSON reports). A single task routinely spans multiple runs — an orchestrator session, its dispatched subagents, a follow-up session the next morning — and a run-by-run report fragments that story. A TaskThread groups those runs into one task-level narrative.
 
 Threads are keyed by, in preference order:
 
@@ -289,7 +289,7 @@ Optional fields:
 - `last_activity_at`
 - `evidence_level`: the strongest evidence any member run produced
 
-TaskThreads will be derived at report time from runs and events (consistent with the stateless-scan architecture in ADR 0002); they are a reporting construct, not a fourth ingestion object. The per-agent sections will remain, but the digest will lead with threads: the operator's question is "how is the task going," not "what did session N do." Until asl-1wm ships, the digest continues to lead with the exceptions-first per-profile rollup.
+TaskThreads are derived at report time from runs and events (consistent with the stateless-scan architecture in ADR 0002); they are a reporting construct, not a fourth ingestion object. Bead-ID keying requires configuring `connectors.engram.bead_prefixes` (an allowlist — live validation showed generic ID-shape matching mints ~10 false threads per real one); unconfigured, only file-cluster threads derive, and with no threads the report renders exactly as before. The per-agent sections remain. The digest leading with threads (the operator's question is "how is the task going," not "what did session N do") is decided but not yet shipped — the email digest still leads with the exceptions-first per-profile rollup.
 
 ---
 
