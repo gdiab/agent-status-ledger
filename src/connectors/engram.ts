@@ -276,11 +276,18 @@ function* grepPeekCandidates(
   if (!grepObj) return;
 
   const all = Array.isArray(grepObj.sessions) ? (grepObj.sessions as unknown[]) : [];
-  // `total` is grep's index-wide match count; an older CLI without the
-  // field degrades to the returned list length (never fabricating
-  // truncation), while a response over-filling the cap still flags it.
-  const total = typeof grepObj.total === "number" ? grepObj.total : all.length;
-  if (meta) meta.truncated = Math.max(total, all.length) > Math.min(all.length, maxCandidates);
+  // `total` is grep's index-wide match count. An older CLI without the
+  // field leaves truncation unknowable: below the cap the returned list is
+  // necessarily complete (no fabricated truncation), but a response that
+  // fills the cap may have been cut exactly at it, so it is conservatively
+  // flagged truncated rather than presenting possibly-partial results as
+  // the whole truth.
+  if (meta) {
+    meta.truncated =
+      typeof grepObj.total === "number"
+        ? Math.max(grepObj.total, all.length) > Math.min(all.length, maxCandidates)
+        : all.length >= maxCandidates;
+  }
   for (const candidate of all.slice(0, maxCandidates)) {
     const engramSid = (candidate as Record<string, unknown> | null)?.session_id;
     if (typeof engramSid !== "string" || !SESSION_ID_SHAPE.test(engramSid)) continue;

@@ -851,7 +851,9 @@ describe("discoverDispatchLinks", () => {
     expect(result.truncatedParents).toEqual([]);
   });
 
-  test("a grep response without a total field never fabricates truncation", () => {
+  test("a grep response without a total field, below the cap, never fabricates truncation", () => {
+    // Below the cap the returned list is necessarily complete: an older CLI
+    // that omits `total` must not smear every probe as truncated.
     const exec: Exec = (argv) => {
       if (argv[1] === "grep" && argv[2] === markerQuery(ORCH)) {
         return {
@@ -866,6 +868,26 @@ describe("discoverDispatchLinks", () => {
     const result = discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, exec);
     expect(result.links).toEqual([{ parentSessionId: ORCH, childSessionId: SUB }]);
     expect(result.truncatedParents).toEqual([]);
+  });
+
+  test("a grep response without a total field that fills the cap is conservatively truncated", () => {
+    // Exactly 16 rows and no `total`: the list may have been cut exactly at
+    // --limit, so "possibly incomplete" is the honest report — the opposite
+    // guess would present partial lineage as the whole truth.
+    const tapes = Array.from({ length: 16 }, (_, i) => `cafe${String(i + 1).padStart(4, "0")}`);
+    const exec: Exec = (argv) => {
+      if (argv[1] === "grep" && argv[2] === markerQuery(ORCH)) {
+        return {
+          ok: true,
+          stdout: cliStdout({ sessions: tapes.map((session_id) => ({ session_id, confidence: 1.0 })) }),
+          stderr: "",
+        };
+      }
+      if (argv[1] === "grep") return { ok: true, stdout: cliStdout({ error: "no_results" }), stderr: "" };
+      return { ok: true, stdout: peekResponse([]), stderr: "" };
+    };
+    const result = discoverDispatchLinks([lineageSession(ORCH), lineageSession(SUB)], enabled, exec);
+    expect(result.truncatedParents).toEqual([ORCH]);
   });
 
   test("a parent with a 9-run fan-out reports every run: one deterministic grep, no ranking dependence", () => {
