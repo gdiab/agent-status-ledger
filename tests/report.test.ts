@@ -159,7 +159,7 @@ describe("buildReport", () => {
     config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
 
     const calls: string[][] = [];
-    const alwaysMatchExec: Exec = (argv) => {
+    const alwaysMatchExec: Exec = async (argv) => {
       calls.push(argv);
       return {
         ok: true,
@@ -212,7 +212,7 @@ describe("buildReport", () => {
     config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
 
     const grepped: string[] = [];
-    const spy: Exec = (argv) => {
+    const spy: Exec = async (argv) => {
       if (argv[1] === "grep") grepped.push(argv[2]!);
       return { ok: true, stdout: JSON.stringify({ error: "no_results" }), stderr: "" };
     };
@@ -257,7 +257,7 @@ describe("buildReport", () => {
     config.connectors.codex.enabled = false;
     config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
 
-    const matchExec: Exec = (argv) => {
+    const matchExec: Exec = async (argv) => {
       if (argv[1] === "grep" && argv[2] === "cccc0000-0000-4000-8000-00000000000c") {
         return {
           ok: true,
@@ -292,7 +292,7 @@ describe("buildReport", () => {
     expect(agent.evidenceCitation).toContain("/work/p0/src/app.ts");
 
     // Every failure path leaves the inferred level untouched.
-    const failingExec: Exec = () => ({ ok: false, stdout: "", stderr: "engram: not found" });
+    const failingExec: Exec = async () => ({ ok: false, stdout: "", stderr: "engram: not found" });
     const untouched = await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: failingExec });
     const agent2 = untouched.agents.find((a) => a.workdir === "/work/p0")!;
     expect(agent2.evidence).toBe("claimed_only");
@@ -345,7 +345,7 @@ describe("buildReport", () => {
     // Each run's tape carries a marker-prefixed msg.in owned by the
     // orchestrator's own uuid (Task transcripts inherit it) at a distinct
     // timestamp — two tapes, two runs.
-    const exec: Exec = (argv) => {
+    const exec: Exec = async (argv) => {
       if (argv[1] === "grep" && argv[2] === markerQuery(ORCH)) {
         return {
           ok: true,
@@ -430,7 +430,7 @@ describe("buildReport", () => {
     // whose parsed content begins with the dispatch marker (the spec
     // prepends it to the handoff prompt) and carries the subagent's
     // source.session_id.
-    const exec: Exec = (argv) => {
+    const exec: Exec = async (argv) => {
       if (argv[1] === "grep" && argv[2] === markerQuery(ORCH)) {
         return {
           ok: true,
@@ -492,7 +492,7 @@ describe("buildReport", () => {
     const CHILD_TAPE = "2222222222222222222222222222222222222222222222222222222222222222";
 
     // engram double that would happily link ORCH → SUB if asked
-    const exec: Exec = (argv) => {
+    const exec: Exec = async (argv) => {
       if (argv[1] === "grep" && argv[2] === markerQuery(ORCH)) {
         return {
           ok: true,
@@ -609,7 +609,7 @@ describe("buildReport", () => {
     config.connectors.codex.enabled = false;
     config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
 
-    const exec: Exec = (argv) => {
+    const exec: Exec = async (argv) => {
       if (argv[1] === "grep" && argv[2] === markerQuery(ORCH)) {
         return {
           ok: true,

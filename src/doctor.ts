@@ -37,8 +37,8 @@ export interface DoctorDeps {
   config: Config;
 }
 
-export function checkBun(exec: Exec): CheckResult {
-  const r = exec(["bun", "--version"]);
+export async function checkBun(exec: Exec): Promise<CheckResult> {
+  const r = await exec(["bun", "--version"]);
   return r.ok
     ? { name: "bun on PATH", ok: true, detail: `version ${r.stdout.trim()}` }
     : {
@@ -87,9 +87,9 @@ export function checkPlistInstalled(plistPath: string): CheckResult {
       };
 }
 
-export function checkPlistLoaded(exec: Exec, plistPath: string): CheckResult {
+export async function checkPlistLoaded(exec: Exec, plistPath: string): Promise<CheckResult> {
   const name = "launchd job loaded";
-  const r = exec(["launchctl", "list", LAUNCHD_LABEL]);
+  const r = await exec(["launchctl", "list", LAUNCHD_LABEL]);
   return r.ok
     ? { name, ok: true, detail: `${LAUNCHD_LABEL} is loaded` }
     : {
@@ -182,10 +182,10 @@ export function checkEmailPassword(
 // disabled connector is a healthy skip, an enabled one needs a working
 // binary at the configured path (not on PATH, not on crates.io — built from
 // source).
-export function checkEngram(conn: EngramConfig, exec: Exec): CheckResult {
+export async function checkEngram(conn: EngramConfig, exec: Exec): Promise<CheckResult> {
   const name = "engram binary";
   if (!conn.enabled) return { name, ok: true, detail: "disabled in config — skipped" };
-  const r = exec([conn.binaryPath, "--help"]);
+  const r = await exec([conn.binaryPath, "--help"]);
   return r.ok
     ? { name, ok: true, detail: `found via ${conn.binaryPath}` }
     : {
@@ -198,23 +198,25 @@ export function checkEngram(conn: EngramConfig, exec: Exec): CheckResult {
 
 const skipped = (name: string): CheckResult => ({ name, ok: true, detail: "skipped — not macOS" });
 
-export function runDoctor(deps: DoctorDeps): CheckResult[] {
+// Async because the exec-backed checks are; they run sequentially — doctor
+// is a one-shot CLI where stable check order beats concurrency.
+export async function runDoctor(deps: DoctorDeps): Promise<CheckResult[]> {
   const mac = deps.platform === "darwin";
   const plistPath = join(deps.home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`);
   const launchdBun = join(deps.home, ".bun", "bin", "bun");
   const { connectors } = deps.config;
   return [
-    checkBun(deps.exec),
+    await checkBun(deps.exec),
     mac ? checkLaunchdBunPath(launchdBun) : skipped("bun at launchd path"),
     checkApiKey(deps.env, deps.keychain),
     mac ? checkPlistInstalled(plistPath) : skipped("launchd plist installed"),
-    mac ? checkPlistLoaded(deps.exec, plistPath) : skipped("launchd job loaded"),
+    mac ? await checkPlistLoaded(deps.exec, plistPath) : skipped("launchd job loaded"),
     checkConfigFile(deps.configPath),
     checkEmailConfig(deps.config.email),
     checkEmailPassword(deps.env, deps.keychain, deps.config.email),
     checkConnectorDir("claude-code", "claude_code", connectors.claudeCode),
     checkConnectorDir("codex", "codex", connectors.codex, join(connectors.codex.rootDir, "sessions")),
-    checkEngram(connectors.engram, deps.exec),
+    await checkEngram(connectors.engram, deps.exec),
   ];
 }
 

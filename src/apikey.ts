@@ -38,6 +38,12 @@ export function resolveApiKey(
 
 // Real lookup via the macOS `security` CLI. Returns null off-macOS, when the
 // entry is missing, or when the user denies the keychain prompt.
+// Deliberately stays on Bun.spawnSync (unlike the async Exec seam in
+// src/exec.ts, asl-e2q): keychain lookups happen once at CLI startup and
+// once before an email send — serial one-shot probes outside buildReport's
+// concurrent region, with nothing in flight for a blocking call to stall —
+// and a KeychainLookup is a distinct, simpler seam (string|null) that many
+// pure check functions consume synchronously.
 export const macKeychainLookup: KeychainLookup = (service, account) => {
   if (process.platform !== "darwin") return null;
   const args = ["security", "find-generic-password", "-s", service, "-w"];

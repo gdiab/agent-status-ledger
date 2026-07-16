@@ -23,8 +23,8 @@ import { defaultConfig, type EmailConfig } from "../src/config";
 
 const execOk =
   (stdout: string): Exec =>
-  () => ({ ok: true, stdout, stderr: "" });
-const execFail: Exec = () => ({ ok: false, stdout: "", stderr: "" });
+  async () => ({ ok: true, stdout, stderr: "" });
+const execFail: Exec = async () => ({ ok: false, stdout: "", stderr: "" });
 const noKeychain: KeychainLookup = () => null;
 
 function tempDir(): string {
@@ -32,29 +32,29 @@ function tempDir(): string {
 }
 
 describe("checkBun", () => {
-  test("passes with version in detail", () => {
-    const r = checkBun(execOk("1.2.3"));
+  test("passes with version in detail", async () => {
+    const r = await checkBun(execOk("1.2.3"));
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("1.2.3");
     expect(r.fix).toBeUndefined();
   });
 
-  test("fails with install hint when bun is missing", () => {
-    const r = checkBun(execFail);
+  test("fails with install hint when bun is missing", async () => {
+    const r = await checkBun(execFail);
     expect(r.ok).toBe(false);
     expect(r.fix).toContain("bun.sh");
   });
 });
 
 describe("checkLaunchdBunPath", () => {
-  test("passes when the launchd bun binary exists", () => {
+  test("passes when the launchd bun binary exists", async () => {
     const dir = tempDir();
     const bunPath = join(dir, "bun");
     writeFileSync(bunPath, "");
     expect(checkLaunchdBunPath(bunPath).ok).toBe(true);
   });
 
-  test("fails with a symlink fix when missing, with the path quoted", () => {
+  test("fails with a symlink fix when missing, with the path quoted", async () => {
     const bunPath = join(tempDir(), "nope", "bun");
     const r = checkLaunchdBunPath(bunPath);
     expect(r.ok).toBe(false);
@@ -64,13 +64,13 @@ describe("checkLaunchdBunPath", () => {
 });
 
 describe("checkApiKey", () => {
-  test("passes when resolver finds a key, reporting the source", () => {
+  test("passes when resolver finds a key, reporting the source", async () => {
     const r = checkApiKey({ ANTHROPIC_API_KEY: "sk-x" }, noKeychain);
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("ANTHROPIC_API_KEY env var");
   });
 
-  test("passes via keychain using the resolver's own service/account", () => {
+  test("passes via keychain using the resolver's own service/account", async () => {
     const keychain: KeychainLookup = (service, account) =>
       service === "anthropic-api-key" && account === "asl" ? "sk-k" : null;
     const r = checkApiKey({}, keychain);
@@ -78,7 +78,7 @@ describe("checkApiKey", () => {
     expect(r.detail).toContain("keychain");
   });
 
-  test("fails with the exact security add-generic-password form", () => {
+  test("fails with the exact security add-generic-password form", async () => {
     const r = checkApiKey({}, noKeychain);
     expect(r.ok).toBe(false);
     expect(r.fix).toContain("security add-generic-password -s anthropic-api-key -a asl -w");
@@ -86,14 +86,14 @@ describe("checkApiKey", () => {
 });
 
 describe("checkPlistInstalled", () => {
-  test("passes when the plist file exists", () => {
+  test("passes when the plist file exists", async () => {
     const dir = tempDir();
     const plist = join(dir, "com.gd.asl-report.plist");
     writeFileSync(plist, "<plist/>");
     expect(checkPlistInstalled(plist).ok).toBe(true);
   });
 
-  test("fails with a load hint when missing", () => {
+  test("fails with a load hint when missing", async () => {
     const r = checkPlistInstalled(join(tempDir(), "com.gd.asl-report.plist"));
     expect(r.ok).toBe(false);
     expect(r.fix).toContain("launchctl load");
@@ -101,39 +101,39 @@ describe("checkPlistInstalled", () => {
 });
 
 describe("checkPlistLoaded", () => {
-  test("passes when launchctl lists the label", () => {
-    const r = checkPlistLoaded(execOk('{ "Label" = "com.gd.asl-report"; }'), "/x.plist");
+  test("passes when launchctl lists the label", async () => {
+    const r = await checkPlistLoaded(execOk('{ "Label" = "com.gd.asl-report"; }'), "/x.plist");
     expect(r.ok).toBe(true);
   });
 
-  test("fails with launchctl load fix when not loaded", () => {
-    const r = checkPlistLoaded(execFail, "/x.plist");
+  test("fails with launchctl load fix when not loaded", async () => {
+    const r = await checkPlistLoaded(execFail, "/x.plist");
     expect(r.ok).toBe(false);
     expect(r.fix).toBe("launchctl load -w /x.plist");
   });
 });
 
 describe("checkConnectorDir", () => {
-  test("passes for an existing readable directory", () => {
+  test("passes for an existing readable directory", async () => {
     const dir = tempDir();
     const r = checkConnectorDir("claude-code", "claude_code", { enabled: true, rootDir: dir });
     expect(r.ok).toBe(true);
     expect(r.detail).toContain(dir);
   });
 
-  test("fails for a missing directory with the explicit toml key in the hint", () => {
+  test("fails for a missing directory with the explicit toml key in the hint", async () => {
     const r = checkConnectorDir("claude-code", "claude_code", { enabled: true, rootDir: join(tempDir(), "gone") });
     expect(r.ok).toBe(false);
     expect(r.fix).toContain("connectors.claude_code.root_dir");
   });
 
-  test("a disabled connector passes as skipped", () => {
+  test("a disabled connector passes as skipped", async () => {
     const r = checkConnectorDir("codex", "codex", { enabled: false, rootDir: "/nope" });
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("disabled");
   });
 
-  test("a probe dir different from root_dir is checked and reported", () => {
+  test("a probe dir different from root_dir is checked and reported", async () => {
     const root = tempDir(); // exists, but the probed subdir does not
     const probe = join(root, "sessions");
     const r = checkConnectorDir("codex", "codex", { enabled: true, rootDir: root }, probe);
@@ -143,19 +143,19 @@ describe("checkConnectorDir", () => {
 });
 
 describe("checkConfigFile", () => {
-  test("missing config file is fine (defaults in use)", () => {
+  test("missing config file is fine (defaults in use)", async () => {
     const r = checkConfigFile(join(tempDir(), "config.toml"));
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("defaults");
   });
 
-  test("valid toml passes", () => {
+  test("valid toml passes", async () => {
     const p = join(tempDir(), "config.toml");
     writeFileSync(p, 'model = "claude-haiku-4-5-20251001"\n');
     expect(checkConfigFile(p).ok).toBe(true);
   });
 
-  test("broken toml fails with the parse error and file path", () => {
+  test("broken toml fails with the parse error and file path", async () => {
     const p = join(tempDir(), "config.toml");
     writeFileSync(p, "reports_dir = [unclosed\n");
     const r = checkConfigFile(p);
@@ -184,8 +184,8 @@ function fakeDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
 }
 
 describe("runDoctor", () => {
-  test("never throws even when everything is missing, and reports all checks", () => {
-    const results = runDoctor(fakeDeps());
+  test("never throws even when everything is missing, and reports all checks", async () => {
+    const results = await runDoctor(fakeDeps());
     expect(results.length).toBe(11);
     for (const r of results) {
       expect(typeof r.name).toBe("string");
@@ -194,7 +194,7 @@ describe("runDoctor", () => {
     }
   });
 
-  test("all green on a fully set-up fake machine", () => {
+  test("all green on a fully set-up fake machine", async () => {
     const home = tempDir();
     mkdirSync(join(home, ".bun", "bin"), { recursive: true });
     writeFileSync(join(home, ".bun", "bin", "bun"), "");
@@ -205,7 +205,7 @@ describe("runDoctor", () => {
     const config = defaultConfig();
     config.connectors.claudeCode.rootDir = join(home, ".claude", "projects");
     config.connectors.codex.rootDir = join(home, ".codex");
-    const results = runDoctor(
+    const results = await runDoctor(
       fakeDeps({
         home,
         config,
@@ -217,32 +217,32 @@ describe("runDoctor", () => {
     expect(results.every((r) => r.ok)).toBe(true);
   });
 
-  test("connector checks honor the injected config, not the real home", () => {
+  test("connector checks honor the injected config, not the real home", async () => {
     const home = tempDir();
     const config = defaultConfig();
     config.connectors.claudeCode.rootDir = join(home, "cc-logs");
     config.connectors.codex.rootDir = join(home, "cx");
-    const results = runDoctor(fakeDeps({ home, config }));
+    const results = await runDoctor(fakeDeps({ home, config }));
     const cc = results.find((r) => r.name === "claude-code logs")!;
     expect(cc.ok).toBe(false);
     expect(cc.detail).toContain(join(home, "cc-logs"));
   });
 
-  test("codex logs check probes the sessions/ subdir the connector actually reads", () => {
+  test("codex logs check probes the sessions/ subdir the connector actually reads", async () => {
     const home = tempDir();
     const config = defaultConfig();
     config.connectors.claudeCode = { enabled: false, rootDir: "/unused" };
     config.connectors.codex.rootDir = join(home, ".codex");
     mkdirSync(join(home, ".codex"), { recursive: true }); // root exists, sessions/ missing
-    const before = runDoctor(fakeDeps({ home, config })).find((r) => r.name === "codex logs")!;
+    const before = (await runDoctor(fakeDeps({ home, config }))).find((r) => r.name === "codex logs")!;
     expect(before.ok).toBe(false);
     mkdirSync(join(home, ".codex", "sessions"), { recursive: true });
-    const after = runDoctor(fakeDeps({ home, config })).find((r) => r.name === "codex logs")!;
+    const after = (await runDoctor(fakeDeps({ home, config }))).find((r) => r.name === "codex logs")!;
     expect(after.ok).toBe(true);
   });
 
-  test("launchd checks are skipped off macOS", () => {
-    const results = runDoctor(fakeDeps({ platform: "linux" }));
+  test("launchd checks are skipped off macOS", async () => {
+    const results = await runDoctor(fakeDeps({ platform: "linux" }));
     const launchd = results.filter((r) => r.name.includes("launchd"));
     expect(launchd.length).toBeGreaterThan(0);
     for (const r of launchd) {
@@ -253,53 +253,53 @@ describe("runDoctor", () => {
 });
 
 describe("checkEngram", () => {
-  test("reports disabled — skipped without probing when the connector is off", () => {
+  test("reports disabled — skipped without probing when the connector is off", async () => {
     let calls = 0;
-    const spy: Exec = () => {
+    const spy: Exec = async () => {
       calls++;
       return { ok: true, stdout: "", stderr: "" };
     };
-    const r = checkEngram({ enabled: false, binaryPath: "/opt/engram" }, spy);
+    const r = await checkEngram({ enabled: false, binaryPath: "/opt/engram" }, spy);
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("disabled");
     expect(calls).toBe(0);
   });
 
-  test("passes when enabled and the binary responds", () => {
-    const r = checkEngram({ enabled: true, binaryPath: "/opt/engram" }, execOk("engram help text"));
+  test("passes when enabled and the binary responds", async () => {
+    const r = await checkEngram({ enabled: true, binaryPath: "/opt/engram" }, execOk("engram help text"));
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("/opt/engram");
     expect(r.fix).toBeUndefined();
   });
 
-  test("fails with a build hint when enabled and the binary is missing or errors", () => {
-    const r = checkEngram({ enabled: true, binaryPath: "/opt/engram" }, execFail);
+  test("fails with a build hint when enabled and the binary is missing or errors", async () => {
+    const r = await checkEngram({ enabled: true, binaryPath: "/opt/engram" }, execFail);
     expect(r.ok).toBe(false);
     expect(r.fix).toContain("cargo build");
   });
 });
 
 describe("runDoctor engram wiring", () => {
-  test("reports disabled — skipped when the engram connector is off (the default)", () => {
-    const results = runDoctor(fakeDeps());
+  test("reports disabled — skipped when the engram connector is off (the default)", async () => {
+    const results = await runDoctor(fakeDeps());
     const engram = results.find((r) => r.name === "engram binary")!;
     expect(engram.ok).toBe(true);
     expect(engram.detail).toContain("disabled");
   });
 
-  test("probes the binary and passes when enabled and exec succeeds", () => {
+  test("probes the binary and passes when enabled and exec succeeds", async () => {
     const config = defaultConfig();
     config.connectors.engram = { enabled: true, binaryPath: "/opt/engram" };
-    const results = runDoctor(fakeDeps({ config, exec: execOk("engram help text") }));
+    const results = await runDoctor(fakeDeps({ config, exec: execOk("engram help text") }));
     const engram = results.find((r) => r.name === "engram binary")!;
     expect(engram.ok).toBe(true);
     expect(engram.detail).toContain("/opt/engram");
   });
 
-  test("fails with a build hint when enabled and exec fails", () => {
+  test("fails with a build hint when enabled and exec fails", async () => {
     const config = defaultConfig();
     config.connectors.engram = { enabled: true, binaryPath: "/opt/engram" };
-    const results = runDoctor(fakeDeps({ config, exec: execFail }));
+    const results = await runDoctor(fakeDeps({ config, exec: execFail }));
     const engram = results.find((r) => r.name === "engram binary")!;
     expect(engram.ok).toBe(false);
     expect(engram.fix).toContain("cargo build");
@@ -307,7 +307,7 @@ describe("runDoctor engram wiring", () => {
 });
 
 describe("formatDoctorReport", () => {
-  test("shows pass/fail markers, fixes, and a summary line", () => {
+  test("shows pass/fail markers, fixes, and a summary line", async () => {
     const out = formatDoctorReport([
       { name: "bun", ok: true, detail: "1.2.3" },
       { name: "keychain API key", ok: false, detail: "not found", fix: "security add-generic-password ..." },
@@ -324,19 +324,19 @@ const email: EmailConfig = {
 };
 
 describe("checkEmailConfig", () => {
-  test("skips when email is not configured", () => {
+  test("skips when email is not configured", async () => {
     const r = checkEmailConfig(undefined);
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("not configured");
   });
 
-  test("passes and shows the route for a valid config", () => {
+  test("passes and shows the route for a valid config", async () => {
     const r = checkEmailConfig(email);
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("smtp.gmail.com:465");
   });
 
-  test("fails on implausible addresses and bad port", () => {
+  test("fails on implausible addresses and bad port", async () => {
     expect(checkEmailConfig({ ...email, to: "not-an-address" }).ok).toBe(false);
     expect(checkEmailConfig({ ...email, from: "also bad" }).ok).toBe(false);
     expect(checkEmailConfig({ ...email, smtpPort: 0 }).ok).toBe(false);
@@ -344,13 +344,13 @@ describe("checkEmailConfig", () => {
 });
 
 describe("checkEmailPassword", () => {
-  test("skips when email is not configured", () => {
+  test("skips when email is not configured", async () => {
     const r = checkEmailPassword({}, noKeychain, undefined);
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("not configured");
   });
 
-  test("passes when the keychain has the app password", () => {
+  test("passes when the keychain has the app password", async () => {
     const keychain: KeychainLookup = (s, a) =>
       s === "gmail-app-password" && a === "asl" ? "pass" : null;
     const r = checkEmailPassword({}, keychain, email);
@@ -358,7 +358,7 @@ describe("checkEmailPassword", () => {
     expect(r.detail).toContain("keychain");
   });
 
-  test("fails with the add-generic-password hint when missing", () => {
+  test("fails with the add-generic-password hint when missing", async () => {
     const r = checkEmailPassword({}, noKeychain, email);
     expect(r.ok).toBe(false);
     expect(r.fix).toContain("security add-generic-password -s gmail-app-password -a asl");
@@ -366,16 +366,16 @@ describe("checkEmailPassword", () => {
 });
 
 describe("runDoctor email wiring", () => {
-  test("includes both email checks when configured", () => {
+  test("includes both email checks when configured", async () => {
     const config = { ...defaultConfig(), email };
-    const results = runDoctor(fakeDeps({ config }));
+    const results = await runDoctor(fakeDeps({ config }));
     const names = results.map((r) => r.name);
     expect(names).toContain("email config");
     expect(names).toContain("gmail app password");
   });
 
-  test("email checks report skipped when unconfigured", () => {
-    const results = runDoctor(fakeDeps({ config: defaultConfig() }));
+  test("email checks report skipped when unconfigured", async () => {
+    const results = await runDoctor(fakeDeps({ config: defaultConfig() }));
     const emailChecks = results.filter((r) => r.name === "email config" || r.name === "gmail app password");
     expect(emailChecks).toHaveLength(2);
     for (const r of emailChecks) {
