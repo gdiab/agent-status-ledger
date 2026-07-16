@@ -680,6 +680,16 @@ export async function discoverDispatchLinks(
 // same mention-only guard) — a transcript QUOTING another session's
 // dialogue must not donate keys to it.
 //
+// Known limitation (accepted): the ownership guard is provenance-based,
+// not semantic. It rejects other sessions' tapes, but quotation inside the
+// probed session's OWN dialogue still counts — "session A is handling
+// asl-1wm", said in session B, makes B a member of the asl-1wm thread.
+// Mention-based membership cannot tell discussing a task from advancing
+// one without understanding the dialogue, and any cheap keyword heuristic
+// ("handled by", "belongs to") would trade this over-inclusion for silent
+// misses. Threads are grouping enrichment, not evidence: the cost of an
+// over-inclusive member is a spurious card link, never a false claim.
+//
 // Redaction posture (the reason this stays count-and-key shaped): dialogue
 // content is unredacted verbatim, so nothing free-text leaves this pass.
 // A key must match taskKeyPattern — a configured tracker prefix plus a
