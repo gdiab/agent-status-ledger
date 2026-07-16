@@ -89,6 +89,13 @@ const MAX_SESSIONS_PER_PROFILE = 5;
 // any exec, so a hostile id can never become an engram CLI option.
 const SESSION_ID_SHAPE = /^[0-9a-fA-F][0-9a-fA-F-]{7,63}$/;
 
+// The ISO-8601 instant engram stamps on every tape event's `t`. Used to
+// validate a timestamp before it anchors an in-session run identity in
+// findDispatches: an empty or garbage `t` must be rejected outright, not
+// used as a dedupe key (a degenerate key like "" would collapse every
+// distinct dispatch that shares the junk value into one run).
+const TAPE_TIMESTAMP_SHAPE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
 // Tape-sourced strings end up in every consumer surface (JSON, markdown,
 // html, digest, email) and are assembled from engram-reported content
 // (today: file paths; soon: quoted DIALOGUE), which is untrusted AND
@@ -443,9 +450,11 @@ export function corroborateSessions(
 //         Task-tool subagent transcripts inherit the dispatching session's
 //         sessionId, so engram records the run's events under the parent's
 //         own uuid. A genuine dispatch with no harness session of its own —
-//         counted per run (deduped by the inbound message's timestamp, the
-//         only stable per-run identity the tape exposes) and attributed to
-//         the parent, never minted as a self-link;
+//         counted per run (deduped by the inbound message's timestamp +
+//         content, the closest thing to a per-run identity the tape
+//         exposes; see findDispatches for the validation and the residual
+//         precision limit) and attributed to the parent, never minted as a
+//         self-link;
 //       - anything else → a session outside the report window; skipped.
 // Same-event correlation is load-bearing: a session merely QUOTING the
 // marker in a msg.out/tool.result (code review, test fixture), or a peek
@@ -500,7 +509,9 @@ export interface LineageSession {
 // classify the inbound marker events — see the pipeline comment above for
 // the same-event correlation rule). `children` are cross-session dispatch
 // targets; `runCount` counts in-session subagent runs (marker events owned
-// by the parent itself, deduped by inbound-message timestamp). `truncated`
+// by the parent itself, deduped by inbound-message timestamp + content —
+// engram exposes no run/event id, see the identity comment in the msg.in
+// classification below). `truncated`
 // is true when grep matched more marker tapes index-wide than
 // MAX_MARKER_TAPES allowed peeking, i.e. the discovered lineage may be an
 // undercount — surfaced so the report can say "list may be incomplete"
@@ -532,11 +543,21 @@ export function findDispatches(
         const sid = source?.session_id;
         if (typeof sid !== "string" || !SESSION_ID_SHAPE.test(sid)) continue;
         if (sid === parentUuid) {
-          // In-session run: the timestamp is the run's identity, so the
-          // same run's msg.in repeated across tape slices counts once. An
-          // event without a usable timestamp can't be told apart from an
-          // already-counted run, so it is skipped rather than over-counted.
-          if (typeof event.t === "string") runs.add(event.t);
+          // In-session run identity: engram exposes no run or event id, so
+          // the honest best discriminator the peeked msg.in carries is its
+          // own timestamp plus its content (the full marker-prefixed
+          // dispatch prompt). The same run's msg.in repeated across tape
+          // slices carries both verbatim and counts once; two dispatches
+          // recorded in the same instant still differ by prompt and count
+          // separately. Residual precision limit, accepted: two dispatches
+          // with an IDENTICAL prompt in the same recorded instant collapse
+          // to one — nothing in the tape can tell them apart today. A
+          // timestamp that fails the shape check (empty, garbage) can't
+          // anchor an identity at all, so the event is skipped rather than
+          // counted (risking slice overcount) or deduped on the junk
+          // (collapsing distinct dispatches).
+          if (typeof event.t !== "string" || !TAPE_TIMESTAMP_SHAPE.test(event.t)) continue;
+          runs.add(`${event.t} ${event.content}`);
         } else if (knownSessionIds.has(sid)) {
           children.add(sid);
         }

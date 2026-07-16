@@ -361,11 +361,16 @@ describe("discoverDispatchLinks", () => {
   // is the session_id engram recorded for the transcript — another harness
   // session for a cross-session dispatch, the dispatching session itself
   // for a Task-tool subagent run.
-  function markerEvent(markerUuid: string, ownerUuid: string, t = "2026-07-14T13:00:00.000Z"): unknown {
+  function markerEvent(
+    markerUuid: string,
+    ownerUuid: string,
+    t = "2026-07-14T13:00:00.000Z",
+    task = "implement the thing",
+  ): unknown {
     return {
       k: "msg.in",
       role: "user",
-      content: `<engram-src id="${markerUuid}"/> implement the thing`,
+      content: `<engram-src id="${markerUuid}"/> ${task}`,
       source: { harness: "claude-code", session_id: ownerUuid },
       t,
     };
@@ -493,6 +498,53 @@ describe("discoverDispatchLinks", () => {
     };
     const r = discoverDispatchLinks([lineageSession(ORCH)], enabled, exec);
     expect(r.runsByParent).toEqual([{ parentSessionId: ORCH, runCount: 2 }]);
+  });
+
+  test("two distinct dispatches sharing a timestamp still count separately when their prompts differ", () => {
+    // Engram exposes no run/event id, so run identity is timestamp +
+    // content: two dispatches recorded in the same instant are told apart
+    // by their prompts. (Identical prompt + identical instant is the
+    // documented residual collapse.)
+    const exec: Exec = (argv) => {
+      if (argv[1] === "grep" && argv[2] === markerQuery(ORCH)) {
+        return { ok: true, stdout: grepResponse([RUN_TAPE]), stderr: "" };
+      }
+      if (argv[1] === "grep") return { ok: true, stdout: cliStdout({ error: "no_results" }), stderr: "" };
+      return {
+        ok: true,
+        stdout: peekResponse([
+          markerEvent(ORCH, ORCH, "2026-07-14T13:00:00.000Z", "implement the thing"),
+          markerEvent(ORCH, ORCH, "2026-07-14T13:00:00.000Z", "review the thing"),
+        ]),
+        stderr: "",
+      };
+    };
+    const r = discoverDispatchLinks([lineageSession(ORCH)], enabled, exec);
+    expect(r.runsByParent).toEqual([{ parentSessionId: ORCH, runCount: 2 }]);
+  });
+
+  test("marker msg.in events with empty or garbage timestamps are skipped, never deduped on the junk", () => {
+    // An unusable timestamp can't anchor a run identity: counting it risks
+    // overcounting slices, deduping on "" collapses distinct dispatches.
+    // Skip is the honest move — and it must not disturb a valid sibling.
+    const exec: Exec = (argv) => {
+      if (argv[1] === "grep" && argv[2] === markerQuery(ORCH)) {
+        return { ok: true, stdout: grepResponse([RUN_TAPE]), stderr: "" };
+      }
+      if (argv[1] === "grep") return { ok: true, stdout: cliStdout({ error: "no_results" }), stderr: "" };
+      return {
+        ok: true,
+        stdout: peekResponse([
+          markerEvent(ORCH, ORCH, "", "first"),
+          markerEvent(ORCH, ORCH, "", "second"),
+          markerEvent(ORCH, ORCH, "definitely not a timestamp", "third"),
+          markerEvent(ORCH, ORCH, "2026-07-14T13:00:00.000Z", "the one valid run"),
+        ]),
+        stderr: "",
+      };
+    };
+    const r = discoverDispatchLinks([lineageSession(ORCH)], enabled, exec);
+    expect(r.runsByParent).toEqual([{ parentSessionId: ORCH, runCount: 1 }]);
   });
 
   test("a probe can report cross-session links and in-session runs side by side", () => {
