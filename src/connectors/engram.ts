@@ -17,7 +17,7 @@
 // Guard: grep can hit a session that merely *mentions* the UUID (e.g. an
 // orchestrator transcript quoting a dispatch prompt), so a candidate only
 // counts when its code.edit events actually carry source.session_id == uuid.
-import type { EngramConfig } from "../config";
+import { BEAD_PREFIX_SHAPE, type EngramConfig } from "../config";
 import { makeSpawnExec, type Exec } from "../exec";
 import { redact } from "../redact";
 import type { RawSession } from "../types";
@@ -698,11 +698,21 @@ export async function discoverDispatchLinks(
 // Boundaries reject dash/word/'<' neighbors on both sides, so composite
 // tokens never shed a false key: `<engram-src` (the dispatch marker,
 // present verbatim in every dispatch prompt), `asl-wt-1wm` (worktree
-// names), `asl-1wm-task-threads` (branch names). Prefixes have passed
-// BEAD_PREFIX_SHAPE at config load — lowercase alphanumerics only — so
-// interpolating them is regex-inert.
-function taskKeyPattern(beadPrefixes: string[]): RegExp {
-  return new RegExp(`(?<![<\\w-])(?:${beadPrefixes.join("|")})-[a-z0-9]{2,4}(?![\\w-])`, "g");
+// names), `asl-1wm-task-threads` (branch names).
+//
+// Prefixes are revalidated against BEAD_PREFIX_SHAPE HERE, not trusted from
+// config load: the TOML loader filters, but buildReport accepts
+// programmatically constructed Configs, and an unvalidated prefix like
+// `.{0,100}` interpolated raw would widen the match window onto UNREDACTED
+// tape dialogue (or, like `x)`, break the regex). Fail-soft per the
+// connector's conventions — an invalid prefix is dropped individually, and
+// if none survive the pass yields no keys (null pattern) instead of a
+// degenerate regex; only shape-validated prefixes are ever interpolated,
+// which makes them regex-inert (lowercase alphanumerics only).
+function taskKeyPattern(beadPrefixes: string[]): RegExp | null {
+  const valid = beadPrefixes.filter((p) => BEAD_PREFIX_SHAPE.test(p));
+  if (valid.length === 0) return null;
+  return new RegExp(`(?<![<\\w-])(?:${valid.join("|")})-[a-z0-9]{2,4}(?![\\w-])`, "g");
 }
 
 // Peek filter for dialogue lines: matches the raw tape line's kind field for
@@ -722,8 +732,11 @@ export async function findTaskKeys(
   extraPatterns: string[],
 ): Promise<string[]> {
   try {
-    if (!SESSION_ID_SHAPE.test(sessionUuid) || beadPrefixes.length === 0) return [];
+    if (!SESSION_ID_SHAPE.test(sessionUuid)) return [];
+    // Null pattern (no prefix survived revalidation) skips the pass before
+    // any subprocess is spawned, same as an empty prefix list.
     const pattern = taskKeyPattern(beadPrefixes);
+    if (!pattern) return [];
     const keys = new Set<string>();
     // Every candidate up to the cap is read (no early stop): engram watch
     // slices a session's tape per debounce, so mentions can live in any of

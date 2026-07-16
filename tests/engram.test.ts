@@ -1060,6 +1060,37 @@ describe("findTaskKeys / discoverTaskKeys", () => {
     expect(await findTaskKeys(UUID, PREFIXES, BIN, exec, [])).toEqual(["asl-1wm"]);
   });
 
+  // buildReport accepts programmatically constructed Configs, so the TOML
+  // loader's BEAD_PREFIX_SHAPE filter is not a sufficient gate: a prefix
+  // like `.{0,100}` interpolated raw into taskKeyPattern widens the match
+  // window onto unredacted dialogue. The connector must revalidate.
+  test("hostile prefixes never reach the regex: dropped per-prefix, and dialogue never leaks", async () => {
+    const exec = twoStepExec(grepResponse([ENGRAM_SID]), {
+      [ENGRAM_SID]: peekResponse([
+        msgEvent("msg.in", "the secret token hunter2 sits before -abc and asl-1wm", UUID),
+      ]),
+    });
+    // `.{0,100}` would swallow dialogue into the "prefix"; `a|b` smuggles
+    // alternation; `x)` is a syntax error; `Asl`/`-asl` fail the shape.
+    for (const hostile of [".{0,100}", "a|b", "x)", "Asl", "-asl"]) {
+      expect(await findTaskKeys(UUID, [hostile], BIN, exec, [])).toEqual([]);
+    }
+    // Fail-soft per prefix: a hostile entry is dropped, valid ones survive.
+    const mixed = await findTaskKeys(UUID, [".{0,100}", "asl", "x)"], BIN, exec, []);
+    expect(mixed).toEqual(["asl-1wm"]);
+    expect(JSON.stringify(mixed)).not.toContain("hunter2");
+  });
+
+  test("all-invalid prefixes disable the pass without spawning a subprocess", async () => {
+    let calls = 0;
+    const spy: Exec = async () => {
+      calls++;
+      return { ok: true, stdout: cliStdout({ error: "no_results" }), stderr: "" };
+    };
+    expect(await findTaskKeys(UUID, [".{0,100}"], BIN, spy, [])).toEqual([]);
+    expect(calls).toBe(0);
+  });
+
   test("no configured prefixes disables the pass without calling exec", async () => {
     let calls = 0;
     const spy: Exec = async () => {
