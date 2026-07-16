@@ -1,5 +1,5 @@
 import type { Config } from "./config";
-import type { AgentProfile, AgentReport, CommitEvidence, DispatchRef, Report } from "./types";
+import type { AgentProfile, AgentReport, CommitEvidence, DispatchRef, Report, TaskThread } from "./types";
 import { scanClaudeCode } from "./connectors/claude-code";
 import { scanCodex } from "./connectors/codex";
 import { resolveProfiles } from "./resolver";
@@ -7,7 +7,8 @@ import { attributeCommits, listCommits } from "./git";
 import { EXCEPTION_STATUSES, inferStatus } from "./status";
 import { buildFactSheet, generateNarrative, templateNarrative } from "./narrative";
 import { redact, redactFacts } from "./redact";
-import { corroborateSessions, discoverDispatchLinks } from "./connectors/engram";
+import { corroborateSessions, discoverDispatchLinks, discoverTaskKeys } from "./connectors/engram";
+import { deriveTaskThreads } from "./threads";
 import type { Exec } from "./exec";
 
 export interface BuildReportOptions {
@@ -63,6 +64,23 @@ export function isTrivialProfile(profile: AgentProfile, commits: CommitEvidence[
   );
 }
 
+// The shared projection every report-wide (post-card) enrichment pass works
+// on: the POST-filter profile set — only profiles that produced an agent
+// card — plus its sessions flattened to the connector-facing slice. Both
+// dispatch lineage and task-thread derivation resolve against this same set,
+// so no enrichment ever references a trivial-filtered profile. This is the
+// deliberate extent of the "unifying enrichment pipeline" (asl-cey): the
+// passes share their input projection and their fail-soft posture, but call
+// distinct connector entry points with distinct outputs — folding those into
+// one abstraction would share nothing real.
+function liveProjection(agents: AgentReport[], profiles: AgentProfile[]) {
+  const liveIds = new Set(agents.map((a) => a.profileId));
+  const liveProfiles = profiles.filter((p) => liveIds.has(p.profileId));
+  const sessions = liveProfiles.flatMap((p) =>
+    p.sessions.map((s) => ({ sessionId: s.sessionId, startedAt: s.startedAt })));
+  return { liveProfiles, sessions };
+}
+
 // Dispatch-marker lineage is a cross-profile fact (an orchestrator in one
 // workdir dispatches subagent runs in another), discovered once per report
 // and attached to the finished cards. Invariant: lineage is resolved against
@@ -72,10 +90,9 @@ export function isTrivialProfile(profile: AgentProfile, commits: CommitEvidence[
 // Fail-soft like every engram query: disabled or failing engram means no
 // links, never a broken report.
 async function attachDispatchLineage(agents: AgentReport[], profiles: AgentProfile[], opts: BuildReportOptions): Promise<void> {
-  const liveIds = new Set(agents.map((a) => a.profileId));
-  const liveProfiles = profiles.filter((p) => liveIds.has(p.profileId));
+  const { liveProfiles, sessions } = liveProjection(agents, profiles);
   const { links: dispatchLinks, runsByParent, truncatedParents } = await discoverDispatchLinks(
-    liveProfiles.flatMap((p) => p.sessions.map((s) => ({ sessionId: s.sessionId, startedAt: s.startedAt }))),
+    sessions,
     opts.config.connectors.engram,
     opts.engramExec,
   );
@@ -130,6 +147,26 @@ async function attachDispatchLineage(agents: AgentReport[], profiles: AgentProfi
     const runs = runsByProfile.get(agent.profileId);
     if (runs) agent.dispatchedRuns = runs;
     if (truncatedProfileIds.has(agent.profileId)) agent.dispatchTruncated = true;
+  }
+}
+
+// Task-thread derivation, second report-wide enrichment pass: engram bead
+// keys (fail-soft in the connector) feed the pure derivation in
+// src/threads.ts, whose file-cluster fallback works from parsed session data
+// alone — engram disabled or failing still yields file threads, and no
+// threads at all yields a report byte-identical to before. The try/catch is
+// the bead's hard rule made local: a thread failure must never break the
+// report — derivation is additive garnish, the cards are the product.
+async function deriveThreads(agents: AgentReport[], profiles: AgentProfile[], opts: BuildReportOptions): Promise<TaskThread[]> {
+  try {
+    const { liveProfiles, sessions } = liveProjection(agents, profiles);
+    const keysBySession = await discoverTaskKeys(sessions, opts.config.connectors.engram, {
+      redactPatterns: opts.config.redactPatterns,
+      exec: opts.engramExec,
+    });
+    return deriveTaskThreads(agents, liveProfiles, keysBySession, opts.config.redactPatterns);
+  } catch {
+    return [];
   }
 }
 
@@ -199,6 +236,7 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
   const trivialProfiles = results.flatMap((r) => ("trivial" in r ? [r.trivial] : [])).sort();
 
   await attachDispatchLineage(agents, profiles, opts);
+  const threads = await deriveThreads(agents, profiles, opts);
 
   agents.sort((a, b) =>
     SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || a.displayName.localeCompare(b.displayName));
@@ -211,5 +249,6 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
     exceptions: agents.filter((a) => EXCEPTION_STATUSES.has(a.status)),
     agents,
     ...(trivialProfiles.length ? { trivialProfiles } : {}),
+    ...(threads.length ? { threads } : {}),
   };
 }

@@ -808,3 +808,82 @@ describe("renderers", () => {
     expect(isHtmlLayout("")).toBe(false);
   });
 });
+
+// Task-thread rendering (asl-1wm): a section per surface when
+// Report.threads is present, byte-identical output when absent.
+describe("task-thread rendering", () => {
+  const thread = {
+    threadKey: "asl-1wm",
+    source: "bead" as const,
+    title: "asl-1wm",
+    status: "blocked" as const,
+    evidence: "proven" as const,
+    firstActivityAt: "2026-07-07T09:00:00.000Z",
+    lastActivityAt: "2026-07-07T12:30:00.000Z",
+    sessions: [
+      {
+        sessionId: "bbbb0000-0000-4000-8000-00000000000b", profile: "two (claude-code)",
+        startedAt: "2026-07-07T09:00:00.000Z", lastEventAt: "2026-07-07T09:30:00.000Z",
+        files: 2, commits: 0, errors: 1,
+      },
+      {
+        sessionId: "aaaa0000-0000-4000-8000-00000000000a", profile: "one (claude-code)",
+        startedAt: "2026-07-07T12:00:00.000Z", lastEventAt: "2026-07-07T12:30:00.000Z",
+        files: 3, commits: 1, errors: 0,
+      },
+    ],
+  };
+  const fileThread = {
+    ...thread,
+    threadKey: "files:/repo/src/a_b.ts",
+    source: "files" as const,
+    title: "a_b.ts, c.ts",
+    status: "completed" as const,
+  };
+  const withThreads: Report = { ...report, threads: [thread, fileThread] };
+
+  test("markdown: threads section sits between exceptions and agents, members in order with counts", () => {
+    const md = renderMarkdown(withThreads);
+    expect(md.indexOf("## Exceptions")).toBeLessThan(md.indexOf("## Task threads"));
+    expect(md.indexOf("## Task threads")).toBeLessThan(md.indexOf("## Agents"));
+    expect(md).toContain("### asl-1wm — blocked, 2 sessions");
+    expect(md).toContain("- 2026-07-07T09:00:00.000Z — two (claude-code) (session bbbb0000): 2 files, 0 commits, 1 error");
+    expect(md).toContain("- 2026-07-07T12:00:00.000Z — one (claude-code) (session aaaa0000): 3 files, 1 commit");
+    // file-cluster thread is labeled and its title is markdown-escaped
+    expect(md).toContain("### a\\_b.ts, c.ts (file cluster) — completed, 2 sessions");
+    // zero-error members don't render an error count
+    expect(md).not.toContain("3 files, 1 commit, 0 errors");
+  });
+
+  test("markdown: no threads, no section — output identical to before", () => {
+    expect(renderMarkdown(report)).not.toContain("Task threads");
+    expect(renderMarkdown(withThreads).replace(/\n## Task threads\n[\s\S]*?\n## Agents\n/, "\n## Agents\n"))
+      .toBe(renderMarkdown(report));
+  });
+
+  test("html: threads section renders with severity-classed status badge and escaped content", () => {
+    const html = renderHtml(withThreads);
+    expect(html).toContain("<h2>Task threads</h2>");
+    expect(html.indexOf("Exceptions")).toBeLessThan(html.indexOf("Task threads"));
+    expect(html.indexOf("Task threads")).toBeLessThan(html.indexOf("All agents"));
+    expect(html).toContain('class="thread sev-warning"'); // blocked → warning
+    expect(html).toContain("two (claude-code) (session bbbb0000): 2 files, 0 commits, 1 error");
+    expect(html).toContain('<span class="thread-source">(file cluster)</span>');
+    expect(renderHtml(report)).not.toContain("Task threads");
+  });
+
+  test("html: thread titles are escaped", () => {
+    const nasty = { ...thread, title: "<img src=x>" };
+    const html = renderHtml({ ...report, threads: [nasty] });
+    expect(html).toContain("&lt;img src=x&gt;");
+    expect(html).not.toContain("<img src=x>");
+  });
+
+  test("json: threads serialize as-is and are absent when undefined", () => {
+    const parsed = JSON.parse(renderJson(withThreads));
+    expect(parsed.threads).toHaveLength(2);
+    expect(parsed.threads[0].threadKey).toBe("asl-1wm");
+    expect(parsed.threads[0].sessions[0].files).toBe(2);
+    expect("threads" in JSON.parse(renderJson(report))).toBe(false);
+  });
+});

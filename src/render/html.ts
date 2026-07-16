@@ -1,4 +1,4 @@
-import type { AgentReport, Report, Severity } from "../types";
+import type { AgentReport, Report, Severity, TaskThread } from "../types";
 import { dispatchRefLabel, dispatchedBody, plural, rollupCounts, rollupLine } from "./rollup";
 import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 import { STATUS_SEVERITY } from "../status";
@@ -137,6 +137,33 @@ function cardBody(a: AgentReport): string {
   ${errors ? `<h4>Errors</h4><ul class="errors">${errors}</ul>` : ""}`;
 }
 
+// One task thread (src/threads.ts): title, status badge (severity-colored
+// like card badges), evidence label, then one line per member run with its
+// evidence counts. Session refs reuse dispatchRefLabel so threads and
+// dispatch lineage name runs identically; timestamps follow the window's
+// fmtUtc convention with the full ISO in a title.
+function threadBlock(t: TaskThread): string {
+  const runs = t.sessions.map((s) => {
+    const evidence = [plural(s.files, "file"), plural(s.commits, "commit"), ...(s.errors ? [plural(s.errors, "error")] : [])];
+    return `<li title="${esc(s.startedAt)}">${esc(fmtUtc(s.startedAt))} — ${esc(dispatchRefLabel({ sessionId: s.sessionId, profile: s.profile }))}: ${esc(evidence.join(", "))}</li>`;
+  }).join("");
+  return `<div class="thread ${sevClass(STATUS_SEVERITY[t.status])}">
+  <h3>${esc(t.title)}${t.source === "files" ? ` <span class="thread-source">(file cluster)</span>` : ""}
+    <span class="badge ${sevClass(STATUS_SEVERITY[t.status])}" title="${esc(STATUS_HELP[t.status])}">${esc(t.status)}</span>
+    <span class="evidence" title="${esc(EVIDENCE_HELP[t.evidence])}">${esc(t.evidence.replace("_", " "))}</span>
+  </h3>
+  <ul>${runs}</ul>
+</div>`;
+}
+
+function threadsSection(report: Report): string {
+  if (!report.threads?.length) return "";
+  return `<section class="threads"><h2>Task threads</h2>
+${report.threads.map(threadBlock).join("\n")}
+</section>
+`;
+}
+
 function flatCard(a: AgentReport): string {
   return `<article class="card ${sevClass(a.severity)}">
   <header>
@@ -232,7 +259,11 @@ dt { font-weight: 600; opacity: .75; } dd { margin: 0; }
 .errors li > code { display: block; color: CanvasText; overflow-x: auto; white-space: pre-wrap; font-size: .75rem; opacity: .8; }
 code { font-size: .85em; }
 .dir { opacity: .6; }
-.legend { opacity: .8; font-size: .85rem; margin: 1.5rem 0; }${cardCss}
+.legend { opacity: .8; font-size: .85rem; margin: 1.5rem 0; }
+.thread { border: 1px solid #8884; border-left: 3px solid var(--sev); border-radius: 8px; padding: .75rem 1.25rem; margin: 1rem 0; overflow-wrap: anywhere; }
+.thread h3 { display: flex; flex-wrap: wrap; gap: .6rem; row-gap: .25rem; align-items: center; }
+.thread ul { margin: .5rem 0 0; }
+.thread-source { opacity: .6; font-size: .8rem; font-weight: 400; }${cardCss}
 </style>
 </head>
 <body>
@@ -245,7 +276,7 @@ ${report.trends?.length ? `<p class="window">Trends: ${esc(report.trends.join(";
 <h4>Evidence</h4><ul>${(Object.entries(EVIDENCE_HELP)).map(([k, v]) => `<li><strong>${esc(k.replace("_", " "))}</strong> — ${esc(v)}</li>`).join("")}</ul>
 </details>
 <section class="exceptions"><h2>Exceptions</h2><ul>${exceptions}</ul></section>
-${agentsSection}
+${threadsSection(report)}${agentsSection}
 ${report.trivialProfiles?.length ? `<p class="window">Ignored ${report.trivialProfiles.length} trivial profile${report.trivialProfiles.length === 1 ? "" : "s"} (minimal activity, nothing produced): ${esc(report.trivialProfiles.join(", "))}</p>` : ""}
 <footer class="window" title="${esc(report.generatedAt)}">Generated ${esc(fmtUtc(report.generatedAt))} UTC · schema v${report.schemaVersion}</footer>
 </body>

@@ -283,14 +283,16 @@ describe("buildReport", () => {
     };
     await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: spy });
     // Newest first: recent sessions are the ones most likely to be in the
-    // index and most relevant to today's report. Two engram passes share the
-    // seam and both order newest-first: the per-profile evidence upgrade
+    // index and most relevant to today's report. Three engram passes share
+    // the seam and all order newest-first: the per-profile evidence upgrade
     // (inside the profile loop) greps the bare uuid, then the report-wide
     // dispatch-lineage probe over the post-filter profiles greps each
-    // session's marker literal.
+    // session's marker literal, then the report-wide task-key probe greps
+    // each session's bare uuid again.
     expect(grepped).toEqual([
       "bbbb0000-0000-4000-8000-00000000000b", "aaaa0000-0000-4000-8000-00000000000a", // evidence
       markerQuery("bbbb0000-0000-4000-8000-00000000000b"), markerQuery("aaaa0000-0000-4000-8000-00000000000a"), // lineage
+      "bbbb0000-0000-4000-8000-00000000000b", "aaaa0000-0000-4000-8000-00000000000a", // task keys
     ]);
   });
 
@@ -720,6 +722,170 @@ describe("buildReport", () => {
     const { renderMarkdown } = await import("../src/render/markdown");
     const md = renderMarkdown(report);
     expect(md).toContain("- Dispatched 1 subagent run: sub (claude-code) (session bbbb0000) (list may be incomplete)");
+  });
+  // asl-1wm acceptance: two sessions that both mention a task key (bead ID
+  // in dialogue, via engram) and edit overlapping files render as ONE task
+  // thread with both sessions in order and their evidence; a session
+  // matching no thread still reports exactly as today.
+  test("task threads: sessions sharing a bead key form one thread; unmatched sessions still get cards", async () => {
+    const S_A = "aaaa0000-0000-4000-8000-00000000000a";
+    const S_B = "bbbb0000-0000-4000-8000-00000000000b";
+    const S_C = "cccc0000-0000-4000-8000-00000000000c";
+    const TAPE_A = "1111111111111111111111111111111111111111111111111111111111111111";
+    const TAPE_B = "2222222222222222222222222222222222222222222222222222222222222222";
+
+    const world = mkdtempSync(join(tmpdir(), "asl-report-"));
+    const ccRoot = join(world, "claude-projects");
+    const mkSession = (dirName: string, cwd: string, sessionId: string, hour: string, files: string[]) => {
+      const dir = join(ccRoot, dirName);
+      mkdirSync(dir, { recursive: true });
+      const f = join(dir, "s.jsonl");
+      writeFileSync(f, [
+        JSON.stringify({
+          type: "user", timestamp: `2026-07-07T${hour}:00:00.000Z`, cwd,
+          sessionId, message: { role: "user", content: "task" },
+        }),
+        JSON.stringify({
+          type: "file-history-snapshot", timestamp: `2026-07-07T${hour}:01:00.000Z`, cwd, sessionId,
+          snapshot: { trackedFileBackups: Object.fromEntries(files.map((p) => [p, {}])) },
+        }),
+        JSON.stringify({
+          type: "assistant", timestamp: `2026-07-07T${hour}:05:00.000Z`, cwd,
+          sessionId, message: { role: "assistant", content: "done" },
+        }),
+      ].join("\n") + "\n");
+      utimesSync(f, MTIME, MTIME);
+    };
+    // Both thread members edit overlapping files; the bystander touches
+    // unrelated files and mentions no key.
+    mkSession("-work-one", "/work/one", S_A, "12", ["/repo/src/x.ts", "/repo/src/y.ts"]);
+    mkSession("-work-two", "/work/two", S_B, "09", ["/repo/src/x.ts"]);
+    mkSession("-work-three", "/work/three", S_C, "10", ["/elsewhere/z.ts"]);
+
+    const config = defaultConfig();
+    config.connectors.claudeCode.rootDir = ccRoot;
+    config.connectors.codex.enabled = false;
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+
+    // Engram double: the bare-uuid grep finds each thread member's own tape;
+    // peeking it with the message filter returns dialogue mentioning the
+    // bead. The code.edit (evidence) peeks find nothing, marker-literal
+    // (lineage) greps find nothing, and S_C's dialogue mentions no key.
+    const tapeByUuid: Record<string, string> = { [S_A]: TAPE_A, [S_B]: TAPE_B };
+    const uuidByTape: Record<string, string> = { [TAPE_A]: S_A, [TAPE_B]: S_B };
+    const exec: Exec = async (argv) => {
+      if (argv[1] === "grep" && tapeByUuid[argv[2]!]) {
+        return {
+          ok: true,
+          stdout: JSON.stringify({ sessions: [{ session_id: tapeByUuid[argv[2]!], confidence: 325.0 }] }),
+          stderr: "",
+        };
+      }
+      if (argv[1] === "peek" && argv[4] === '"k":"msg.' && uuidByTape[argv[2]!]) {
+        return {
+          ok: true,
+          stdout: JSON.stringify({
+            session: {
+              content: [{
+                line: 1,
+                text: JSON.stringify({
+                  k: "msg.in", role: "user",
+                  content: "please pick up bead asl-1wm where the last session left off",
+                  source: { harness: "claude-code", session_id: uuidByTape[argv[2]!] },
+                  t: "2026-07-07T12:00:01.000Z",
+                }),
+              }],
+            },
+          }),
+          stderr: "",
+        };
+      }
+      if (argv[1] === "peek") {
+        return { ok: true, stdout: JSON.stringify({ session: { content: [] } }), stderr: "" };
+      }
+      return { ok: true, stdout: JSON.stringify({ error: "no_results" }), stderr: "" };
+    };
+
+    const report = await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: exec });
+
+    // one thread, both member sessions in startedAt order, with evidence counts
+    expect(report.threads).toHaveLength(1);
+    const t = report.threads![0]!;
+    expect(t.threadKey).toBe("asl-1wm");
+    expect(t.source).toBe("bead");
+    expect(t.sessions.map((s) => s.sessionId)).toEqual([S_B, S_A]);
+    expect(t.sessions.map((s) => s.profile)).toEqual(["two (claude-code)", "one (claude-code)"]);
+    expect(t.sessions.map((s) => s.files)).toEqual([1, 2]);
+
+    // the unmatched session reports exactly as today: a card, no thread
+    expect(report.agents).toHaveLength(3);
+    const bystander = report.agents.find((a) => a.workdir === "/work/three")!;
+    expect(bystander).toBeDefined();
+    expect(t.sessions.some((s) => s.sessionId === S_C)).toBe(false);
+
+    // the thread is visible in every rendered surface
+    const { renderMarkdown } = await import("../src/render/markdown");
+    const { renderHtml } = await import("../src/render/html");
+    const { renderJson } = await import("../src/render/json");
+    const md = renderMarkdown(report);
+    expect(md).toContain("## Task threads");
+    expect(md).toContain("### asl-1wm — idle, 2 sessions");
+    expect(md).toContain("- 2026-07-07T09:00:00.000Z — two (claude-code) (session bbbb0000): 1 file, 0 commits");
+    expect(md).toContain("- 2026-07-07T12:00:00.000Z — one (claude-code) (session aaaa0000): 2 files, 0 commits");
+    expect(renderHtml(report)).toContain("<h2>Task threads</h2>");
+    expect(JSON.parse(renderJson(report)).threads[0].threadKey).toBe("asl-1wm");
+  });
+
+  // Fail-soft degradation (PRD §10): with engram disabled, bead keys are
+  // unavailable but file-cluster correlation from parsed session data still
+  // threads; with engram failing outright, the report never breaks.
+  test("task threads degrade gracefully: file clusters without engram, clean report on engram failure", async () => {
+    const S_A = "aaaa0000-0000-4000-8000-00000000000a";
+    const S_B = "bbbb0000-0000-4000-8000-00000000000b";
+    const world = mkdtempSync(join(tmpdir(), "asl-report-"));
+    const ccRoot = join(world, "claude-projects");
+    const mkSession = (dirName: string, cwd: string, sessionId: string, hour: string, files: string[]) => {
+      const dir = join(ccRoot, dirName);
+      mkdirSync(dir, { recursive: true });
+      const f = join(dir, "s.jsonl");
+      writeFileSync(f, [
+        JSON.stringify({
+          type: "user", timestamp: `2026-07-07T${hour}:00:00.000Z`, cwd,
+          sessionId, message: { role: "user", content: "task" },
+        }),
+        JSON.stringify({
+          type: "file-history-snapshot", timestamp: `2026-07-07T${hour}:01:00.000Z`, cwd, sessionId,
+          snapshot: { trackedFileBackups: Object.fromEntries(files.map((p) => [p, {}])) },
+        }),
+        JSON.stringify({
+          type: "assistant", timestamp: `2026-07-07T${hour}:05:00.000Z`, cwd,
+          sessionId, message: { role: "assistant", content: "done" },
+        }),
+      ].join("\n") + "\n");
+      utimesSync(f, MTIME, MTIME);
+    };
+    const shared = ["/repo/src/x.ts", "/repo/src/y.ts"];
+    mkSession("-work-one", "/work/one", S_A, "09", shared);
+    mkSession("-work-two", "/work/two", S_B, "12", [...shared, "/repo/src/z.ts"]);
+
+    const config = defaultConfig();
+    config.connectors.claudeCode.rootDir = ccRoot;
+    config.connectors.codex.enabled = false;
+
+    // engram disabled (default): file-cluster fallback threads the overlap
+    const disabled = await buildReport({ since: SINCE, now: NOW, config, useLlm: false });
+    expect(disabled.threads).toHaveLength(1);
+    expect(disabled.threads![0]!.source).toBe("files");
+    expect(disabled.threads![0]!.threadKey).toBe("files:/repo/src/x.ts");
+    expect(disabled.threads![0]!.sessions.map((s) => s.sessionId)).toEqual([S_A, S_B]);
+
+    // engram enabled but broken: identical thread outcome, report intact
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+    const failingExec: Exec = async () => ({ ok: false, stdout: "", stderr: "engram: not found" });
+    const broken = await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: failingExec });
+    expect(broken.agents).toHaveLength(2);
+    expect(broken.threads).toHaveLength(1);
+    expect(broken.threads![0]!.source).toBe("files");
   });
 });
 
