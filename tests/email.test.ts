@@ -20,7 +20,7 @@ function fakeKeychain(entries: Record<string, string>): KeychainLookup {
 }
 
 describe("resolveSmtpPassword", () => {
-  test("prefers ASL_SMTP_PASSWORD env var over keychain", async () => {
+  test("prefers ASL_SMTP_PASSWORD env var over keychain", () => {
     const r = resolveSmtpPassword(
       { ASL_SMTP_PASSWORD: "env-pass" },
       fakeKeychain({ "gmail-app-password/asl": "chain-pass" }),
@@ -28,7 +28,7 @@ describe("resolveSmtpPassword", () => {
     expect(r).toEqual({ password: "env-pass", source: "ASL_SMTP_PASSWORD env var" });
   });
 
-  test("falls back to keychain gmail-app-password/asl", async () => {
+  test("falls back to keychain gmail-app-password/asl", () => {
     const r = resolveSmtpPassword({}, fakeKeychain({ "gmail-app-password/asl": "chain-pass" }));
     expect(r).toEqual({
       password: "chain-pass",
@@ -36,21 +36,21 @@ describe("resolveSmtpPassword", () => {
     });
   });
 
-  test("returns null when nothing is set", async () => {
+  test("returns null when nothing is set", () => {
     expect(resolveSmtpPassword({}, noKeychain)).toBeNull();
   });
 
-  test("ignores empty and whitespace-only values", async () => {
+  test("ignores empty and whitespace-only values", () => {
     expect(resolveSmtpPassword({ ASL_SMTP_PASSWORD: "  " }, noKeychain)).toBeNull();
     expect(resolveSmtpPassword({}, fakeKeychain({ "gmail-app-password/asl": "\n" }))).toBeNull();
   });
 
-  test("trims the resolved password", async () => {
+  test("trims the resolved password", () => {
     const r = resolveSmtpPassword({}, fakeKeychain({ "gmail-app-password/asl": "pass\n" }));
     expect(r?.password).toBe("pass");
   });
 
-  test("does not touch the keychain when the env var provides the password", async () => {
+  test("does not touch the keychain when the env var provides the password", () => {
     let calls = 0;
     const countingKeychain: KeychainLookup = () => {
       calls++;
@@ -62,15 +62,15 @@ describe("resolveSmtpPassword", () => {
 });
 
 describe("emailSubject", () => {
-  test("appends the status summary after the day when present", async () => {
+  test("appends the status summary after the day when present", () => {
     expect(emailSubject("2026-07-13", "2 blocked")).toBe("ASL - 2026-07-13: 2 blocked");
   });
 
-  test("omits the colon and summary when there are no statuses", async () => {
+  test("omits the colon and summary when there are no statuses", () => {
     expect(emailSubject("2026-07-13", "")).toBe("ASL - 2026-07-13");
   });
 
-  test("stays pure ASCII (no em dash) so it never needs RFC 2047 encoding", async () => {
+  test("stays pure ASCII (no em dash) so it never needs RFC 2047 encoding", () => {
     const subject = emailSubject("2026-07-13", "1 blocked, 2 stale");
     expect(/^[\x20-\x7e]*$/.test(subject)).toBe(true);
     expect(encodeHeaderValue(subject)).toBe(subject);
@@ -78,32 +78,32 @@ describe("emailSubject", () => {
 });
 
 describe("quotedPrintable", () => {
-  test("passes plain ASCII through", async () => {
+  test("passes plain ASCII through", () => {
     expect(quotedPrintable("hello world")).toBe("hello world");
   });
 
-  test("escapes = and non-ASCII as UTF-8 byte pairs", async () => {
+  test("escapes = and non-ASCII as UTF-8 byte pairs", () => {
     expect(quotedPrintable("a=b")).toBe("a=3Db");
     expect(quotedPrintable("café")).toBe("caf=C3=A9");
   });
 
-  test("normalizes newlines to CRLF hard breaks", async () => {
+  test("normalizes newlines to CRLF hard breaks", () => {
     expect(quotedPrintable("a\nb")).toBe("a\r\nb");
     expect(quotedPrintable("a\r\nb")).toBe("a\r\nb");
   });
 
-  test("encodes trailing space/tab before a hard break", async () => {
+  test("encodes trailing space/tab before a hard break", () => {
     expect(quotedPrintable("a \nb")).toBe("a=20\r\nb");
     expect(quotedPrintable("a\t\nb")).toBe("a=09\r\nb");
   });
 
-  test("trailing space at the wrap boundary still keeps lines within 76 chars", async () => {
+  test("trailing space at the wrap boundary still keeps lines within 76 chars", () => {
     const encoded = quotedPrintable("x".repeat(74) + " \ny");
     for (const line of encoded.split("\r\n")) expect(line.length).toBeLessThanOrEqual(76);
     expect(encoded).toBe(`${"x".repeat(74)}=\r\n=20\r\ny`);
   });
 
-  test("soft-wraps so no line exceeds 76 characters", async () => {
+  test("soft-wraps so no line exceeds 76 characters", () => {
     const encoded = quotedPrintable("x".repeat(200));
     for (const line of encoded.split("\r\n")) expect(line.length).toBeLessThanOrEqual(76);
     // soft breaks are reversible: stripping =\r\n restores the input
@@ -112,11 +112,11 @@ describe("quotedPrintable", () => {
 });
 
 describe("encodeHeaderValue", () => {
-  test("leaves printable ASCII unchanged", async () => {
+  test("leaves printable ASCII unchanged", () => {
     expect(encodeHeaderValue("ASL 2026-07-13: 2 blocked")).toBe("ASL 2026-07-13: 2 blocked");
   });
 
-  test("encodes non-ASCII as an RFC 2047 UTF-8 encoded word", async () => {
+  test("encodes non-ASCII as an RFC 2047 UTF-8 encoded word", () => {
     expect(encodeHeaderValue("ASL — report")).toBe(
       `=?UTF-8?B?${Buffer.from("ASL — report", "utf8").toString("base64")}?=`,
     );
@@ -135,7 +135,7 @@ describe("buildMimeMessage", () => {
     boundary: "=_asl-test-boundary",
   };
 
-  test("assembles a deterministic multipart/alternative message", async () => {
+  test("assembles a deterministic multipart/alternative message", () => {
     expect(buildMimeMessage(input)).toBe(
       [
         "From: gd@example.com",
@@ -162,7 +162,7 @@ describe("buildMimeMessage", () => {
     );
   });
 
-  test("uses CRLF for every line ending", async () => {
+  test("uses CRLF for every line ending", () => {
     const msg = buildMimeMessage(input);
     expect(msg.includes("\n")).toBe(true);
     expect(msg.replaceAll("\r\n", "").includes("\n")).toBe(false);
@@ -177,7 +177,7 @@ describe("buildMimeMessage", () => {
       },
     };
 
-    test("wraps the alternative part in multipart/mixed and appends a base64 attachment part", async () => {
+    test("wraps the alternative part in multipart/mixed and appends a base64 attachment part", () => {
       const msg = buildMimeMessage(withAttachment);
       expect(msg).toContain('Content-Type: multipart/mixed; boundary="=_asl-mixed-boundary"');
       expect(msg).toContain("--=_asl-mixed-boundary");
@@ -188,7 +188,7 @@ describe("buildMimeMessage", () => {
       expect(msg.endsWith("--=_asl-mixed-boundary--\r\n")).toBe(true);
     });
 
-    test("attachment body is base64 of the exact content, decodable back to the original", async () => {
+    test("attachment body is base64 of the exact content, decodable back to the original", () => {
       const msg = buildMimeMessage(withAttachment);
       const marker = 'Content-Disposition: attachment; filename="2026-07-13.html"\r\n\r\n';
       const afterHeader = msg.slice(msg.indexOf(marker) + marker.length);
@@ -196,11 +196,11 @@ describe("buildMimeMessage", () => {
       expect(Buffer.from(b64.replaceAll("\r\n", ""), "base64").toString("utf8")).toBe("<h1>Full report</h1>");
     });
 
-    test("without an attachment, no multipart/mixed wrapper appears", async () => {
+    test("without an attachment, no multipart/mixed wrapper appears", () => {
       expect(buildMimeMessage(input)).not.toContain("multipart/mixed");
     });
 
-    test("strips a double quote from the filename so it can't break out of the quoted-string", async () => {
+    test("strips a double quote from the filename so it can't break out of the quoted-string", () => {
       const msg = buildMimeMessage({
         ...withAttachment,
         attachment: { ...withAttachment.attachment, data: { filename: 'a"b.html', content: "x" } },
@@ -209,7 +209,7 @@ describe("buildMimeMessage", () => {
       expect(msg).toContain('filename="ab.html"');
     });
 
-    test("strips CR/LF and other control chars from the filename (no header injection)", async () => {
+    test("strips CR/LF and other control chars from the filename (no header injection)", () => {
       const msg = buildMimeMessage({
         ...withAttachment,
         attachment: {
@@ -223,7 +223,7 @@ describe("buildMimeMessage", () => {
       expect(msg).not.toContain("\r\nX-Evil: 1");
     });
 
-    test("strips a trailing backslash so it can't escape the closing quote", async () => {
+    test("strips a trailing backslash so it can't escape the closing quote", () => {
       const msg = buildMimeMessage({
         ...withAttachment,
         attachment: { ...withAttachment.attachment, data: { filename: "report\\", content: "x" } },

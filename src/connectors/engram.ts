@@ -261,9 +261,8 @@ function* tapeEvents(
 // validated tape ids → peek (with the caller's filter) → parsed peek
 // responses, yielded lazily (async generators pull on demand) so a caller
 // that stops at its first hit never spends the remaining peek budget. Every
-// reject path (failed exec,
-// malformed JSON, hostile tape id) is a silent skip — the fail-soft
-// boundary lives in the entry points, not here.
+// reject path (failed exec, malformed JSON, hostile tape id) is a silent
+// skip — the fail-soft boundary lives in the entry points, not here.
 // `grepQuery` is caller-constructed from a SESSION_ID_SHAPE-validated uuid
 // — the bare uuid (evidence upgrade) or the marker literal built around one
 // (dispatch lineage) — so it is never option-shaped; the caller owns that

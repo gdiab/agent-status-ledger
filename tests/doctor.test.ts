@@ -47,14 +47,14 @@ describe("checkBun", () => {
 });
 
 describe("checkLaunchdBunPath", () => {
-  test("passes when the launchd bun binary exists", async () => {
+  test("passes when the launchd bun binary exists", () => {
     const dir = tempDir();
     const bunPath = join(dir, "bun");
     writeFileSync(bunPath, "");
     expect(checkLaunchdBunPath(bunPath).ok).toBe(true);
   });
 
-  test("fails with a symlink fix when missing, with the path quoted", async () => {
+  test("fails with a symlink fix when missing, with the path quoted", () => {
     const bunPath = join(tempDir(), "nope", "bun");
     const r = checkLaunchdBunPath(bunPath);
     expect(r.ok).toBe(false);
@@ -64,13 +64,13 @@ describe("checkLaunchdBunPath", () => {
 });
 
 describe("checkApiKey", () => {
-  test("passes when resolver finds a key, reporting the source", async () => {
+  test("passes when resolver finds a key, reporting the source", () => {
     const r = checkApiKey({ ANTHROPIC_API_KEY: "sk-x" }, noKeychain);
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("ANTHROPIC_API_KEY env var");
   });
 
-  test("passes via keychain using the resolver's own service/account", async () => {
+  test("passes via keychain using the resolver's own service/account", () => {
     const keychain: KeychainLookup = (service, account) =>
       service === "anthropic-api-key" && account === "asl" ? "sk-k" : null;
     const r = checkApiKey({}, keychain);
@@ -78,7 +78,7 @@ describe("checkApiKey", () => {
     expect(r.detail).toContain("keychain");
   });
 
-  test("fails with the exact security add-generic-password form", async () => {
+  test("fails with the exact security add-generic-password form", () => {
     const r = checkApiKey({}, noKeychain);
     expect(r.ok).toBe(false);
     expect(r.fix).toContain("security add-generic-password -s anthropic-api-key -a asl -w");
@@ -86,14 +86,14 @@ describe("checkApiKey", () => {
 });
 
 describe("checkPlistInstalled", () => {
-  test("passes when the plist file exists", async () => {
+  test("passes when the plist file exists", () => {
     const dir = tempDir();
     const plist = join(dir, "com.gd.asl-report.plist");
     writeFileSync(plist, "<plist/>");
     expect(checkPlistInstalled(plist).ok).toBe(true);
   });
 
-  test("fails with a load hint when missing", async () => {
+  test("fails with a load hint when missing", () => {
     const r = checkPlistInstalled(join(tempDir(), "com.gd.asl-report.plist"));
     expect(r.ok).toBe(false);
     expect(r.fix).toContain("launchctl load");
@@ -114,26 +114,26 @@ describe("checkPlistLoaded", () => {
 });
 
 describe("checkConnectorDir", () => {
-  test("passes for an existing readable directory", async () => {
+  test("passes for an existing readable directory", () => {
     const dir = tempDir();
     const r = checkConnectorDir("claude-code", "claude_code", { enabled: true, rootDir: dir });
     expect(r.ok).toBe(true);
     expect(r.detail).toContain(dir);
   });
 
-  test("fails for a missing directory with the explicit toml key in the hint", async () => {
+  test("fails for a missing directory with the explicit toml key in the hint", () => {
     const r = checkConnectorDir("claude-code", "claude_code", { enabled: true, rootDir: join(tempDir(), "gone") });
     expect(r.ok).toBe(false);
     expect(r.fix).toContain("connectors.claude_code.root_dir");
   });
 
-  test("a disabled connector passes as skipped", async () => {
+  test("a disabled connector passes as skipped", () => {
     const r = checkConnectorDir("codex", "codex", { enabled: false, rootDir: "/nope" });
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("disabled");
   });
 
-  test("a probe dir different from root_dir is checked and reported", async () => {
+  test("a probe dir different from root_dir is checked and reported", () => {
     const root = tempDir(); // exists, but the probed subdir does not
     const probe = join(root, "sessions");
     const r = checkConnectorDir("codex", "codex", { enabled: true, rootDir: root }, probe);
@@ -143,19 +143,19 @@ describe("checkConnectorDir", () => {
 });
 
 describe("checkConfigFile", () => {
-  test("missing config file is fine (defaults in use)", async () => {
+  test("missing config file is fine (defaults in use)", () => {
     const r = checkConfigFile(join(tempDir(), "config.toml"));
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("defaults");
   });
 
-  test("valid toml passes", async () => {
+  test("valid toml passes", () => {
     const p = join(tempDir(), "config.toml");
     writeFileSync(p, 'model = "claude-haiku-4-5-20251001"\n');
     expect(checkConfigFile(p).ok).toBe(true);
   });
 
-  test("broken toml fails with the parse error and file path", async () => {
+  test("broken toml fails with the parse error and file path", () => {
     const p = join(tempDir(), "config.toml");
     writeFileSync(p, "reports_dir = [unclosed\n");
     const r = checkConfigFile(p);
@@ -307,7 +307,7 @@ describe("runDoctor engram wiring", () => {
 });
 
 describe("formatDoctorReport", () => {
-  test("shows pass/fail markers, fixes, and a summary line", async () => {
+  test("shows pass/fail markers, fixes, and a summary line", () => {
     const out = formatDoctorReport([
       { name: "bun", ok: true, detail: "1.2.3" },
       { name: "keychain API key", ok: false, detail: "not found", fix: "security add-generic-password ..." },
@@ -324,19 +324,19 @@ const email: EmailConfig = {
 };
 
 describe("checkEmailConfig", () => {
-  test("skips when email is not configured", async () => {
+  test("skips when email is not configured", () => {
     const r = checkEmailConfig(undefined);
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("not configured");
   });
 
-  test("passes and shows the route for a valid config", async () => {
+  test("passes and shows the route for a valid config", () => {
     const r = checkEmailConfig(email);
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("smtp.gmail.com:465");
   });
 
-  test("fails on implausible addresses and bad port", async () => {
+  test("fails on implausible addresses and bad port", () => {
     expect(checkEmailConfig({ ...email, to: "not-an-address" }).ok).toBe(false);
     expect(checkEmailConfig({ ...email, from: "also bad" }).ok).toBe(false);
     expect(checkEmailConfig({ ...email, smtpPort: 0 }).ok).toBe(false);
@@ -344,13 +344,13 @@ describe("checkEmailConfig", () => {
 });
 
 describe("checkEmailPassword", () => {
-  test("skips when email is not configured", async () => {
+  test("skips when email is not configured", () => {
     const r = checkEmailPassword({}, noKeychain, undefined);
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("not configured");
   });
 
-  test("passes when the keychain has the app password", async () => {
+  test("passes when the keychain has the app password", () => {
     const keychain: KeychainLookup = (s, a) =>
       s === "gmail-app-password" && a === "asl" ? "pass" : null;
     const r = checkEmailPassword({}, keychain, email);
@@ -358,7 +358,7 @@ describe("checkEmailPassword", () => {
     expect(r.detail).toContain("keychain");
   });
 
-  test("fails with the add-generic-password hint when missing", async () => {
+  test("fails with the add-generic-password hint when missing", () => {
     const r = checkEmailPassword({}, noKeychain, email);
     expect(r.ok).toBe(false);
     expect(r.fix).toContain("security add-generic-password -s gmail-app-password -a asl");
