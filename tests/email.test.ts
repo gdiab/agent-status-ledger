@@ -239,15 +239,15 @@ describe("buildMimeMessage", () => {
 const TARGET = { host: "smtp.gmail.com", port: 465, from: "gd@example.com", to: "gd@example.com" };
 
 describe("sendEmail", () => {
-  test("invokes curl with smtps url, envelope args, and temp files — password not in argv", () => {
+  test("invokes curl with smtps url, envelope args, and temp files — password not in argv", async () => {
     let seen: { argv: string[]; cfg: string; eml: string } | null = null;
-    const exec: Exec = (argv) => {
+    const exec: Exec = async (argv) => {
       const cfgPath = argv[argv.indexOf("-K") + 1]!;
       const emlPath = argv[argv.indexOf("-T") + 1]!;
       seen = { argv, cfg: readFileSync(cfgPath, "utf8"), eml: readFileSync(emlPath, "utf8") };
       return { ok: true, stdout: "", stderr: "" };
     };
-    const r = sendEmail(TARGET, "app-pass", "MIME BODY", exec);
+    const r = await sendEmail(TARGET, "app-pass", "MIME BODY", exec);
     expect(r).toEqual({ ok: true });
     expect(seen!.argv.slice(0, 6)).toEqual([
       "/usr/bin/curl", "-sS", "--max-time", "60", "--url", "smtps://smtp.gmail.com:465",
@@ -259,54 +259,55 @@ describe("sendEmail", () => {
     expect(seen!.eml).toBe("MIME BODY");
   });
 
-  test("escapes quotes and backslashes in the curl config credential", () => {
+  test("escapes quotes and backslashes in the curl config credential", async () => {
     let cfg = "";
-    const exec: Exec = (argv) => {
+    const exec: Exec = async (argv) => {
       cfg = readFileSync(argv[argv.indexOf("-K") + 1]!, "utf8");
       return { ok: true, stdout: "", stderr: "" };
     };
-    sendEmail(TARGET, 'p"w\\d', "m", exec);
+    await sendEmail(TARGET, 'p"w\\d', "m", exec);
     expect(cfg).toBe('user = "gd@example.com:p\\"w\\\\d"\n');
   });
 
-  test("cleans up the temp dir on success and on failure", () => {
+  test("cleans up the temp dir on success and on failure", async () => {
     const dirs: string[] = [];
     const capture =
       (ok: boolean): Exec =>
-      (argv) => {
+      async (argv) => {
         dirs.push(argv[argv.indexOf("-K") + 1]!);
         return { ok, stdout: "", stderr: ok ? "" : "curl: (67) auth failed" };
       };
-    sendEmail(TARGET, "p", "m", capture(true));
-    sendEmail(TARGET, "p", "m", capture(false));
+    await sendEmail(TARGET, "p", "m", capture(true));
+    await sendEmail(TARGET, "p", "m", capture(false));
     for (const d of dirs) expect(existsSync(d)).toBe(false);
   });
 
-  test("cleans up even when exec throws", () => {
+  test("cleans up even when exec throws", async () => {
     let cfgPath = "";
-    expect(() =>
-      sendEmail(TARGET, "p", "m", (argv) => {
+    // async seam: the throw surfaces as a rejection, not a sync throw
+    await expect(
+      sendEmail(TARGET, "p", "m", async (argv) => {
         cfgPath = argv[argv.indexOf("-K") + 1]!;
         throw new Error("boom");
       }),
-    ).toThrow("boom");
+    ).rejects.toThrow("boom");
     expect(existsSync(cfgPath)).toBe(false);
   });
 
-  test("returns curl stderr as the error on failure", () => {
-    const exec: Exec = () => ({ ok: false, stdout: "", stderr: "curl: (67) Login denied\n" });
-    expect(sendEmail(TARGET, "p", "m", exec)).toEqual({ ok: false, error: "curl: (67) Login denied" });
+  test("returns curl stderr as the error on failure", async () => {
+    const exec: Exec = async () => ({ ok: false, stdout: "", stderr: "curl: (67) Login denied\n" });
+    expect(await sendEmail(TARGET, "p", "m", exec)).toEqual({ ok: false, error: "curl: (67) Login denied" });
   });
 
-  test("falls back to a generic error when stderr is empty", () => {
-    const exec: Exec = () => ({ ok: false, stdout: "", stderr: "" });
-    expect(sendEmail(TARGET, "p", "m", exec)).toEqual({ ok: false, error: "curl failed" });
+  test("falls back to a generic error when stderr is empty", async () => {
+    const exec: Exec = async () => ({ ok: false, stdout: "", stderr: "" });
+    expect(await sendEmail(TARGET, "p", "m", exec)).toEqual({ ok: false, error: "curl failed" });
   });
 
-  test("rejects a password containing control characters before touching disk", () => {
+  test("rejects a password containing control characters before touching disk", async () => {
     let called = false;
     const before = readdirSync(tmpdir()).filter((d) => d.startsWith("asl-email-"));
-    const r = sendEmail(TARGET, "bad\npass", "m", () => {
+    const r = await sendEmail(TARGET, "bad\npass", "m", async () => {
       called = true;
       return { ok: true, stdout: "", stderr: "" };
     });
@@ -323,22 +324,22 @@ const EMAIL_CFG: EmailConfig = {
 const NOW = new Date("2026-07-13T14:30:00Z");
 
 describe("sendReportEmail", () => {
-  test("missing password returns the provisioning hint without invoking exec", () => {
+  test("missing password returns the provisioning hint without invoking exec", async () => {
     let called = false;
-    const r = sendReportEmail(EMAIL_CFG, "subj", "text", "<p>html</p>", {
+    const r = await sendReportEmail(EMAIL_CFG, "subj", "text", "<p>html</p>", {
       env: {}, keychain: noKeychain, now: NOW,
-      exec: () => { called = true; return { ok: true, stdout: "", stderr: "" }; },
+      exec: async () => { called = true; return { ok: true, stdout: "", stderr: "" }; },
     });
     expect(called).toBe(false);
     expect(r.ok).toBe(false);
     expect(r.message).toContain("security add-generic-password -s gmail-app-password -a asl");
   });
 
-  test("sends a mime message containing subject and both parts", () => {
+  test("sends a mime message containing subject and both parts", async () => {
     let eml = "";
-    const r = sendReportEmail(EMAIL_CFG, "ASL 2026-07-13: 1 blocked", "text body", "<p>html body</p>", {
+    const r = await sendReportEmail(EMAIL_CFG, "ASL 2026-07-13: 1 blocked", "text body", "<p>html body</p>", {
       env: { ASL_SMTP_PASSWORD: "p" }, keychain: noKeychain, now: NOW,
-      exec: (argv) => {
+      exec: async (argv) => {
         eml = readFileSync(argv[argv.indexOf("-T") + 1]!, "utf8");
         return { ok: true, stdout: "", stderr: "" };
       },
@@ -351,13 +352,13 @@ describe("sendReportEmail", () => {
     expect(eml).toContain("multipart/alternative");
   });
 
-  test("with an attachment, sends a multipart/mixed message carrying the attachment content", () => {
+  test("with an attachment, sends a multipart/mixed message carrying the attachment content", async () => {
     let eml = "";
-    const r = sendReportEmail(
+    const r = await sendReportEmail(
       EMAIL_CFG, "ASL 2026-07-13: 1 blocked", "text body", "<p>digest body</p>",
       {
         env: { ASL_SMTP_PASSWORD: "p" }, keychain: noKeychain, now: NOW,
-        exec: (argv) => {
+        exec: async (argv) => {
           eml = readFileSync(argv[argv.indexOf("-T") + 1]!, "utf8");
           return { ok: true, stdout: "", stderr: "" };
         },
@@ -370,17 +371,17 @@ describe("sendReportEmail", () => {
     expect(eml).toContain('Content-Disposition: attachment; filename="2026-07-13.html"');
   });
 
-  test("send failure surfaces the curl error in the message", () => {
-    const r = sendReportEmail(EMAIL_CFG, "s", "t", "h", {
+  test("send failure surfaces the curl error in the message", async () => {
+    const r = await sendReportEmail(EMAIL_CFG, "s", "t", "h", {
       env: { ASL_SMTP_PASSWORD: "p" }, keychain: noKeychain, now: NOW,
-      exec: () => ({ ok: false, stdout: "", stderr: "curl: (67) Login denied" }),
+      exec: async () => ({ ok: false, stdout: "", stderr: "curl: (67) Login denied" }),
     });
     expect(r.ok).toBe(false);
     expect(r.message).toContain("Login denied");
   });
 
-  test("an exec that throws never escapes — returns ok:false with the message", () => {
-    const r = sendReportEmail(EMAIL_CFG, "s", "t", "h", {
+  test("an exec that throws never escapes — returns ok:false with the message", async () => {
+    const r = await sendReportEmail(EMAIL_CFG, "s", "t", "h", {
       env: { ASL_SMTP_PASSWORD: "p" }, keychain: noKeychain, now: NOW,
       exec: () => {
         throw new Error("spawn exploded");
@@ -389,16 +390,16 @@ describe("sendReportEmail", () => {
     expect(r).toEqual({ ok: false, message: "email: spawn exploded" });
   });
 
-  test("an unprintable throwable (String() itself throws) still never escapes", () => {
+  test("an unprintable throwable (String() itself throws) still never escapes", async () => {
     // Object.create(null) has no toString/valueOf, so String(e) throws
     // "Cannot convert object to primitive value" — the catch's formatter
     // must survive even that.
-    const r = sendReportEmail(EMAIL_CFG, "s", "t", "h", {
+    const r = await sendReportEmail(EMAIL_CFG, "s", "t", "h", {
       env: {}, now: NOW,
       keychain: () => {
         throw Object.create(null);
       },
-      exec: () => ({ ok: true, stdout: "", stderr: "" }),
+      exec: async () => ({ ok: true, stdout: "", stderr: "" }),
     });
     expect(r.ok).toBe(false);
     expect(r.message).toContain("unprintable error");

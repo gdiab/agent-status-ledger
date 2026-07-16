@@ -212,12 +212,12 @@ const CONTROL_CHARS = /[\x00-\x1f\x7f]/;
 
 // Shells out to the system curl (macOS builds include smtps). The password
 // rides in a mode-600 curl config file, not argv, so it never shows in ps.
-export function sendEmail(
+export async function sendEmail(
   target: SmtpTarget,
   password: string,
   mime: string,
   exec: Exec,
-): { ok: boolean; error?: string } {
+): Promise<{ ok: boolean; error?: string }> {
   if (
     CONTROL_CHARS.test(password) ||
     CONTROL_CHARS.test(target.host) ||
@@ -233,7 +233,7 @@ export function sendEmail(
     const cred = `${target.from}:${password}`.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
     writeFileSync(cfgPath, `user = "${cred}"\n`, { mode: 0o600 });
     writeFileSync(emlPath, mime, { mode: 0o600 });
-    const r = exec([
+    const r = await exec([
       "/usr/bin/curl", "-sS",
       // unattended morning run must never hang on a stalled SMTP connection
       "--max-time", "60",
@@ -260,14 +260,14 @@ export interface ReportEmailDeps {
 // Always returns a printable one-liner and never throws — email is
 // best-effort and must never block the rest of the report run (the caller
 // just logs or warns based on `ok`).
-export function sendReportEmail(
+export async function sendReportEmail(
   email: EmailConfig,
   subject: string,
   text: string,
   html: string,
   deps: ReportEmailDeps,
   attachment?: MimeAttachment,
-): { ok: boolean; message: string } {
+): Promise<{ ok: boolean; message: string }> {
   try {
     const resolved = resolveSmtpPassword(deps.env, deps.keychain);
     if (!resolved) {
@@ -292,7 +292,7 @@ export function sendReportEmail(
         ? { data: attachment, boundary: `=_asl-mix-${stamp.toString(36)}` }
         : undefined,
     });
-    const r = sendEmail(
+    const r = await sendEmail(
       { host: email.smtpHost, port: email.smtpPort, from: email.from, to: email.to },
       resolved.password,
       mime,

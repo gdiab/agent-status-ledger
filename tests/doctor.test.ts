@@ -23,8 +23,8 @@ import { defaultConfig, type EmailConfig } from "../src/config";
 
 const execOk =
   (stdout: string): Exec =>
-  () => ({ ok: true, stdout, stderr: "" });
-const execFail: Exec = () => ({ ok: false, stdout: "", stderr: "" });
+  async () => ({ ok: true, stdout, stderr: "" });
+const execFail: Exec = async () => ({ ok: false, stdout: "", stderr: "" });
 const noKeychain: KeychainLookup = () => null;
 
 function tempDir(): string {
@@ -32,15 +32,15 @@ function tempDir(): string {
 }
 
 describe("checkBun", () => {
-  test("passes with version in detail", () => {
-    const r = checkBun(execOk("1.2.3"));
+  test("passes with version in detail", async () => {
+    const r = await checkBun(execOk("1.2.3"));
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("1.2.3");
     expect(r.fix).toBeUndefined();
   });
 
-  test("fails with install hint when bun is missing", () => {
-    const r = checkBun(execFail);
+  test("fails with install hint when bun is missing", async () => {
+    const r = await checkBun(execFail);
     expect(r.ok).toBe(false);
     expect(r.fix).toContain("bun.sh");
   });
@@ -101,13 +101,13 @@ describe("checkPlistInstalled", () => {
 });
 
 describe("checkPlistLoaded", () => {
-  test("passes when launchctl lists the label", () => {
-    const r = checkPlistLoaded(execOk('{ "Label" = "com.gd.asl-report"; }'), "/x.plist");
+  test("passes when launchctl lists the label", async () => {
+    const r = await checkPlistLoaded(execOk('{ "Label" = "com.gd.asl-report"; }'), "/x.plist");
     expect(r.ok).toBe(true);
   });
 
-  test("fails with launchctl load fix when not loaded", () => {
-    const r = checkPlistLoaded(execFail, "/x.plist");
+  test("fails with launchctl load fix when not loaded", async () => {
+    const r = await checkPlistLoaded(execFail, "/x.plist");
     expect(r.ok).toBe(false);
     expect(r.fix).toBe("launchctl load -w /x.plist");
   });
@@ -184,8 +184,8 @@ function fakeDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
 }
 
 describe("runDoctor", () => {
-  test("never throws even when everything is missing, and reports all checks", () => {
-    const results = runDoctor(fakeDeps());
+  test("never throws even when everything is missing, and reports all checks", async () => {
+    const results = await runDoctor(fakeDeps());
     expect(results.length).toBe(11);
     for (const r of results) {
       expect(typeof r.name).toBe("string");
@@ -194,7 +194,7 @@ describe("runDoctor", () => {
     }
   });
 
-  test("all green on a fully set-up fake machine", () => {
+  test("all green on a fully set-up fake machine", async () => {
     const home = tempDir();
     mkdirSync(join(home, ".bun", "bin"), { recursive: true });
     writeFileSync(join(home, ".bun", "bin", "bun"), "");
@@ -205,7 +205,7 @@ describe("runDoctor", () => {
     const config = defaultConfig();
     config.connectors.claudeCode.rootDir = join(home, ".claude", "projects");
     config.connectors.codex.rootDir = join(home, ".codex");
-    const results = runDoctor(
+    const results = await runDoctor(
       fakeDeps({
         home,
         config,
@@ -217,32 +217,32 @@ describe("runDoctor", () => {
     expect(results.every((r) => r.ok)).toBe(true);
   });
 
-  test("connector checks honor the injected config, not the real home", () => {
+  test("connector checks honor the injected config, not the real home", async () => {
     const home = tempDir();
     const config = defaultConfig();
     config.connectors.claudeCode.rootDir = join(home, "cc-logs");
     config.connectors.codex.rootDir = join(home, "cx");
-    const results = runDoctor(fakeDeps({ home, config }));
+    const results = await runDoctor(fakeDeps({ home, config }));
     const cc = results.find((r) => r.name === "claude-code logs")!;
     expect(cc.ok).toBe(false);
     expect(cc.detail).toContain(join(home, "cc-logs"));
   });
 
-  test("codex logs check probes the sessions/ subdir the connector actually reads", () => {
+  test("codex logs check probes the sessions/ subdir the connector actually reads", async () => {
     const home = tempDir();
     const config = defaultConfig();
     config.connectors.claudeCode = { enabled: false, rootDir: "/unused" };
     config.connectors.codex.rootDir = join(home, ".codex");
     mkdirSync(join(home, ".codex"), { recursive: true }); // root exists, sessions/ missing
-    const before = runDoctor(fakeDeps({ home, config })).find((r) => r.name === "codex logs")!;
+    const before = (await runDoctor(fakeDeps({ home, config }))).find((r) => r.name === "codex logs")!;
     expect(before.ok).toBe(false);
     mkdirSync(join(home, ".codex", "sessions"), { recursive: true });
-    const after = runDoctor(fakeDeps({ home, config })).find((r) => r.name === "codex logs")!;
+    const after = (await runDoctor(fakeDeps({ home, config }))).find((r) => r.name === "codex logs")!;
     expect(after.ok).toBe(true);
   });
 
-  test("launchd checks are skipped off macOS", () => {
-    const results = runDoctor(fakeDeps({ platform: "linux" }));
+  test("launchd checks are skipped off macOS", async () => {
+    const results = await runDoctor(fakeDeps({ platform: "linux" }));
     const launchd = results.filter((r) => r.name.includes("launchd"));
     expect(launchd.length).toBeGreaterThan(0);
     for (const r of launchd) {
@@ -253,53 +253,53 @@ describe("runDoctor", () => {
 });
 
 describe("checkEngram", () => {
-  test("reports disabled — skipped without probing when the connector is off", () => {
+  test("reports disabled — skipped without probing when the connector is off", async () => {
     let calls = 0;
-    const spy: Exec = () => {
+    const spy: Exec = async () => {
       calls++;
       return { ok: true, stdout: "", stderr: "" };
     };
-    const r = checkEngram({ enabled: false, binaryPath: "/opt/engram" }, spy);
+    const r = await checkEngram({ enabled: false, binaryPath: "/opt/engram" }, spy);
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("disabled");
     expect(calls).toBe(0);
   });
 
-  test("passes when enabled and the binary responds", () => {
-    const r = checkEngram({ enabled: true, binaryPath: "/opt/engram" }, execOk("engram help text"));
+  test("passes when enabled and the binary responds", async () => {
+    const r = await checkEngram({ enabled: true, binaryPath: "/opt/engram" }, execOk("engram help text"));
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("/opt/engram");
     expect(r.fix).toBeUndefined();
   });
 
-  test("fails with a build hint when enabled and the binary is missing or errors", () => {
-    const r = checkEngram({ enabled: true, binaryPath: "/opt/engram" }, execFail);
+  test("fails with a build hint when enabled and the binary is missing or errors", async () => {
+    const r = await checkEngram({ enabled: true, binaryPath: "/opt/engram" }, execFail);
     expect(r.ok).toBe(false);
     expect(r.fix).toContain("cargo build");
   });
 });
 
 describe("runDoctor engram wiring", () => {
-  test("reports disabled — skipped when the engram connector is off (the default)", () => {
-    const results = runDoctor(fakeDeps());
+  test("reports disabled — skipped when the engram connector is off (the default)", async () => {
+    const results = await runDoctor(fakeDeps());
     const engram = results.find((r) => r.name === "engram binary")!;
     expect(engram.ok).toBe(true);
     expect(engram.detail).toContain("disabled");
   });
 
-  test("probes the binary and passes when enabled and exec succeeds", () => {
+  test("probes the binary and passes when enabled and exec succeeds", async () => {
     const config = defaultConfig();
     config.connectors.engram = { enabled: true, binaryPath: "/opt/engram" };
-    const results = runDoctor(fakeDeps({ config, exec: execOk("engram help text") }));
+    const results = await runDoctor(fakeDeps({ config, exec: execOk("engram help text") }));
     const engram = results.find((r) => r.name === "engram binary")!;
     expect(engram.ok).toBe(true);
     expect(engram.detail).toContain("/opt/engram");
   });
 
-  test("fails with a build hint when enabled and exec fails", () => {
+  test("fails with a build hint when enabled and exec fails", async () => {
     const config = defaultConfig();
     config.connectors.engram = { enabled: true, binaryPath: "/opt/engram" };
-    const results = runDoctor(fakeDeps({ config, exec: execFail }));
+    const results = await runDoctor(fakeDeps({ config, exec: execFail }));
     const engram = results.find((r) => r.name === "engram binary")!;
     expect(engram.ok).toBe(false);
     expect(engram.fix).toContain("cargo build");
@@ -366,16 +366,16 @@ describe("checkEmailPassword", () => {
 });
 
 describe("runDoctor email wiring", () => {
-  test("includes both email checks when configured", () => {
+  test("includes both email checks when configured", async () => {
     const config = { ...defaultConfig(), email };
-    const results = runDoctor(fakeDeps({ config }));
+    const results = await runDoctor(fakeDeps({ config }));
     const names = results.map((r) => r.name);
     expect(names).toContain("email config");
     expect(names).toContain("gmail app password");
   });
 
-  test("email checks report skipped when unconfigured", () => {
-    const results = runDoctor(fakeDeps({ config: defaultConfig() }));
+  test("email checks report skipped when unconfigured", async () => {
+    const results = await runDoctor(fakeDeps({ config: defaultConfig() }));
     const emailChecks = results.filter((r) => r.name === "email config" || r.name === "gmail app password");
     expect(emailChecks).toHaveLength(2);
     for (const r of emailChecks) {

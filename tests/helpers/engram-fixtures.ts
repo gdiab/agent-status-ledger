@@ -60,7 +60,7 @@ export function editEvent(file: string, sourceSessionId: string): unknown {
 
 // Routes by subcommand: argv[1] is "grep" or "peek".
 export function twoStepExec(grepStdout: string, peekStdoutBySid: Record<string, string>): Exec {
-  return (argv) => {
+  return async (argv) => {
     if (argv[1] === "grep") return { ok: true, stdout: grepStdout, stderr: "" };
     if (argv[1] === "peek") {
       const sid = argv[2]!;

@@ -33,8 +33,10 @@ const MAX_CITED_FILES = 5;
 export const ENGRAM_TIMEOUT_MS = 5_000;
 
 // Query budget — every engram budget constant lives in this one block.
-// Every call is a sequential blocking subprocess (~60ms observed, 5s
-// timeout above), capped on every axis:
+// Every call is an awaited subprocess (~60ms observed, 5s timeout above) —
+// issued one at a time within a walk, but never blocking the event loop, so
+// concurrent profile workers and LLM fetches proceed while a call is in
+// flight (asl-e2q). Capped on every axis:
 // - MAX_GREP_CANDIDATES (evidence upgrade): grep returns up to 10 hits by
 //   default, but a grep by session UUID matches the real session far
 //   stronger than a mention (hundreds of touch-count points vs a handful),
@@ -257,10 +259,10 @@ function* tapeEvents(
 // The canonical grep→peek candidate walk shared by the evidence upgrade and
 // dispatch lineage: grep query → parsed response → capped candidate list →
 // validated tape ids → peek (with the caller's filter) → parsed peek
-// responses, yielded lazily so a caller that stops at its first hit never
-// spends the remaining peek budget. Every reject path (failed exec,
-// malformed JSON, hostile tape id) is a silent skip — the fail-soft
-// boundary lives in the entry points, not here.
+// responses, yielded lazily (async generators pull on demand) so a caller
+// that stops at its first hit never spends the remaining peek budget. Every
+// reject path (failed exec, malformed JSON, hostile tape id) is a silent
+// skip — the fail-soft boundary lives in the entry points, not here.
 // `grepQuery` is caller-constructed from a SESSION_ID_SHAPE-validated uuid
 // — the bare uuid (evidence upgrade) or the marker literal built around one
 // (dispatch lineage) — so it is never option-shaped; the caller owns that
@@ -271,16 +273,16 @@ function* tapeEvents(
 // `total`) than the cap allowed probing — the partial-results signal
 // lineage callers propagate up to the report (evidence-upgrade callers
 // don't pass meta and treat a truncated walk as an ordinary miss).
-function* grepPeekCandidates(
+async function* grepPeekCandidates(
   grepQuery: string,
   binaryPath: string,
   exec: Exec,
   peekFilter: string,
   maxCandidates: number,
   meta?: { truncated: boolean },
-): Generator<{ engramSid: string; response: Record<string, unknown> }> {
+): AsyncGenerator<{ engramSid: string; response: Record<string, unknown> }> {
   if (grepQuery.startsWith("-")) return;
-  const grep = exec([binaryPath, "grep", grepQuery, "--limit", String(maxCandidates)]);
+  const grep = await exec([binaryPath, "grep", grepQuery, "--limit", String(maxCandidates)]);
   if (!grep.ok) return;
   const grepObj = parseCliResponse(grep.stdout);
   if (!grepObj) return;
@@ -302,7 +304,7 @@ function* grepPeekCandidates(
     const engramSid = (candidate as Record<string, unknown> | null)?.session_id;
     if (typeof engramSid !== "string" || !SESSION_ID_SHAPE.test(engramSid)) continue;
 
-    const peek = exec([binaryPath, "peek", engramSid, "--grep-filter", peekFilter]);
+    const peek = await exec([binaryPath, "peek", engramSid, "--grep-filter", peekFilter]);
     if (!peek.ok) continue;
     const response = parseCliResponse(peek.stdout);
     if (!response) continue;
@@ -325,22 +327,22 @@ function verifiedEditedFiles(peekResponse: Record<string, unknown>, sessionUuid:
 
 // Asks Engram whether it independently observed real code edits in the
 // harness session `sessionUuid` (grep by UUID, then peek each candidate's
-// code.edit events and verify their source.session_id). Synchronous by
-// design — the Exec seam is Bun.spawnSync underneath; an async exec is a
-// separate future change. Never throws. extraPatterns is required for the
-// same reason as sanitizeTapeText's: dropping the user's redactPatterns
-// must never be a silent default.
-export function upgradeEvidence(
+// code.edit events and verify their source.session_id). Async end to end —
+// every subprocess call is awaited through the Exec seam, never
+// event-loop-blocking (asl-e2q). Never throws. extraPatterns is required
+// for the same reason as sanitizeTapeText's: dropping the user's
+// redactPatterns must never be a silent default.
+export async function upgradeEvidence(
   sessionUuid: string,
   binaryPath: string,
   exec: Exec,
   extraPatterns: string[],
-): UpgradeResult {
+): Promise<UpgradeResult> {
   try {
     // The uuid is the grep query verbatim; reject hostile shapes before any
     // exec (grepPeekCandidates trusts its caller to have validated).
     if (!SESSION_ID_SHAPE.test(sessionUuid)) return { matched: false };
-    for (const { engramSid, response } of grepPeekCandidates(
+    for await (const { engramSid, response } of grepPeekCandidates(
       sessionUuid, binaryPath, exec, CODE_EDIT_FILTER, MAX_GREP_CANDIDATES,
     )) {
       const files = verifiedEditedFiles(response, sessionUuid);
@@ -378,11 +380,11 @@ export interface CorroborateOptions {
   exec?: Exec;
 }
 
-export function corroborateSessions(
+export async function corroborateSessions(
   sessions: RawSession[],
   cfg: EngramConfig,
   opts: CorroborateOptions,
-): UpgradeResult {
+): Promise<UpgradeResult> {
   if (!cfg.enabled) return { matched: false };
   try {
     // enabled=true with no injected seam runs the real binary (same pattern
@@ -390,7 +392,7 @@ export function corroborateSessions(
     const realExec = opts.exec ?? makeSpawnExec(ENGRAM_TIMEOUT_MS);
     const newestFirst = [...sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
     for (const session of newestFirst.slice(0, MAX_SESSIONS_PER_PROFILE)) {
-      const result = upgradeEvidence(session.sessionId, cfg.binaryPath, realExec, opts.redactPatterns);
+      const result = await upgradeEvidence(session.sessionId, cfg.binaryPath, realExec, opts.redactPatterns);
       if (result.matched) return result;
     }
     return { matched: false };
@@ -519,12 +521,12 @@ export interface LineageSession {
 // MAX_MARKER_TAPES allowed peeking, i.e. the discovered lineage may be an
 // undercount — surfaced so the report can say "list may be incomplete"
 // rather than dropping the fact. Never throws.
-export function findDispatches(
+export async function findDispatches(
   parentUuid: string,
   knownSessionIds: ReadonlySet<string>,
   binaryPath: string,
   exec: Exec,
-): { children: string[]; runCount: number; truncated: boolean } {
+): Promise<{ children: string[]; runCount: number; truncated: boolean }> {
   const nothing = { children: [], runCount: 0, truncated: false };
   try {
     if (!SESSION_ID_SHAPE.test(parentUuid)) return nothing;
@@ -533,7 +535,7 @@ export function findDispatches(
     const children = new Set<string>();
     const runs = new Set<string>();
     const meta = { truncated: false };
-    for (const { response } of grepPeekCandidates(
+    for await (const { response } of grepPeekCandidates(
       literal, binaryPath, exec, literal, MAX_MARKER_TAPES, meta,
     )) {
       for (const event of tapeEvents(response)) {
@@ -601,11 +603,11 @@ const EMPTY_DISCOVERY: DispatchDiscovery = { links: [], runsByParent: [], trunca
 // budget block for why there is deliberately no session cap here); links
 // only ever join two sessions the report already knows, and run counts
 // only ever attach to a session the report already knows.
-export function discoverDispatchLinks(
+export async function discoverDispatchLinks(
   sessions: LineageSession[],
   cfg: EngramConfig,
   exec?: Exec,
-): DispatchDiscovery {
+): Promise<DispatchDiscovery> {
   if (!cfg.enabled) return EMPTY_DISCOVERY;
   try {
     const knownIds = new Set(
@@ -630,7 +632,7 @@ export function discoverDispatchLinks(
     for (const session of newestFirst) {
       if (!knownIds.has(session.sessionId) || probed.has(session.sessionId)) continue;
       probed.add(session.sessionId);
-      const { children, runCount, truncated } = findDispatches(session.sessionId, knownIds, cfg.binaryPath, realExec);
+      const { children, runCount, truncated } = await findDispatches(session.sessionId, knownIds, cfg.binaryPath, realExec);
       if (truncated) truncatedParents.push(session.sessionId);
       if (runCount > 0) runsByParent.push({ parentSessionId: session.sessionId, runCount });
       for (const child of children) {

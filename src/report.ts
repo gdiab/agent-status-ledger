@@ -71,10 +71,10 @@ export function isTrivialProfile(profile: AgentProfile, commits: CommitEvidence[
 // whose other end was filtered as trivial is dropped, never left dangling.
 // Fail-soft like every engram query: disabled or failing engram means no
 // links, never a broken report.
-function attachDispatchLineage(agents: AgentReport[], profiles: AgentProfile[], opts: BuildReportOptions): void {
+async function attachDispatchLineage(agents: AgentReport[], profiles: AgentProfile[], opts: BuildReportOptions): Promise<void> {
   const liveIds = new Set(agents.map((a) => a.profileId));
   const liveProfiles = profiles.filter((p) => liveIds.has(p.profileId));
-  const { links: dispatchLinks, runsByParent, truncatedParents } = discoverDispatchLinks(
+  const { links: dispatchLinks, runsByParent, truncatedParents } = await discoverDispatchLinks(
     liveProfiles.flatMap((p) => p.sessions.map((s) => ({ sessionId: s.sessionId, startedAt: s.startedAt }))),
     opts.config.connectors.engram,
     opts.engramExec,
@@ -168,7 +168,7 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
     // not re-applied here at the model layer.
     let evidenceCitation: string | undefined;
     if (evidence === "claimed_only") {
-      const upgrade = corroborateSessions(profile.sessions, config.connectors.engram, {
+      const upgrade = await corroborateSessions(profile.sessions, config.connectors.engram, {
         redactPatterns: config.redactPatterns,
         exec: opts.engramExec,
       });
@@ -198,7 +198,7 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
   const agents = results.flatMap((r) => ("agent" in r ? [r.agent] : []));
   const trivialProfiles = results.flatMap((r) => ("trivial" in r ? [r.trivial] : [])).sort();
 
-  attachDispatchLineage(agents, profiles, opts);
+  await attachDispatchLineage(agents, profiles, opts);
 
   agents.sort((a, b) =>
     SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || a.displayName.localeCompare(b.displayName));

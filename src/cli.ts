@@ -28,9 +28,9 @@ const USAGE = `usage: asl report [--since 24h] [--open] [--no-llm] [--no-email] 
 // src/connectors/engram.ts) behind the config enabled flag.
 const spawnExec: Exec = makeSpawnExec(60_000);
 
-function runDoctorCli(): never {
+async function runDoctorCli(): Promise<never> {
   const cfgPath = configPath();
-  const results = runDoctor({
+  const results = await runDoctor({
     env: process.env,
     keychain: macKeychainLookup,
     exec: spawnExec,
@@ -73,7 +73,7 @@ function parseCliArgs() {
 
 async function main() {
   const { values, positionals } = parseCliArgs();
-  if (positionals[0] === "doctor") runDoctorCli();
+  if (positionals[0] === "doctor") await runDoctorCli();
   if (positionals[0] !== "report") {
     console.error(USAGE);
     process.exit(2);
@@ -140,7 +140,7 @@ async function main() {
     const digest = redact(renderEmailDigest(report), config.redactPatterns);
     // Email is best-effort and must never block --open below; sendReportEmail
     // itself never throws, so no try/catch is needed here.
-    const r = sendReportEmail(
+    const r = await sendReportEmail(
       config.email, subject, md, digest,
       { env: process.env, keychain: macKeychainLookup, exec: spawnExec, now },
       { filename: `${day}.html`, content: html },
