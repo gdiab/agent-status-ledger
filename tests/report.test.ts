@@ -112,6 +112,71 @@ describe("buildReport", () => {
     expect(maxInflight).toBeLessThanOrEqual(4);    // but bounded
   });
 
+  // asl-e2q acceptance: the engram exec seam is async, so a subprocess call
+  // in one profile worker must not serialize the others. Two claimed_only
+  // profiles each issue one evidence grep inside mapLimit(4); a barrier Exec
+  // holds the first grep unresolved until the second arrives. Only a seam
+  // that yields the event loop mid-call lets the second worker start while
+  // the first is in flight — with the old synchronous seam the first call
+  // ran to completion before any other worker could run, so maxInflight
+  // could never reach 2. (makeSpawnExec's own event-loop liveness is pinned
+  // separately in tests/exec.test.ts; this proves the pipeline keeps it.)
+  // Barrier, not sleeps — same convention as the LLM-concurrency test above.
+  test("engram subprocess calls interleave across profile workers instead of serializing them", async () => {
+    const world = mkdtempSync(join(tmpdir(), "asl-report-"));
+    const ccRoot = join(world, "claude-projects");
+    const uuids = ["aaaa0000-0000-4000-8000-00000000000a", "bbbb0000-0000-4000-8000-00000000000b"];
+    for (let i = 0; i < uuids.length; i++) {
+      const dir = join(ccRoot, `-work-p${i}`);
+      mkdirSync(dir, { recursive: true });
+      const f = join(dir, "s.jsonl");
+      // 5 minutes, no file edits, no commits: non-trivial and claimed_only,
+      // so each profile's worker reaches the engram evidence grep.
+      writeFileSync(f, [
+        JSON.stringify({
+          type: "user", timestamp: "2026-07-07T12:00:00.000Z", cwd: `/work/p${i}`,
+          sessionId: uuids[i], message: { role: "user", content: "task" },
+        }),
+        JSON.stringify({
+          type: "assistant", timestamp: "2026-07-07T12:05:00.000Z", cwd: `/work/p${i}`,
+          sessionId: uuids[i], message: { role: "assistant", content: "done" },
+        }),
+      ].join("\n") + "\n");
+      utimesSync(f, MTIME, MTIME);
+    }
+    const config = defaultConfig();
+    config.connectors.claudeCode.rootDir = ccRoot;
+    config.connectors.codex.enabled = false;
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+
+    let inflight = 0;
+    let maxInflight = 0;
+    let released = false;
+    const waiters: Array<() => void> = [];
+    const gate = () =>
+      new Promise<void>((resolve) => {
+        if (released) return resolve(); // post-barrier calls (the sequential lineage greps) pass through
+        waiters.push(resolve);
+        if (waiters.length >= 2) {
+          released = true;
+          for (const w of waiters) w();
+        }
+      });
+    const exec: Exec = async (argv) => {
+      inflight++;
+      maxInflight = Math.max(maxInflight, inflight);
+      await gate();
+      inflight--;
+      expect(argv[0]).toBe("/fake/engram");
+      return { ok: true, stdout: JSON.stringify({ error: "no_results" }), stderr: "" };
+    };
+
+    const report = await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: exec });
+    expect(report.agents.length).toBe(2);
+    expect(report.agents.every((a) => a.evidence === "claimed_only")).toBe(true); // both greps really ran
+    expect(maxInflight).toBeGreaterThanOrEqual(2); // both engram calls in flight together
+  });
+
   test("an already-proven profile never triggers engram evidence calls (lineage probes may still run)", async () => {
     const world = mkdtempSync(join(tmpdir(), "asl-report-"));
 
