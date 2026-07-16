@@ -4,7 +4,7 @@
 **Tagline:** A daily standup for every AI agent you run  
 **Owner:** George Diab  
 **Draft date:** 2026-06-27  
-**Status:** Draft v2, reviewed and tightened
+**Status:** Draft v3, amended 2026-07-16 to reflect the 2026-07-15 Engram fidelity review
 
 ---
 
@@ -163,13 +163,23 @@ These projects suggest the local-first MVP is feasible.
 
 ## 7. Core Data Model
 
-The PRD uses three distinct objects:
+The PRD uses four distinct objects:
 
 1. **Agent Profile**: the durable identity of an agent workstream.
 2. **Agent Run**: a specific execution/session/task performed by that profile.
 3. **Event**: a normalized activity record produced by a connector.
+4. **TaskThread**: the report's primary grouping — runs from any profile, across sessions and days, stitched into one task-level narrative.
 
 This distinction matters. Without it, entity resolution becomes ambiguous.
+
+### Agent identity anchoring (resolved 2026-07-15)
+
+Agent identity anchors to **orchestrator runs**. The top-level session the operator started is the identity-bearing run; subagent runs do not get independent profiles. Instead they attach to their orchestrator as a **lineage tree**, discovered via dispatch markers: the dispatching session prepends `<engram-src id="<session-uuid>"/>` to every Agent-tool dispatch prompt, and the subagent's transcript carries that marker as a content prefix of its first inbound message. This gives deterministic parent→child linkage without timestamp/repo heuristics.
+
+Two consequences to state plainly:
+
+- Lineage is convention-dependent. History only accrues from the point the dispatch-marker convention was adopted; earlier subagent runs remain unattributed and the report must not guess.
+- Lineage discovery can be partial. When a lineage walk is truncated (candidate caps, missing tapes), the report must surface the dispatched list as incomplete rather than present an undercount as complete.
 
 ### Agent Profile
 
@@ -253,6 +263,32 @@ Optional fields:
 - `confidence`
 - `sensitivity_level`
 
+### TaskThread
+
+The report's primary grouping (added 2026-07-15). A single task routinely spans multiple runs — an orchestrator session, its dispatched subagents, a follow-up session the next morning — and a run-by-run report fragments that story. A TaskThread groups those runs into one task-level narrative.
+
+Threads are keyed by, in preference order:
+
+1. **Bead ID** (issue-tracker ID): when runs reference the same tracked issue, they belong to the same thread.
+2. **File cluster**: when no issue ID is available, runs that touch the same cluster of files within a repo are grouped heuristically.
+
+Required fields:
+
+- `task_thread_id`
+- `thread_key`: bead ID or file-cluster signature
+- `title`
+- `agent_run_ids`
+- `status`: rolled up from member runs, exceptions-first
+
+Optional fields:
+
+- `repo`
+- `first_activity_at`
+- `last_activity_at`
+- `evidence_level`: the strongest evidence any member run produced
+
+TaskThreads are derived at report time from runs and events (consistent with the stateless-scan architecture in ADR 0002); they are a reporting construct, not a fourth ingestion object. The per-agent sections remain, but the digest leads with threads: the operator's question is "how is the task going," not "what did session N do."
+
 ---
 
 ## 8. Status and Evidence Model
@@ -285,6 +321,15 @@ These thresholds should be configurable, but MVP needs defaults.
 - **Partially proven:** supported by transcript or message plus some artifact evidence.
 - **Claimed only:** based only on agent natural-language output.
 - **Unknown:** imported record exists, but source quality is insufficient.
+
+### Provenance axis (added 2026-07-15)
+
+Evidence level answers "how well is this claim backed?" Provenance answers a different question: "who asked for this work?" Every run and reported claim carries one of two provenance values:
+
+- **`user_directed`**: the work traces to an explicit operator instruction — a prompt the operator typed, a bead the operator filed, a task the operator dispatched.
+- **`agent_initiated`**: the work was undertaken by an agent on its own judgment — a subagent fan-out, a self-filed follow-up, an autonomous fix.
+
+Provenance is orthogonal to evidence: an agent-initiated change can be fully proven, and a user-directed task can be claimed-only. The report surfaces both axes because they drive different operator behavior — proven-but-agent-initiated work still deserves a "did I want this?" review, which evidence level alone cannot flag. Subagent runs attached via dispatch-marker lineage default to `agent_initiated` unless the dispatch traces back to an explicit operator instruction in the orchestrator run.
 
 ### Severity values
 
@@ -412,6 +457,8 @@ Division of labor if adopted: Engram stays the evidence index (it deliberately d
 
 Decision needed before week 2 connector work: consume Engram tapes as the normalized event source vs. write our own parsers. Risks to weigh: early-stage project (v0.2.x, single maintainer), partial Codex coverage (generic shell edits are a known gap), build-from-source install. The dispatch-marker convention is worth adopting in orchestrated dispatches regardless of this decision — it is plain text in a prompt and costs nothing.
 
+**Decided (2026-07-15 fidelity review):** the product keeps its own harness parsers as the event source; Engram is consumed as an optional, fail-soft enrichment layer — corroborating claimed-only completions up to partially-proven, and supplying dispatch-marker lineage for the orchestrator-anchored identity model (§7). The dispatch-marker convention was adopted. Privacy consequences of the Engram archive are covered in §13.
+
 ### Class 2: Export/import collectors
 
 These make web/app agents feasible without brittle scraping.
@@ -489,7 +536,7 @@ Add after MVP v0 proves the report format:
 - Per-agent sections
 - Exceptions-first rollup
 - Evidence links
-- Telegram summary with local path to the full report
+- Email digest with local path to the full report (amended 2026-07-15; originally a Telegram summary — see §16)
 
 ### MVP exclusions
 
@@ -498,7 +545,7 @@ Add after MVP v0 proves the report format:
 - Enterprise admin dashboard
 - Real-time orchestration/control
 - Full LLM trace/eval observability
-- Slack/SMS/email delivery, except email can be used manually for sharing reports during testing
+- Slack/SMS/Telegram delivery (email is in scope as the canonical channel — amended 2026-07-15)
 
 ---
 
@@ -535,8 +582,8 @@ The MVP is acceptable when the following are true.
 ### Delivery
 
 - The system writes the full report to a configured local path.
-- The system sends a Telegram summary containing exceptions and the local report path.
-- The Telegram summary never includes raw transcripts by default.
+- The system sends an email digest containing exceptions and the local report path (amended 2026-07-15; originally a Telegram summary — see §16).
+- The email digest never includes raw transcripts by default.
 
 ### Validation
 
@@ -555,11 +602,26 @@ Agent Status Ledger should be local-first by default.
 ### MVP privacy rules
 
 - Raw transcripts are never sent externally by default.
-- Telegram summaries include only concise summaries, statuses, and local report paths.
+- Delivery summaries (the email digest, and any future channel such as Telegram) include only concise summaries, statuses, and local report paths.
 - Reports include local artifact paths or links, not full sensitive content, unless explicitly configured.
 - A redaction pass runs before report generation to catch obvious secrets, tokens, API keys, credentials, and private keys.
 - Source sensitivity labels propagate to events and reports.
 - The ledger stores raw payload paths separately from generated summaries.
+
+### The Engram archive (added 2026-07-15)
+
+When the Engram connector is enabled, `~/.engram` holds Engram's local index of **verbatim, unredacted session tapes** — everything the harness said, ran, and read, fingerprinted into SQLite. Treat it accordingly:
+
+- `~/.engram` is a raw source, on the same footing as harness transcript directories. It never leaves the machine and is never quoted into report output directly.
+- Deleting a harness transcript does not delete its tape; retention of `~/.engram` is Engram's concern, but this product must assume the archive contains every secret that ever crossed a session.
+
+### Redaction choke point for tape-sourced text (mandated 2026-07-15)
+
+Any string that originates in Engram tape output and enters report output MUST pass through `sanitizeTapeText` at the point it is parsed into a report data structure — never at render time, so no future render path can bypass it. The contract:
+
+- **Branded output.** `sanitizeTapeText` is the single sanctioned producer of the branded `SanitizedTapeText` type; report fields that quote tape content declare that type, so the compiler flags any code path that skipped the choke point.
+- **Redact → strip → redact.** The secret-redaction pass runs on both sides of a structural strip of Unicode default-ignorables and other tape-unsafe characters. Each single-pass order has an inverse evasion: strip-first lets stripped characters glue adjacent text onto a secret so boundary rules stop matching; redact-first lets a secret split by an invisible character slip past as fragments and reassemble after the strip. Running redaction on both representations closes both.
+- **Required `extraPatterns`.** The user's configured redaction patterns are a required argument with no default. A call site that drops them must do so visibly, by passing `[]` — a silently defaulted empty list is exactly how user patterns get lost.
 
 ### Future privacy features
 
@@ -632,18 +694,21 @@ Reports should prefer grounded language:
 
 ## 16. Delivery
 
-### MVP delivery
+Amended 2026-07-15: email replaced Telegram as the canonical delivery channel. Email delivery shipped and has been operational since 2026-07-14; Telegram was never built and is repositioned as an optional future channel.
+
+### Shipped delivery (canonical)
 
 - Full local Markdown file
 - Full local JSON file
-- Telegram exceptions summary with path to full report
+- Self-contained local HTML standup page (see ADR 0005)
+- **Email digest** (Gmail SMTP): exceptions-first summary with the local report path — the canonical remote channel, operational since 2026-07-14
 
-### Future delivery
+### Future delivery (optional)
 
-- Email with Markdown attachment
+- Telegram exceptions summary
 - Slack channel or DM
 - SMS/text
-- Local dashboard
+- Local dashboard beyond the static HTML page
 - Webhook/API
 - Weekly rollup
 
@@ -669,7 +734,7 @@ Reports should prefer grounded language:
 
 ### Week 3: Delivery and quality
 
-- Add Telegram summary delivery.
+- Add email digest delivery (amended 2026-07-15; originally Telegram — see §16).
 - Add redaction pass.
 - Add report path/archive structure.
 - Add config file for thresholds and source paths.
@@ -693,7 +758,7 @@ Reports should prefer grounded language:
 - Completed, blocked, failed, and silent statuses are detected in fixtures.
 - Every report claim has an evidence level.
 - Report generation requires no manual editing.
-- Telegram summary points to a full local report.
+- Email digest points to a full local report.
 
 ### Product success
 
@@ -707,14 +772,14 @@ Reports should prefer grounded language:
 
 ## 19. Open Questions
 
-1. Should an agent profile map primarily to workdir, repo, user-assigned name, or tool session identity?
+1. ~~Should an agent profile map primarily to workdir, repo, user-assigned name, or tool session identity?~~ **Resolved 2026-07-15.** Agent identity anchors to orchestrator runs; subagent runs attach to their orchestrator as a lineage tree discovered via dispatch markers (`<engram-src id="<session-uuid>"/>` prepended to every Agent-tool dispatch prompt). Rationale: the orchestrator run is the unit the operator actually started and can be held accountable, and the dispatch marker gives deterministic lineage where workdir/timestamp correlation only guesses. Caveat: lineage history only accrues from adoption of the marker convention — pre-adoption subagent runs stay unattributed. See §7.
 2. What is the right default silent threshold: 2h, 6h, or 24h?
 3. Should summarization run entirely local by default, or is configurable cloud summarization acceptable?
 4. How much raw transcript should be retained?
 5. How should manually imported ChatGPT/Claude exports be assigned to durable agent profiles?
 6. Should the report distinguish “agent did work” from “agent helped human think through work”?
 7. Should Beads be used as the user-visible ledger, or remain an implementation detail?
-8. What is the best long-term delivery surface: Telegram, Slack, email, dashboard, or all of them?
+8. ~~What is the best long-term delivery surface: Telegram, Slack, email, dashboard, or all of them?~~ **Resolved 2026-07-15.** Email is the shipped canonical delivery channel, operational since 2026-07-14. Rationale: email needed no bot setup or third-party account, the digest-plus-local-path pattern fits it naturally, and it proved itself in daily use before any alternative was built. The local static HTML page (ADR 0005) covers the dashboard need. Telegram, Slack, SMS, and webhooks remain optional future channels layered on the versioned JSON report. See §16.
 
 ---
 
