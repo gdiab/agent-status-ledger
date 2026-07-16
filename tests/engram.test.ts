@@ -703,6 +703,46 @@ describe("discoverDispatchLinks", () => {
     expect(links).toEqual([{ parentSessionId: ORCH, childSessionId: SUB }]);
   });
 
+  // ── Marker escaping invariant (raw tape-line level) ───────────────────────
+  // The whole probe design rests on one serialization fact: grep is a
+  // literal substring search over RAW tape lines, and the queried literal
+  // carries singly-escaped quotes (<engram-src id=\"uuid\"/>). That literal
+  // must match the dispatched side's line — where the marker reached a
+  // content STRING, so serializing the event escapes its quotes exactly
+  // once — and must NOT match the dispatcher's own line, where the marker
+  // sits inside a tool-call prompt argument recorded as JSON text, one JSON
+  // level deeper, so its quotes double-escape in the raw line.
+
+  test("the marker tape literal substring-matches the dispatched side's raw line, not the dispatcher's", () => {
+    // Dispatched side: a real serialized tape line for a direct msg.in
+    // carrying the marker in its content string.
+    const dispatchedLine = JSON.stringify(markerEvent(ORCH, SUB));
+    // Dispatcher side: its transcript records the Task tool call with the
+    // handoff prompt inside serialized JSON arguments — the marker's quotes
+    // are already escaped once INSIDE the content string, then escaped
+    // again when the event itself becomes a raw tape line.
+    const dispatcherLine = JSON.stringify({
+      k: "msg.out",
+      role: "assistant",
+      content: `Tool call: Task ${JSON.stringify({
+        description: "implement the thing",
+        prompt: `<engram-src id="${ORCH}"/> implement the thing`,
+      })}`,
+      source: { harness: "claude-code", session_id: ORCH },
+      t: "2026-07-14T12:59:00.000Z",
+    });
+
+    const literal = markerQuery(ORCH); // <engram-src id=\"...\"/>, escaped quotes
+    // Sanity: both raw lines mention the marker text itself...
+    expect(dispatchedLine).toContain("<engram-src id=");
+    expect(dispatcherLine).toContain("<engram-src id=");
+    // ...but the singly-escaped literal selects only the dispatched side.
+    expect(dispatchedLine).toContain(literal);
+    expect(dispatcherLine).not.toContain(literal);
+    // The dispatcher's copy sits one JSON level deeper: double-escaped.
+    expect(dispatcherLine).toContain(`<engram-src id=\\\\\\"${ORCH}\\\\\\"/>`);
+  });
+
   // ── Marker-prefix guard ────────────────────────────────────────────────────
   // A genuine dispatch PREPENDS the marker to the handoff message (engram
   // specs/core/dispatch-marker.md), so it must be a prefix of the parsed
