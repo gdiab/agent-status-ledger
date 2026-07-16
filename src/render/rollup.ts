@@ -2,7 +2,9 @@ import type { DispatchRef, Report, Status } from "../types";
 
 // Exhaustive by construction: adding a Status member without a display rank
 // is a compile error, so new statuses can't silently vanish from the rollup.
-const STATUS_RANK: Record<Status, number> = {
+// Exported: TaskThread derivation (src/threads.ts) rolls member statuses up
+// exceptions-first with the same worst-first ordering, defined once.
+export const STATUS_RANK: Record<Status, number> = {
   failed: 0, silent: 1, blocked: 2, needs_human: 3, active: 4, idle: 5, completed: 6,
 };
 const STATUS_ORDER = (Object.keys(STATUS_RANK) as Status[]).sort((a, b) => STATUS_RANK[a] - STATUS_RANK[b]);

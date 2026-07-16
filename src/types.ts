@@ -144,6 +144,41 @@ export interface AgentReport {
   dispatchTruncated?: true;
 }
 
+// One member run of a TaskThread: a session reference plus evidence COUNTS
+// only (edits, commits, errors). Counts, not content, by design: thread
+// membership can be keyed off unredacted Engram dialogue, and a surface that
+// carries only shape-validated keys and counts needs no tape sanitization
+// (see TASK_KEY_SHAPE in src/connectors/engram.ts). profile is the owning
+// card's displayName, so renderers can name it exactly like a DispatchRef.
+export interface ThreadSession {
+  sessionId: string;
+  profile: string;          // owning AgentReport.displayName
+  startedAt: string;
+  lastEventAt: string;
+  files: number;            // filesTouched count
+  commits: number;          // attributed commits authored inside this session's window
+  errors: number;
+}
+
+// TaskThread (PRD §7): the report-time task-level grouping of runs across
+// sessions and profiles — derived from already-parsed sessions plus optional
+// Engram dialogue keys, never ingested or persisted (ADR 0002). Keyed by
+// bead ID mentioned in dialogue first (source "bead", available only when
+// the engram connector is enabled), file-cluster overlap second (source
+// "files", derived from parsed session data alone). Additive + optional on
+// Report — schemaVersion stays 1 (same contract as trends).
+export interface TaskThread {
+  threadKey: string;                // bead ID ("asl-1wm") or file-cluster signature ("files:/repo/src/a.ts")
+  source: "bead" | "files";
+  title: string;                    // the bead ID itself, or shared-file basenames
+  status: Status;                   // rolled up from member profiles, exceptions-first (worst wins)
+  evidence: EvidenceLevel;          // the strongest evidence any member profile produced
+  firstActivityAt: string;
+  lastActivityAt: string;
+  sessions: ThreadSession[];        // ≥2 by construction, ordered by startedAt
+  workdir?: string;                 // present when every member session shares one workdir
+}
+
 export interface Report {
   schemaVersion: 1;
   generatedAt: string;
@@ -158,6 +193,10 @@ export interface Report {
   // Report-level trend annotations (total commit velocity vs the previous
   // report). Additive + optional like trivialProfiles; absent when empty.
   trends?: string[];
+  // Task-level narratives grouping runs across sessions/profiles (PRD §7,
+  // src/threads.ts). Additive + optional like trends: absent when no thread
+  // is derivable, so a report without threads is byte-identical to before.
+  threads?: TaskThread[];
 }
 
 export interface Thresholds {
