@@ -6,6 +6,7 @@ import { buildReport, isTrivialProfile } from "../src/report";
 import { defaultConfig } from "../src/config";
 import type { AgentProfile, CommitEvidence, RawSession } from "../src/types";
 import type { Exec } from "../src/exec";
+import { markerQuery } from "./helpers/engram-fixtures";
 
 const NOW = new Date("2026-07-08T07:00:00.000Z");
 const SINCE = new Date("2026-07-07T07:00:00.000Z");
@@ -219,11 +220,12 @@ describe("buildReport", () => {
     // Newest first: recent sessions are the ones most likely to be in the
     // index and most relevant to today's report. Two engram passes share the
     // seam and both order newest-first: the per-profile evidence upgrade
-    // (inside the profile loop), then the report-wide dispatch-lineage probe
-    // over the post-filter profiles.
+    // (inside the profile loop) greps the bare uuid, then the report-wide
+    // dispatch-lineage probe over the post-filter profiles greps each
+    // session's marker literal.
     expect(grepped).toEqual([
       "bbbb0000-0000-4000-8000-00000000000b", "aaaa0000-0000-4000-8000-00000000000a", // evidence
-      "bbbb0000-0000-4000-8000-00000000000b", "aaaa0000-0000-4000-8000-00000000000a", // lineage
+      markerQuery("bbbb0000-0000-4000-8000-00000000000b"), markerQuery("aaaa0000-0000-4000-8000-00000000000a"), // lineage
     ]);
   });
 
@@ -349,7 +351,7 @@ describe("buildReport", () => {
     // prepends it to the handoff prompt) and carries the subagent's
     // source.session_id.
     const exec: Exec = (argv) => {
-      if (argv[1] === "grep" && argv[2] === ORCH) {
+      if (argv[1] === "grep" && argv[2] === markerQuery(ORCH)) {
         return {
           ok: true,
           stdout: JSON.stringify({ sessions: [{ session_id: CHILD_TAPE, confidence: 325.0 }] }),
@@ -411,7 +413,7 @@ describe("buildReport", () => {
 
     // engram double that would happily link ORCH → SUB if asked
     const exec: Exec = (argv) => {
-      if (argv[1] === "grep" && argv[2] === ORCH) {
+      if (argv[1] === "grep" && argv[2] === markerQuery(ORCH)) {
         return {
           ok: true,
           stdout: JSON.stringify({ sessions: [{ session_id: CHILD_TAPE, confidence: 325.0 }] }),
@@ -496,8 +498,10 @@ describe("buildReport", () => {
     const ORCH = "aaaa0000-0000-4000-8000-00000000000a";
     const SUB = "bbbb0000-0000-4000-8000-00000000000b";
     const CHILD_TAPE = "2222222222222222222222222222222222222222222222222222222222222222";
-    // 8 candidate tapes > the 6-candidate lineage cap → ORCH is truncated
+    // grep reports 17 marker tapes index-wide but returns fewer than the
+    // 16-tape cap → ORCH's discovered lineage may be an undercount
     const NOISE_TAPES = Array.from({ length: 7 }, (_, i) => String(i + 3).repeat(64));
+    const GREP_TOTAL = 17;
 
     const world = mkdtempSync(join(tmpdir(), "asl-report-"));
     const ccRoot = join(world, "claude-projects");
@@ -526,10 +530,11 @@ describe("buildReport", () => {
     config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
 
     const exec: Exec = (argv) => {
-      if (argv[1] === "grep" && argv[2] === ORCH) {
+      if (argv[1] === "grep" && argv[2] === markerQuery(ORCH)) {
         return {
           ok: true,
           stdout: JSON.stringify({
+            total: GREP_TOTAL,
             sessions: [CHILD_TAPE, ...NOISE_TAPES].map((session_id) => ({ session_id, confidence: 325.0 })),
           }),
           stderr: "",
