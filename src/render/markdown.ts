@@ -1,5 +1,5 @@
 import type { AgentReport, Report } from "../types";
-import { dispatchRefLabel, plural, rollupLine } from "./rollup";
+import { dispatchRefLabel, dispatchedBody, plural, rollupLine } from "./rollup";
 import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 
 // Names come from workdir basenames and platform labels; escape markdown
@@ -36,15 +36,21 @@ function agentSection(a: AgentReport): string {
     ...(a.dispatchedBy?.length
       ? [`- Dispatched by: ${a.dispatchedBy.map((r) => mdEscape(dispatchRefLabel(r))).join(", ")}`]
       : []),
-    // dispatchTruncated: the lineage probe hit its candidate cap, so the
-    // dispatched list may be an undercount — say so instead of implying
-    // completeness. A truncated probe that found NO links still gets a line:
-    // silence would be indistinguishable from an exhaustive "no dispatches".
-    ...(a.dispatched?.length
-      ? [`- Dispatched ${plural(a.dispatched.length, "subagent run")}: ${a.dispatched.map((r) => mdEscape(dispatchRefLabel(r))).join(", ")}${a.dispatchTruncated ? " (list may be incomplete)" : ""}`]
-      : a.dispatchTruncated
-        ? ["- Dispatched subagent runs: none identified (list may be incomplete)"]
-        : []),
+    // The dispatched line covers both dispatch kinds (dispatchedBody):
+    // cross-session links as named refs, in-session subagent runs as a
+    // count. dispatchTruncated: the lineage probe hit its marker-tape cap,
+    // so the discovered lineage may be an undercount — say so instead of
+    // implying completeness. A truncated probe that found NOTHING still
+    // gets a line: silence would be indistinguishable from an exhaustive
+    // "no dispatches".
+    ...(() => {
+      const body = dispatchedBody((a.dispatched ?? []).map((r) => mdEscape(dispatchRefLabel(r))), a.dispatchedRuns ?? 0);
+      return body
+        ? [`- Dispatched ${body}${a.dispatchTruncated ? " (list may be incomplete)" : ""}`]
+        : a.dispatchTruncated
+          ? ["- Dispatched subagent runs: none identified (list may be incomplete)"]
+          : [];
+    })(),
     "",
     `**Worked on:** ${mdText(a.narrative.workedOn)}`,
     `**Completed:** ${mdText(a.narrative.completed)}`,

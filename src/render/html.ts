@@ -1,5 +1,5 @@
 import type { AgentReport, Report, Severity } from "../types";
-import { dispatchRefLabel, plural, rollupCounts, rollupLine } from "./rollup";
+import { dispatchRefLabel, dispatchedBody, plural, rollupCounts, rollupLine } from "./rollup";
 import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 import { STATUS_SEVERITY } from "../status";
 import { FILLER_BLOCKED, FILLER_COMPLETED, FILLER_IN_PROGRESS, FILLER_RECOMMENDATION } from "../narrative";
@@ -114,15 +114,21 @@ function cardBody(a: AgentReport): string {
     ...(a.dispatchedBy?.length
       ? [`<dt>Dispatched by</dt><dd class="dispatch">${esc(a.dispatchedBy.map(dispatchRefLabel).join(", "))}</dd>`]
       : []),
-    // dispatchTruncated: the lineage probe hit its candidate cap, so the
-    // dispatched list may be an undercount — say so instead of implying
-    // completeness. A truncated probe that found NO links still gets a row:
-    // silence would be indistinguishable from an exhaustive "no dispatches".
-    ...(a.dispatched?.length
-      ? [`<dt>Dispatched</dt><dd class="dispatch">${esc(`${plural(a.dispatched.length, "subagent run")}: ${a.dispatched.map(dispatchRefLabel).join(", ")}${a.dispatchTruncated ? " (list may be incomplete)" : ""}`)}</dd>`]
-      : a.dispatchTruncated
-        ? [`<dt>Dispatched</dt><dd class="dispatch">none identified (list may be incomplete)</dd>`]
-        : []),
+    // The dispatched row covers both dispatch kinds (dispatchedBody):
+    // cross-session links as named refs, in-session subagent runs as a
+    // count. dispatchTruncated: the lineage probe hit its marker-tape cap,
+    // so the discovered lineage may be an undercount — say so instead of
+    // implying completeness. A truncated probe that found NOTHING still
+    // gets a row: silence would be indistinguishable from an exhaustive
+    // "no dispatches".
+    ...(() => {
+      const body = dispatchedBody((a.dispatched ?? []).map(dispatchRefLabel), a.dispatchedRuns ?? 0);
+      return body
+        ? [`<dt>Dispatched</dt><dd class="dispatch">${esc(`${body}${a.dispatchTruncated ? " (list may be incomplete)" : ""}`)}</dd>`]
+        : a.dispatchTruncated
+          ? [`<dt>Dispatched</dt><dd class="dispatch">none identified (list may be incomplete)</dd>`]
+          : [];
+    })(),
     // Corroboration from an enrichment connector (engram); absent = no row.
     // Distinct class: "evidence" is the badge span on every card, so the
     // citation needs its own marker for styling and testability.

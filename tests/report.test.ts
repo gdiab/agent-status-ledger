@@ -310,6 +310,86 @@ describe("buildReport", () => {
     expect(agent3.evidenceCitation).not.toContain("app.ts");
   });
 
+  // End-to-end acceptance for asl-9pd: in-session subagent runs (Task-tool
+  // dispatches, whose transcripts inherit the dispatching session's harness
+  // id) land on the orchestrator's card as a run count and render.
+  test("in-session subagent runs attach to the orchestrator profile as dispatchedRuns and render", async () => {
+    const ORCH = "aaaa0000-0000-4000-8000-00000000000a";
+    const RUN_TAPES = [
+      "2222222222222222222222222222222222222222222222222222222222222222",
+      "3333333333333333333333333333333333333333333333333333333333333333",
+    ];
+
+    const world = mkdtempSync(join(tmpdir(), "asl-report-"));
+    const ccRoot = join(world, "claude-projects");
+    const dir = join(ccRoot, "-work-orch");
+    mkdirSync(dir, { recursive: true });
+    const f = join(dir, "s.jsonl");
+    writeFileSync(f, [
+      JSON.stringify({
+        type: "user", timestamp: "2026-07-07T12:00:00.000Z", cwd: "/work/orch",
+        sessionId: ORCH, message: { role: "user", content: "task" },
+      }),
+      JSON.stringify({
+        type: "assistant", timestamp: "2026-07-07T12:05:00.000Z", cwd: "/work/orch",
+        sessionId: ORCH, message: { role: "assistant", content: "done" },
+      }),
+    ].join("\n") + "\n");
+    utimesSync(f, MTIME, MTIME);
+
+    const config = defaultConfig();
+    config.connectors.claudeCode.rootDir = ccRoot;
+    config.connectors.codex.enabled = false;
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram" };
+
+    // Each run's tape carries a marker-prefixed msg.in owned by the
+    // orchestrator's own uuid (Task transcripts inherit it) at a distinct
+    // timestamp — two tapes, two runs.
+    const exec: Exec = (argv) => {
+      if (argv[1] === "grep" && argv[2] === markerQuery(ORCH)) {
+        return {
+          ok: true,
+          stdout: JSON.stringify({
+            total: 2,
+            sessions: RUN_TAPES.map((session_id) => ({ session_id, confidence: 1.0 })),
+          }),
+          stderr: "",
+        };
+      }
+      if (argv[1] === "peek" && RUN_TAPES.includes(argv[2]!)) {
+        return {
+          ok: true,
+          stdout: JSON.stringify({
+            session: {
+              content: [{
+                line: 1,
+                text: JSON.stringify({
+                  k: "msg.in", role: "user",
+                  content: `<engram-src id="${ORCH}"/> implement the thing`,
+                  source: { harness: "claude-code", session_id: ORCH },
+                  t: `2026-07-07T12:0${RUN_TAPES.indexOf(argv[2]!)}:30.000Z`,
+                }),
+              }],
+            },
+          }),
+          stderr: "",
+        };
+      }
+      return { ok: true, stdout: JSON.stringify({ error: "no_results" }), stderr: "" };
+    };
+
+    const report = await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: exec });
+    const orch = report.agents.find((a) => a.workdir === "/work/orch")!;
+    expect(orch.dispatchedRuns).toBe(2);
+    expect(orch.dispatched).toBeUndefined();
+    expect(orch.dispatchedBy).toBeUndefined();
+    expect(orch.dispatchTruncated).toBeUndefined();
+
+    const { renderMarkdown } = await import("../src/render/markdown");
+    const md = renderMarkdown(report);
+    expect(md).toContain("- Dispatched 2 subagent runs: 2 in-session runs");
+  });
+
   // End-to-end acceptance for asl-69s: two sessions linked by an engram
   // dispatch marker end up cross-referenced in the report — the orchestrator
   // card says what it dispatched, the subagent card says who dispatched it,

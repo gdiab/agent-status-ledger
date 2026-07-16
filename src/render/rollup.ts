@@ -52,6 +52,18 @@ export function dispatchRefLabel(ref: DispatchRef): string {
   return ref.profile ? `${ref.profile} (${sid})` : sid;
 }
 
+// Body of the "Dispatched" line, shared by the markdown and html renderers
+// so the phrasing never drifts apart: cross-session links arrive as
+// pre-escaped labels (escaping stays renderer-side); in-session subagent
+// runs (AgentReport.dispatchedRuns) have no session of their own to name,
+// so they contribute a count. undefined = nothing was dispatched, no line.
+export function dispatchedBody(labels: string[], runs: number): string | undefined {
+  const total = labels.length + runs;
+  if (total === 0) return undefined;
+  const parts = [...labels, ...(runs ? [plural(runs, "in-session run")] : [])];
+  return `${plural(total, "subagent run")}: ${parts.join(", ")}`;
+}
+
 export function rollupLine(report: Report): string {
   if (report.agents.length === 0) return "No agent activity in this window.";
   const c = rollupCounts(report);
