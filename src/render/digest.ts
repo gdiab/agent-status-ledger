@@ -1,6 +1,7 @@
-import type { AgentReport, Report } from "../types";
-import { rollupLine } from "./rollup";
+import type { AgentReport, Report, TaskThread } from "../types";
+import { rollupLine, threadRollupSummary } from "./rollup";
 import { esc, SEVERITY_COLOR } from "./html";
+import { STATUS_RANK, STATUS_SEVERITY } from "../status";
 
 // First sentence of a standup narrative (standup always opens with "I " —
 // see src/narrative.ts's Narrative.standup doc). The digest has room for a
@@ -9,6 +10,14 @@ import { esc, SEVERITY_COLOR } from "./html";
 export function leadSentence(standup: string): string {
   const m = standup.match(/^(.*?[.!?])(\s|$)/);
   return m ? m[1]! : standup;
+}
+
+// Section heading shared by the Task threads and Agents headings.
+// exceptionsSection keeps its own inline <h2> — its bottom margin differs
+// (.5rem inside the triage box) and that section's bytes are pinned by the
+// no-threads golden in tests/digest.test.ts.
+function h2(text: string): string {
+  return `<h2 style="font-size:1rem; margin:0 0 .25rem;">${esc(text)}</h2>`;
 }
 
 function exceptionsSection(report: Report): string {
@@ -24,6 +33,36 @@ function exceptionsSection(report: Report): string {
   <h2 style="font-size:1rem; margin:0 0 .5rem;">Exceptions</h2>
   <ul style="margin:0; padding-left:1.1rem;">${items}</ul>
 </div>`;
+}
+
+// One task-level row: title/key, aggregated status (border severity-colored
+// like agent rows), and the shared threadRollupSummary phrase.
+function threadRow(t: TaskThread): string {
+  return `<tr>
+  <td style="padding:.6rem 0; border-top:3px solid ${SEVERITY_COLOR[STATUS_SEVERITY[t.status]]}; border-bottom:1px solid #8884;">
+    <div style="font-weight:600;">${esc(t.title)}${t.source === "files" ? ` <span style="font-weight:400; opacity:.7;">(file cluster)</span>` : ""} <span style="font-weight:400; opacity:.7;">— ${esc(t.status)}</span></div>
+    <div style="font-size:.85rem; opacity:.7; margin:.15rem 0;">${esc(threadRollupSummary(t))}</div>
+  </td>
+</tr>`;
+}
+
+// Task-thread rollup leading the digest body (PRD §7: the operator's
+// question is "how is the task going", not "what did session N do"). Same
+// placement the markdown/html reports reconciled in asl-1wm: the exceptions
+// triage stays first (PRD §9: "the digest starts with exceptions"), threads
+// lead the body ahead of the run-by-run agent rows. Threads arrive
+// source-first from deriveTaskThreads (bead threads before file clusters —
+// a key-quality order, not a triage order), so the digest re-sorts them
+// worst-status-first to keep the exceptions-first posture: a failed file
+// cluster must outrank a completed bead thread. The sort is stable, so
+// within a status the derivation order (recency, key) is preserved. Absent
+// threads = absent section (and no Agents heading), byte-identical output.
+function threadsSection(report: Report): string {
+  if (!report.threads?.length) return "";
+  const threads = [...report.threads].sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status]);
+  return `${h2("Task threads")}
+<table role="presentation" style="width:100%; border-collapse:collapse; margin:0 0 1rem;">${threads.map(threadRow).join("")}</table>
+`;
 }
 
 function agentRow(a: AgentReport): string {
@@ -44,9 +83,14 @@ function agentRow(a: AgentReport): string {
 // separately for anyone who wants the full view.
 export function renderEmailDigest(report: Report): string {
   const day = report.windowEnd.slice(0, 10);
+  const threads = threadsSection(report);
   const rows = report.agents.length
     ? `<table role="presentation" style="width:100%; border-collapse:collapse; margin:0 0 1rem;">${report.agents.map(agentRow).join("")}</table>`
     : `<p style="opacity:.7;">No agent activity in this window.</p>`;
+  // The Agents heading exists only to separate the two tables when a thread
+  // rollup precedes the agent rows; without threads the digest keeps its
+  // original heading-free shape.
+  const body = threads ? `${threads}${h2("Agents")}\n${rows}` : rows;
   return `<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Agent Standup — ${esc(day)}</title></head>
@@ -54,7 +98,7 @@ export function renderEmailDigest(report: Report): string {
 <h1 style="font-size:1.2rem; margin:0 0 .3rem;">Agent Standup — ${esc(day)}</h1>
 <p style="margin:0 0 1rem; font-size:.9rem; opacity:.75;">${esc(rollupLine(report))}</p>
 ${exceptionsSection(report)}
-${rows}
+${body}
 <p style="font-size:.8rem; opacity:.6; margin-top:1rem;">Full interactive report attached.</p>
 </body>
 </html>

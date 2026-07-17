@@ -1,4 +1,4 @@
-import type { DispatchRef, Report, Status, ThreadSession } from "../types";
+import type { DispatchRef, Report, Status, TaskThread, ThreadSession } from "../types";
 import { STATUS_RANK } from "../status";
 
 const STATUS_ORDER = (Object.keys(STATUS_RANK) as Status[]).sort((a, b) => STATUS_RANK[a] - STATUS_RANK[b]);
@@ -70,6 +70,20 @@ export function dispatchedBody(labels: string[], runs: number, truncated: boolea
 // zero files/commits are not (their absence is itself informative).
 export function threadSessionSummary(s: ThreadSession): string {
   return [plural(s.files, "file"), plural(s.commits, "commit"), ...(s.errors ? [plural(s.errors, "error")] : [])].join(", ");
+}
+
+// Task-level one-liner for the email digest's thread rollup (PRD §7: the
+// digest answers "how is the task going", not "what did session N do").
+// Only honestly-summable counts appear: per-member commits are exclusively
+// assigned by src/threads.ts so their sum is exact, and error totals matter
+// wherever they occurred; per-session FILE counts overlap by construction
+// within a thread (file-cluster members share files), so files are omitted
+// rather than double-counted. Zero errors are suppressed, same rule as
+// threadSessionSummary.
+export function threadRollupSummary(t: TaskThread): string {
+  const commits = t.sessions.reduce((n, s) => n + s.commits, 0);
+  const errors = t.sessions.reduce((n, s) => n + s.errors, 0);
+  return [plural(t.sessions.length, "session"), plural(commits, "commit"), ...(errors ? [plural(errors, "error")] : [])].join(", ");
 }
 
 export function rollupLine(report: Report): string {
