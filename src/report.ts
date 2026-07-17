@@ -222,7 +222,7 @@ function attachConversationSignals(
       let question: SanitizedTapeText | undefined;
       let questionAt = "";
       for (const session of profile.sessions) {
-        if (ownersBySession.get(session.sessionId)!.size > 1) continue; // ambiguous ownership: suppress
+        if ((ownersBySession.get(session.sessionId)?.size ?? 0) > 1) continue; // ambiguous ownership: suppress
         const signal = dialogue.get(session.sessionId)?.signal;
         if (!signal) continue;
         kind = kind === "build" || signal.kind === "build" ? "build" : "thinking";

@@ -29,8 +29,6 @@ export {
 export {
   discoverDialogueFacts,
   findDialogueFacts,
-  foldConversationSignal,
-  foldTaskKeys,
   type ConversationSignal,
   type DialogueFacts,
 } from "./dialogue";
