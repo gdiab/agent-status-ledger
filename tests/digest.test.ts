@@ -151,9 +151,43 @@ function thread(over: Partial<TaskThread>): TaskThread {
 describe("renderEmailDigest with task threads (PRD §7)", () => {
   const threaded: Report = { ...report, threads: [thread({})] };
 
-  test("no threads: no Task threads section, output unchanged", () => {
-    expect(renderEmailDigest(report)).not.toContain("Task threads");
-    expect(renderEmailDigest(report)).toBe(renderEmailDigest({ ...report, threads: undefined }));
+  // Golden copy of the no-threads digest, captured before the thread rollup
+  // landed. Pins the legacy shape byte-for-byte: absent threads must keep
+  // producing exactly this document (no Task threads section, no Agents
+  // heading), so any drift in the legacy path fails loudly instead of
+  // sliding past an absent-vs-undefined comparison that exercises the same
+  // code on both sides.
+  const NO_THREADS_GOLDEN = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Agent Standup — 2026-07-08</title></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width:40rem; margin:0 auto; padding:1rem; color:#1a1a1a; line-height:1.4;">
+<h1 style="font-size:1.2rem; margin:0 0 .3rem;">Agent Standup — 2026-07-08</h1>
+<p style="margin:0 0 1rem; font-size:.9rem; opacity:.75;">2 agents: 1 needs_human, 1 completed — 1 commit, 1 file touched</p>
+<div style="border:1px solid #c0392b55; border-radius:8px; padding:.75rem 1rem; margin:0 0 1rem;">
+  <h2 style="font-size:1rem; margin:0 0 .5rem;">Exceptions</h2>
+  <ul style="margin:0; padding-left:1.1rem;"><li style="margin:0 0 .4rem;"><strong>infra (codex)</strong> — needs_human: Needs a human call on retry semantics.</li></ul>
+</div>
+<table role="presentation" style="width:100%; border-collapse:collapse; margin:0 0 1rem;"><tr>
+  <td style="padding:.6rem 0; border-top:3px solid #2d7a46; border-bottom:1px solid #8884;">
+    <div style="font-weight:600;">w (claude-code) <span style="font-weight:400; opacity:.7;">— completed</span></div>
+    <div style="font-size:.85rem; opacity:.7; margin:.15rem 0;">1 commit, 1 file touched</div>
+    <div style="font-size:.9rem; margin-top:.2rem;">I fixed the login bug and committed the fix.</div>
+  </td>
+</tr><tr>
+  <td style="padding:.6rem 0; border-top:3px solid #8a6d00; border-bottom:1px solid #8884;">
+    <div style="font-weight:600;">infra (codex) <span style="font-weight:400; opacity:.7;">— needs_human</span></div>
+    <div style="font-size:.85rem; opacity:.7; margin:.15rem 0;">0 commits, 0 files touched</div>
+    <div style="font-size:.9rem; margin-top:.2rem;">I'm blocked on the retry policy decision.</div>
+  </td>
+</tr></table>
+<p style="font-size:.8rem; opacity:.6; margin-top:1rem;">Full interactive report attached.</p>
+</body>
+</html>
+`;
+
+  test("no threads: legacy digest output matches the pre-threads golden byte-for-byte", () => {
+    expect(renderEmailDigest(report)).toBe(NO_THREADS_GOLDEN);
+    expect(renderEmailDigest({ ...report, threads: undefined })).toBe(NO_THREADS_GOLDEN);
   });
 
   test("empty threads array behaves like no threads", () => {
@@ -214,6 +248,25 @@ describe("renderEmailDigest with task threads (PRD §7)", () => {
     // The thread rollup still renders, worst status and all.
     expect(html).toContain("asl-abc");
     expect(html).toContain("— failed");
+  });
+
+  test("threads render worst-status-first regardless of source, stable within severity", () => {
+    // deriveTaskThreads sorts source-first (bead threads before file
+    // clusters), so a completed bead thread can arrive ahead of a failed
+    // file cluster. The digest re-sorts worst-status-first so exceptions
+    // lead; equal statuses keep their incoming (derivation) order.
+    const html = renderEmailDigest({
+      ...report,
+      threads: [
+        thread({ threadKey: "asl-ok", title: "asl-ok", source: "bead", status: "completed" }),
+        thread({ threadKey: "asl-stuck", title: "asl-stuck", source: "bead", status: "blocked" }),
+        thread({ threadKey: "files:/w/src/login.ts", title: "login.ts, session.ts", source: "files", status: "failed" }),
+        thread({ threadKey: "files:/w/src/api.ts", title: "api.ts", source: "files", status: "blocked" }),
+      ],
+    });
+    const order = ["login.ts, session.ts", "asl-stuck", "api.ts", "asl-ok"].map((t) => html.indexOf(t));
+    expect(order.every((i) => i > -1)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b)); // failed first, then the two blocked in derivation order, completed last
   });
 
   test("escapes HTML in thread-controlled fields", () => {
