@@ -9,7 +9,7 @@ import { redact } from "./redact";
 // already holds (consistent with ADR 0002's stateless scan; nothing here is
 // ingested or persisted). Two key sources, in preference order:
 //   1. bead IDs mentioned in dialogue — supplied by the caller from the
-//      engram task-key pass (src/connectors/engram.ts, discoverTaskKeys);
+//      engram task-key pass (src/connectors/engram, discoverTaskKeys);
 //      an empty map (engram disabled or failing) simply yields no bead
 //      threads, never an error;
 //   2. file clusters — sessions whose filesTouched overlap, derived from

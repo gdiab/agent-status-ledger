@@ -90,7 +90,7 @@ export interface Narrative {
 }
 
 // One end of an orchestrator → subagent dispatch-marker link discovered by
-// the Engram connector (src/connectors/engram.ts, discoverDispatchLinks):
+// the Engram connector (src/connectors/engram, discoverDispatchLinks):
 // the other party's harness session uuid, plus its profile display name when
 // that session belongs to a profile in this report window.
 export interface DispatchRef {
@@ -108,7 +108,7 @@ export interface AgentReport {
   evidence: EvidenceLevel;
   // Human-readable citation for an evidence upgrade performed by an optional
   // enrichment connector (currently: Engram fingerprint corroboration —
-  // src/connectors/engram.ts). Additive + optional, same precedent as
+  // src/connectors/engram). Additive + optional, same precedent as
   // `trends?: string[]` below — schemaVersion stays 1. Absent unless a
   // connector actually upgraded this report's evidence.
   evidenceCitation?: string;
@@ -121,7 +121,7 @@ export interface AgentReport {
   // Additive + optional, absent when empty or when no history exists —
   // schemaVersion stays 1 (same contract as Report.trivialProfiles).
   trends?: string[];
-  // Engram dispatch-marker lineage (src/connectors/engram.ts): sessions of
+  // Engram dispatch-marker lineage (src/connectors/engram): sessions of
   // this profile that were dispatched by another session's `<engram-src/>`
   // marker (dispatchedBy) and sessions this profile's runs dispatched
   // (dispatched). Additive + optional, absent when empty — schemaVersion
@@ -148,7 +148,7 @@ export interface AgentReport {
 // only (edits, commits, errors). Counts, not content, by design: thread
 // membership can be keyed off unredacted Engram dialogue, and a surface that
 // carries only shape-validated keys and counts needs no tape sanitization
-// (see taskKeyPattern in src/connectors/engram.ts). profile is the owning
+// (see taskKeyPattern in src/connectors/engram). profile is the owning
 // card's displayName, so renderers can name it exactly like a DispatchRef.
 export interface ThreadSession {
   sessionId: string;
