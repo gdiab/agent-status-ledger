@@ -17,7 +17,6 @@
 // Guard: grep can hit a session that merely *mentions* the UUID (e.g. an
 // orchestrator transcript quoting a dispatch prompt), so a candidate only
 // counts when its events actually carry source.session_id == uuid.
-import { redact } from "../../redact";
 import type { Exec } from "../../exec";
 
 // Per-call timeout for the default real exec seam: observed real latency is
@@ -64,8 +63,16 @@ export const ENGRAM_TIMEOUT_MS = 5_000;
 //   Keys are best-effort grouping hints, not completeness claims, so a
 //   truncated walk is NOT surfaced (missing a mention degrades to a smaller
 //   thread or none, never to a false statement).
-// - Dispatch lineage and task-key discovery have NO report-wide session
-//   cap: every session in the
+// - MAX_SIGNAL_TAPES (conversation signals): the signal probe greps the
+//   bare session UUID exactly like the key walk, and for the same
+//   slice-splitting reason it reads every candidate up to the cap (message
+//   and edit counts, and the final msg.out, can live in any slice). 3
+//   matches MAX_GREP_CANDIDATES/MAX_KEY_TAPES: the same ranking argument
+//   bounds all three. Signals are classification enrichment, not evidence,
+//   so a truncated walk is NOT surfaced (missing a slice degrades to a
+//   less-informed label or none, never to a false statement).
+// - Dispatch lineage, task-key discovery, and conversation signals have NO
+//   report-wide session cap: every session in the
 //   window is probed (newest-first, for log readability). The bead's
 //   contract is O(report sessions) and deterministic — a cap would silently
 //   drop the oldest orchestrators exactly on busy multi-project days (live
@@ -85,13 +92,18 @@ export const ENGRAM_TIMEOUT_MS = 5_000;
 //             window; an unindexed session costs exactly 1 grep
 //             (no_results), and the whole pass costs 0 calls when no bead
 //             prefixes are configured.
-//   report total: lineage + task keys + 20 × (number of claimed_only
-//             profiles) — every term linear in the window or the profile
-//             count, no quadratic axis.
+//   signals:  (window sessions) × (1 grep + up to MAX_SIGNAL_TAPES peeks)
+//             = 4 calls per session worst-case — same shape as task keys,
+//             but never skippable by configuration (classification needs
+//             no bead prefixes), so it runs whenever engram is enabled.
+//   report total: lineage + task keys + signals + 20 × (number of
+//             claimed_only profiles) — every term linear in the window or
+//             the profile count, no quadratic axis.
 export const MAX_GREP_CANDIDATES = 3;
 export const MAX_MARKER_TAPES = 16;
 export const MAX_SESSIONS_PER_PROFILE = 5;
 export const MAX_KEY_TAPES = 3;
+export const MAX_SIGNAL_TAPES = 3;
 
 // Session ids reach argv from two untrusted sources: harness transcripts
 // (RawSession.sessionId is parsed from log files) and engram's own grep
@@ -112,100 +124,13 @@ export const SESSION_ID_SHAPE = /^[0-9a-fA-F][0-9a-fA-F-]{7,63}$/;
 // distinct dispatch that shares the junk value into one run).
 export const TAPE_TIMESTAMP_SHAPE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
-// Tape-sourced strings end up in every consumer surface (JSON, markdown,
-// html, digest, email) and are assembled from engram-reported content
-// (today: file paths; soon: quoted DIALOGUE), which is untrusted AND
-// unredacted — engram stores verbatim transcripts. Neutralize at ingestion —
-// control chars (incl. newlines, which would let "#"/markdown structures
-// start a line), DEL, angle brackets, and Unicode format characters (\p{Cf}:
-// zero-width space/joiners, word joiner, BOM, soft hyphen, bidi controls —
-// all invisible in renderers, so a secret split by one would reconstruct on
-// copy-paste and bidi controls could reorder the citation display) are
-// stripped so the text is inert before it reaches any renderer. Citations
-// are file paths plus counts, where no \p{Cf} character is load-bearing.
-// This deliberately does not depend on renderer-side escaping (asl-xis).
-//
-// \p{Cf} alone is not enough: Unicode's Default_Ignorable_Code_Point
-// property (DerivedCoreProperties.txt) also contains characters in other
-// general categories that render as nothing — notably COMBINING GRAPHEME
-// JOINER U+034F and the variation selectors U+FE00–FE0F / U+E0100–E01EF,
-// which are nonspacing marks (\p{Mn}) — so they too can invisibly split a
-// secret that reconstructs on copy-paste. JS regex cannot express
-// \p{Default_Ignorable_Code_Point} directly, so the non-Cf members are
-// enumerated explicitly below (do NOT widen to all of \p{Mn}: legitimate
-// combining marks are load-bearing in NFD file paths, e.g. "café.ts" from
-// macOS filesystems):
-//   U+034F        COMBINING GRAPHEME JOINER (Mn)
-//   U+115F..1160  HANGUL CHOSEONG/JUNGSEONG FILLER (Lo)
-//   U+17B4..17B5  KHMER VOWEL INHERENT AQ/AA (Mn)
-//   U+180B..180F  MONGOLIAN FREE VARIATION SELECTORS + VOWEL SEPARATOR
-//   U+2065        reserved, default-ignorable (Cn)
-//   U+3164        HANGUL FILLER (Lo)
-//   U+FE00..FE0F  VARIATION SELECTOR-1..16 (Mn)
-//   U+FFA0        HALFWIDTH HANGUL FILLER (Lo)
-//   U+FFF0..FFF8  reserved, default-ignorable (Cn)
-//   U+E0000..E0FFF plane-14 tags + VARIATION SELECTOR-17..256 + reserved
-//
-// Known fidelity tradeoff (accepted, security over fidelity): several
-// stripped code points are legal, potentially load-bearing filename
-// characters — SOFT HYPHEN U+00AD (a citation for "/repo/co­operate.ts"
-// comes out naming "/repo/cooperate.ts", a different file), variation
-// selectors (which can change glyph/semantic identity of the preceding
-// character), Mongolian FVS, Khmer inherent vowels, and Hangul fillers.
-// A stripped citation can therefore name a path that differs from the one
-// actually edited. We accept the mislabeled citation rather than let an
-// invisible or rendering-altering character through the boundary.
-const TAPE_UNSAFE =
-  /[\x00-\x1f\x7f<>]|\p{Cf}|[\u034F\u115F\u1160\u17B4\u17B5\u180B-\u180F\u2065\u3164\uFE00-\uFE0F\uFFA0\uFFF0-\uFFF8]|[\u{E0000}-\u{E0FFF}]/gu;
-
-// Branded string marking a tape-sourced value that went through
-// sanitizeTapeText. This is a compile-time convention against ACCIDENTAL
-// misuse, not a proof: the brand can be forged with an assertion / `any` /
-// JSON.parse, and it widens back to plain string where the value is stored
-// (AgentReport.evidenceCitation). What it buys: sanitizeTapeText below is
-// the single sanctioned producer, so a future field that quotes tape
-// dialogue can declare this type and the compiler will flag any code path
-// that forgot the choke point — as long as nobody casts around it.
-declare const sanitizedTape: unique symbol;
-export type SanitizedTapeText = string & { readonly [sanitizedTape]: true };
-
-// THE redaction choke point for the Engram boundary (asl-a5v): every string
-// that originates in engram subprocess output must pass through here at the
-// point it is parsed into an ASL data structure — never at render time, so
-// no future render path can bypass it. Composes the shared secret-matching
-// rules from src/redact.ts (builtin + user extraPatterns — no new matching
-// logic here, per asl-2u3) with the tape-specific structural hardening
-// above. Redact runs on BOTH sides of the strip, because each order has an
-// inverse evasion:
-//  - strip-then-redact only: a boundary-dependent rule that matched the raw
-//    text stops matching once the strip glues adjacent chars onto the secret
-//    ("AKIA…F\x00X" → "AKIA…FX" breaks the \b…{16}\b rule);
-//  - redact-then-strip only: a secret split by a stripped char slips past
-//    the redactor as short fragments and is glued back into a live key
-//    ("sk-fix\x00ture…" reassembles).
-// Running redact → strip → redact covers both representations. Cost: redact
-// runs twice per tape string — citations are one-liners and redact is a
-// fixed list of regex passes, so this is noise next to the subprocess calls.
-//
-// extraPatterns is deliberately required (no default): a defaulted [] let
-// call sites silently drop the user's redactPatterns while still receiving
-// branded output. Passing [] must be a visible choice at the call site.
-//
-// Known cosmetic limitation (accepted): double-redact is not idempotent for
-// pathological extraPatterns that match the marker itself — e.g. ["REDACTED"]
-// or ["\\]"] mutate the first pass's [REDACTED] markers into noise like
-// [[[REDACTED]]]. No secret survives (pinned by test); only the marker text
-// gets mangled. The obvious fix — second pass splits on existing [REDACTED]
-// markers and redacts only the non-marker segments — was tried and rejected:
-// it blinds the second pass to marker-adjacent context, which demonstrably
-// breaks redact.ts's glued-tail cleanup when the strip glues a secret tail
-// onto a quoted marker (password="[REDACTED]"<ZWSP>xyz → the tail xyz
-// survives under the split, but is caught by the full-string pass). A
-// cosmetic defect does not warrant weakening a real redaction path.
-export function sanitizeTapeText(s: string, extraPatterns: string[]): SanitizedTapeText {
-  const preStripped = redact(s, extraPatterns);
-  return redact(preStripped.replace(TAPE_UNSAFE, ""), extraPatterns) as SanitizedTapeText;
-}
+// The redaction choke point (sanitizeTapeText) and its SanitizedTapeText
+// brand live in src/redact.ts — the report model types its tape-quoting
+// fields with the brand, so the brand and its single sanctioned producer
+// belong beside the redaction rules, not in a connector module (asl-cey,
+// resolving the asl-a5v deferred design note). Re-exported here so the
+// connector's modules and public surface keep one import path.
+export { sanitizeTapeText, type SanitizedTapeText } from "../../redact";
 
 // The slice of RawSession the report-wide passes need; report.ts flattens
 // every profile's sessions into this shape so the connector never learns

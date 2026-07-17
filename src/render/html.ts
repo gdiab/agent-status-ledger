@@ -1,5 +1,5 @@
 import type { AgentReport, Report, Severity, TaskThread } from "../types";
-import { dispatchRefLabel, dispatchedBody, plural, rollupCounts, rollupLine, threadSessionSummary } from "./rollup";
+import { dispatchRefLabel, dispatchedBody, interactionLabel, plural, rollupCounts, rollupLine, threadSessionSummary } from "./rollup";
 import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 import { STATUS_SEVERITY } from "../status";
 import { FILLER_BLOCKED, FILLER_COMPLETED, FILLER_IN_PROGRESS, FILLER_RECOMMENDATION } from "../narrative";
@@ -127,6 +127,16 @@ function cardBody(a: AgentReport): string {
     // Distinct class: "evidence" is the badge span on every card, so the
     // citation needs its own marker for styling and testability.
     ...(a.evidenceCitation ? [`<dt>Evidence</dt><dd class="evidence-citation">${esc(a.evidenceCitation)}</dd>`] : []),
+    // Conversation-signal classification (asl-cey); absent = no row.
+    ...(a.interactionKind
+      ? [`<dt>Session kind</dt><dd class="interaction-kind">${esc(interactionLabel(a.interactionKind))}</dd>`]
+      : []),
+    // The decision an awaiting-user run is waiting on, quoted from the
+    // agent's final message (sanitized at the engram parse boundary; esc is
+    // renderer-side defense in depth, asl-xis).
+    ...(a.awaitingQuestion
+      ? [`<dt>Waiting on</dt><dd class="awaiting-question">“${esc(a.awaitingQuestion)}”</dd>`]
+      : []),
   ];
   return `<dl>
     ${rows.join("\n    ")}

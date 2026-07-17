@@ -7,9 +7,10 @@ import { attributeCommits, listCommits } from "./git";
 import { EXCEPTION_STATUSES, inferStatus } from "./status";
 import { buildFactSheet, generateNarrative, templateNarrative } from "./narrative";
 import { redact, redactFacts } from "./redact";
-import { corroborateSessions, discoverDispatchLinks, discoverTaskKeys } from "./connectors/engram";
+import { corroborateSessions, discoverConversationSignals, discoverDispatchLinks, discoverTaskKeys } from "./connectors/engram";
 import { deriveTaskThreads } from "./threads";
 import type { Exec } from "./exec";
+import type { SanitizedTapeText } from "./redact";
 
 export interface BuildReportOptions {
   since: Date;
@@ -66,19 +67,24 @@ export function isTrivialProfile(profile: AgentProfile, commits: CommitEvidence[
 
 // The shared projection every report-wide (post-card) enrichment pass works
 // on: the POST-filter profile set — only profiles that produced an agent
-// card — plus its sessions flattened to the connector-facing slice. Both
-// dispatch lineage and task-thread derivation resolve against this same set,
-// so no enrichment ever references a trivial-filtered profile. This is the
-// deliberate extent of the "unifying enrichment pipeline" (asl-cey): the
-// passes share their input projection and their fail-soft posture, but call
-// distinct connector entry points with distinct outputs — folding those into
-// one abstraction would share nothing real.
+// card — plus its sessions flattened to the connector-facing slice, plus the
+// session-uuid → owning-live-profile index the attach steps navigate by.
+// Dispatch lineage, task-thread derivation, and conversation signals all
+// resolve against this same set, so no enrichment ever references a
+// trivial-filtered profile. This is the deliberate extent of the "unifying
+// enrichment pipeline" (asl-cey): the passes share their input projection
+// and their fail-soft posture, but call distinct connector entry points with
+// distinct outputs (mutating cards with lineage refs, returning a
+// report-level thread list, labeling cards with a classification) — folding
+// those into one abstraction would share nothing real beyond this function.
 function liveProjection(agents: AgentReport[], profiles: AgentProfile[]) {
   const liveIds = new Set(agents.map((a) => a.profileId));
   const liveProfiles = profiles.filter((p) => liveIds.has(p.profileId));
   const sessions = liveProfiles.flatMap((p) =>
     p.sessions.map((s) => ({ sessionId: s.sessionId, startedAt: s.startedAt })));
-  return { liveProfiles, sessions };
+  const profileBySession = new Map<string, AgentProfile>();
+  for (const p of liveProfiles) for (const s of p.sessions) profileBySession.set(s.sessionId, p);
+  return { liveProfiles, sessions, profileBySession };
 }
 
 // Dispatch-marker lineage is a cross-profile fact (an orchestrator in one
@@ -90,20 +96,17 @@ function liveProjection(agents: AgentReport[], profiles: AgentProfile[]) {
 // Fail-soft like every engram query: disabled or failing engram means no
 // links, never a broken report.
 async function attachDispatchLineage(agents: AgentReport[], profiles: AgentProfile[], opts: BuildReportOptions): Promise<void> {
-  const { liveProfiles, sessions } = liveProjection(agents, profiles);
+  // profileBySession names the other end of a link. Every link end and every
+  // truncated parent came from the projection's sessions (the connector only
+  // reports ids it was given), so lookups here always resolve; the guards
+  // below just keep that invariant local.
+  const { sessions, profileBySession } = liveProjection(agents, profiles);
   const { links: dispatchLinks, runsByParent, truncatedParents } = await discoverDispatchLinks(
     sessions,
     opts.config.connectors.engram,
     opts.engramExec,
   );
   if (dispatchLinks.length === 0 && runsByParent.length === 0 && truncatedParents.length === 0) return;
-
-  // Session uuid → owning live profile, for naming the other end of a link.
-  // Every link end and every truncated parent came from liveProfiles'
-  // sessions (the connector only reports ids it was given), so lookups here
-  // always resolve; the guards below just keep that invariant local.
-  const profileBySession = new Map<string, AgentProfile>();
-  for (const p of liveProfiles) for (const s of p.sessions) profileBySession.set(s.sessionId, p);
 
   // Split the link list per profile once, up front — not re-filtered inside
   // each agent. Optional + additive fields, absent when empty — like trends.
@@ -170,6 +173,49 @@ async function deriveThreads(agents: AgentReport[], profiles: AgentProfile[], op
   }
 }
 
+// Conversation signals, third report-wide enrichment pass (asl-cey; PRD
+// open question 6): engram's dialogue view classifies each observed session
+// as build work vs thinking help, rolled up per profile — any build session
+// makes the profile "build"; only observed-and-all-thinking profiles read
+// "thinking" — and the newest awaiting-user session's final question lands
+// on the card as the decision being waited on. Both fields are additive
+// enrichment: engram disabled or failing leaves every card untouched.
+async function attachConversationSignals(agents: AgentReport[], profiles: AgentProfile[], opts: BuildReportOptions): Promise<void> {
+  try {
+    const { liveProfiles, sessions } = liveProjection(agents, profiles);
+    const signals = await discoverConversationSignals(sessions, opts.config.connectors.engram, {
+      redactPatterns: opts.config.redactPatterns,
+      exec: opts.engramExec,
+    });
+    if (signals.size === 0) return;
+    const agentByProfile = new Map(agents.map((a) => [a.profileId, a]));
+    for (const profile of liveProfiles) {
+      const agent = agentByProfile.get(profile.profileId);
+      if (!agent) continue;
+      let kind: AgentReport["interactionKind"];
+      let question: SanitizedTapeText | undefined;
+      let questionAt = "";
+      for (const session of profile.sessions) {
+        const signal = signals.get(session.sessionId);
+        if (!signal) continue;
+        kind = kind === "build" || signal.kind === "build" ? "build" : "thinking";
+        // The question attaches only when the harness saw the run END
+        // awaiting the user — a question asked and then answered mid-run is
+        // history, not a pending decision. Newest awaiting session wins.
+        if (session.awaitingUser === true && signal.finalQuestion !== undefined && session.startedAt > questionAt) {
+          question = signal.finalQuestion;
+          questionAt = session.startedAt;
+        }
+      }
+      if (kind !== undefined) agent.interactionKind = kind;
+      if (question !== undefined) agent.awaitingQuestion = question;
+    }
+  } catch {
+    // fail-soft like every enrichment pass: cards without signals are the
+    // pre-asl-cey report, never a broken one
+  }
+}
+
 export async function buildReport(opts: BuildReportOptions): Promise<Report> {
   const { since, now, config } = opts;
   const sessions = [
@@ -203,7 +249,7 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
     // (asl-a5v) is enforced at the Engram parse boundary via
     // sanitizeTapeText, which is why redactPatterns is threaded through —
     // not re-applied here at the model layer.
-    let evidenceCitation: string | undefined;
+    let evidenceCitation: SanitizedTapeText | undefined;
     if (evidence === "claimed_only") {
       const upgrade = await corroborateSessions(profile.sessions, config.connectors.engram, {
         redactPatterns: config.redactPatterns,
@@ -237,6 +283,7 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
 
   await attachDispatchLineage(agents, profiles, opts);
   const threads = await deriveThreads(agents, profiles, opts);
+  await attachConversationSignals(agents, profiles, opts);
 
   agents.sort((a, b) =>
     SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || a.displayName.localeCompare(b.displayName));

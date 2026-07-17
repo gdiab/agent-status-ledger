@@ -72,6 +72,16 @@ export function threadSessionSummary(s: ThreadSession): string {
   return [plural(s.files, "file"), plural(s.commits, "commit"), ...(s.errors ? [plural(s.errors, "error")] : [])].join(", ");
 }
 
+// Human phrasing for the conversation-signal classification (asl-cey; PRD
+// open question 6), shared by the markdown and html renderers so a
+// thinking-help session is labeled identically everywhere. The parenthetical
+// says what the label is grounded in — grounded language over bare tags.
+export function interactionLabel(kind: "build" | "thinking"): string {
+  return kind === "build"
+    ? "build work (code edits or tool activity observed in dialogue)"
+    : "thinking help (dialogue only, no build activity observed)";
+}
+
 export function rollupLine(report: Report): string {
   if (report.agents.length === 0) return "No agent activity in this window.";
   const c = rollupCounts(report);

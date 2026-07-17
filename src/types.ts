@@ -1,3 +1,9 @@
+// Type-only import: SanitizedTapeText brands report fields that quote
+// Engram tape content, extending the sanitizeTapeText compile-time proof
+// (asl-a5v) to the report model. redact.ts imports FactSheet from here the
+// same way — both edges are type-only and erase, so no runtime cycle.
+import type { SanitizedTapeText } from "./redact";
+
 export type Platform = "claude-code" | "codex";
 
 export type EventType =
@@ -110,8 +116,10 @@ export interface AgentReport {
   // enrichment connector (currently: Engram fingerprint corroboration —
   // src/connectors/engram). Additive + optional, same precedent as
   // `trends?: string[]` below — schemaVersion stays 1. Absent unless a
-  // connector actually upgraded this report's evidence.
-  evidenceCitation?: string;
+  // connector actually upgraded this report's evidence. Branded: the
+  // citation is assembled from tape-sourced file paths, so it can only be
+  // produced through the sanitizeTapeText choke point (asl-a5v/asl-cey).
+  evidenceCitation?: SanitizedTapeText;
   facts: FactSheet;
   narrative: Narrative;
   narrativeSource: "llm" | "template";
@@ -142,6 +150,21 @@ export interface AgentReport {
   // over false completeness. Additive + optional, absent when the walk was
   // exhaustive — schemaVersion stays 1 (same contract as trends above).
   dispatchTruncated?: true;
+  // Conversation-signal classification (src/connectors/engram, signals.ts;
+  // PRD open question 6): "build" when engram observed code edits or
+  // tool-dense activity in any of this profile's sessions, "thinking" when
+  // its observed sessions were dialogue-dominant — an agent that helped the
+  // human think must not be reported like a build run. Additive + optional,
+  // absent when engram is disabled or observed nothing — schemaVersion
+  // stays 1 (same contract as trends above).
+  interactionKind?: "build" | "thinking";
+  // The question the agent left the human with, quoted from the final
+  // msg.out of this profile's newest awaiting-user session — the decision
+  // being waited on, not just a needs_human flag. Branded: quoted DIALOGUE,
+  // producible only through the sanitizeTapeText choke point. Additive +
+  // optional, absent when no awaiting session asked anything (or engram is
+  // disabled) — schemaVersion stays 1 (same contract as trends above).
+  awaitingQuestion?: SanitizedTapeText;
 }
 
 // One member run of a TaskThread: a session reference plus evidence COUNTS

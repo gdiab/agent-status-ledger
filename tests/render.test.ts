@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentReport, Report } from "../src/types";
+import type { SanitizedTapeText } from "../src/redact";
 import { renderMarkdown } from "../src/render/markdown";
 import { renderJson } from "../src/render/json";
 import { renderHtml, isHtmlLayout } from "../src/render/html";
@@ -105,7 +106,10 @@ describe("renderers", () => {
   test("markdown: evidenceCitation renders next to the evidence level, md-escaped", () => {
     const a = agent({
       evidence: "partially_proven",
-      evidenceCitation: "engram session abc123: observed code edits to /w/src/my_file.ts",
+      // Deliberately forged brand: these tests pin renderer-side escaping as
+      // an INDEPENDENT defense layer (asl-xis), so the fixture must be a raw
+      // string the real choke point would already have neutralized.
+      evidenceCitation: "engram session abc123: observed code edits to /w/src/my_file.ts" as SanitizedTapeText,
     });
     const md = renderMarkdown({ ...report, agents: [a], exceptions: [] });
     expect(md).toContain("Evidence: partially_proven");
@@ -116,6 +120,23 @@ describe("renderers", () => {
 
   test("markdown: no citation line when evidenceCitation is absent", () => {
     expect(renderMarkdown(report)).not.toContain("Evidence citation");
+  });
+
+  test("markdown: interactionKind and awaitingQuestion render on the card, md-escaped, absent otherwise", () => {
+    const a = agent({
+      status: "needs_human", severity: "warning",
+      interactionKind: "thinking",
+      // Forged brand (see the citation tests): renderer-side escaping is its
+      // own defense layer, so the fixture carries raw markdown metachars.
+      awaitingQuestion: "keep my_file.ts or [roll back]?" as SanitizedTapeText,
+    });
+    const md = renderMarkdown({ ...report, agents: [a], exceptions: [] });
+    expect(md).toContain("- Session kind: thinking help (dialogue only, no build activity observed)");
+    expect(md).toContain("- Waiting on: “keep my\\_file.ts or \\[roll back\\]?”");
+    // absent fields → absent lines
+    const bare = renderMarkdown(report);
+    expect(bare).not.toContain("Session kind");
+    expect(bare).not.toContain("Waiting on");
   });
 
   test("markdown: dispatch lineage renders on both ends, md-escaped, absent otherwise", () => {
@@ -264,13 +285,31 @@ describe("renderers", () => {
   test("html: evidenceCitation renders in the card, escaped", () => {
     const a = agent({
       evidence: "partially_proven",
-      evidenceCitation: 'engram session abc123: edits to /w/src/<b>bold</b>.ts & "quoted"',
+      // Forged brand, same rationale as the markdown citation test: the raw
+      // "<b>" must exist in the fixture for the escaping assertion to bite.
+      evidenceCitation: 'engram session abc123: edits to /w/src/<b>bold</b>.ts & "quoted"' as SanitizedTapeText,
     });
     const html = renderHtml({ ...report, agents: [a], exceptions: [] });
     expect(html).toContain('class="evidence-citation"');
     expect(html).toContain("engram session abc123");
     expect(html).toContain("&lt;b&gt;bold&lt;/b&gt;");
     expect(html).not.toContain("<b>bold</b>");
+  });
+
+  test("html: interactionKind and awaitingQuestion render as card rows, escaped, absent otherwise", () => {
+    const a = agent({
+      status: "needs_human", severity: "warning",
+      interactionKind: "build",
+      awaitingQuestion: 'merge the "big" branch & <tag> it?' as SanitizedTapeText, // forged brand, raw chars on purpose
+    });
+    const html = renderHtml({ ...report, agents: [a], exceptions: [] });
+    expect(html).toContain('<dt>Session kind</dt><dd class="interaction-kind">build work (code edits or tool activity observed in dialogue)</dd>');
+    expect(html).toContain('class="awaiting-question"');
+    expect(html).toContain("&lt;tag&gt;");
+    expect(html).not.toContain("<tag>");
+    const bare = renderHtml(report);
+    expect(bare).not.toContain("interaction-kind");
+    expect(bare).not.toContain("awaiting-question");
   });
 
   test("html: no citation markup when evidenceCitation is absent", () => {

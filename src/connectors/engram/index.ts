@@ -8,6 +8,8 @@
 //                   (findDispatches / discoverDispatchLinks)
 //   - task-keys.ts: bead IDs mentioned in dialogue, for TaskThread grouping
 //                   (findTaskKeys / discoverTaskKeys)
+//   - signals.ts:   work-vs-think classification and the awaited question
+//                   (findConversationSignal / discoverConversationSignals)
 // This index re-exports the connector's public surface, so importers keep
 // addressing one module: `./connectors/engram`.
 export {
@@ -25,3 +27,8 @@ export {
   type DispatchLink,
 } from "./lineage";
 export { discoverTaskKeys, findTaskKeys } from "./task-keys";
+export {
+  discoverConversationSignals,
+  findConversationSignal,
+  type ConversationSignal,
+} from "./signals";
