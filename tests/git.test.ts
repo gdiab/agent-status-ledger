@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { attributeCommits, listCommits } from "../src/git";
+import type { Exec } from "../src/exec";
 import type { Commit } from "../src/types";
 
 async function run(cwd: string, cmd: string[], env: Record<string, string> = {}) {
@@ -39,6 +40,40 @@ describe("git correlator", () => {
   test("non-repo directory returns empty", async () => {
     const dir = mkdtempSync(join(tmpdir(), "asl-notrepo-"));
     expect(await listCommits(dir, new Date(0))).toEqual([]);
+  });
+
+  test("listCommits runs git log through the injected exec seam", async () => {
+    const calls: string[][] = [];
+    const fakeExec: Exec = async (argv) => {
+      calls.push(argv);
+      return {
+        ok: true,
+        stdout: `${"a".repeat(40)}\t2026-07-07T10:00:00+02:00\tsubject with\ttab\n${"b".repeat(40)}\t2026-07-06T09:00:00Z\tplain subject\n`,
+        stderr: "",
+      };
+    };
+    const since = new Date("2026-07-06T00:00:00Z");
+    const commits = await listCommits("/some/repo", since, fakeExec);
+    expect(calls).toEqual([
+      ["git", "-C", "/some/repo", "log", `--since=${since.toISOString()}`, "--pretty=format:%H%x09%aI%x09%s"],
+    ]);
+    expect(commits).toEqual([
+      // %aI offsets normalize to UTC; tabs inside a subject are rejoined.
+      { sha: "a".repeat(40), authorDate: "2026-07-07T08:00:00.000Z", subject: "subject with\ttab" },
+      { sha: "b".repeat(40), authorDate: "2026-07-06T09:00:00.000Z", subject: "plain subject" },
+    ]);
+  });
+
+  test("listCommits returns empty when the exec seam reports failure", async () => {
+    const failExec: Exec = async () => ({ ok: false, stdout: "garbage that must not be parsed\n", stderr: "fatal: not a git repository" });
+    expect(await listCommits("/not/a/repo", new Date(0), failExec)).toEqual([]);
+  });
+
+  test("listCommits returns empty when the injected exec throws", async () => {
+    const throwingExec: Exec = async () => {
+      throw new Error("boom");
+    };
+    expect(await listCommits("/some/repo", new Date(0), throwingExec)).toEqual([]);
   });
 
   test("attribution: inside run window attributed, outside (human commit) not", () => {
