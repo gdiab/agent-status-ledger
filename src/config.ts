@@ -9,7 +9,7 @@ export interface ConnectorConfig { enabled: boolean; rootDir: string; }
 // Engram (github.com/clickety-clacks/engram) is an optional fail-soft
 // enrichment connector, not a log source — it has a binary path instead of a
 // rootDir, and defaults to disabled until proven in real use (see
-// src/connectors/engram.ts). beadPrefixes are the issue-tracker prefixes
+// src/connectors/engram). beadPrefixes are the issue-tracker prefixes
 // task-key discovery may extract from dialogue (e.g. ["asl"] accepts
 // asl-1wm); empty = bead-key threading off. An allowlist, not a shape guess:
 // live validation showed a generic bead-shaped pattern drowns in hyphenated

@@ -1,5 +1,5 @@
 import type { AgentReport, Report, TaskThread } from "../types";
-import { dispatchRefLabel, dispatchedBody, plural, rollupLine, threadSessionSummary } from "./rollup";
+import { dispatchRefLabel, dispatchedBody, interactionLabel, plural, rollupLine, threadSessionSummary } from "./rollup";
 import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 
 // Names come from workdir basenames and platform labels; escape markdown
@@ -34,6 +34,12 @@ function agentSection(a: AgentReport): string {
     // Assembled from session ids and file paths — mdEscape so an underscore
     // or bracket in a path can't open a formatting span (asl-xis).
     ...(a.evidenceCitation ? [`- Evidence citation: ${mdEscape(a.evidenceCitation)}`] : []),
+    // Conversation-signal classification (asl-cey); absent = no line.
+    ...(a.interactionKind ? [`- Session kind: ${interactionLabel(a.interactionKind)}`] : []),
+    // The decision an awaiting-user run is waiting on, quoted from the
+    // agent's final message (sanitized at the engram parse boundary);
+    // mdEscape so dialogue punctuation can't open a formatting span.
+    ...(a.awaitingQuestion ? [`- Waiting on: “${mdEscape(a.awaitingQuestion)}”`] : []),
     `- Workdir: \`${a.workdir}\``,
     `- Sessions: ${a.facts.sessionCount} (${a.facts.firstActivity} → ${a.facts.lastActivity})`,
     // Cross-day trend annotations (src/trends.ts); absent = no history, no line.

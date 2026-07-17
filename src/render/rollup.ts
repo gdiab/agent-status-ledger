@@ -1,4 +1,4 @@
-import type { DispatchRef, Report, Status, TaskThread, ThreadSession } from "../types";
+import type { DispatchRef, InteractionKind, Report, Status, TaskThread, ThreadSession } from "../types";
 import { STATUS_RANK } from "../status";
 
 const STATUS_ORDER = (Object.keys(STATUS_RANK) as Status[]).sort((a, b) => STATUS_RANK[a] - STATUS_RANK[b]);
@@ -84,6 +84,16 @@ export function threadRollupSummary(t: TaskThread): string {
   const commits = t.sessions.reduce((n, s) => n + s.commits, 0);
   const errors = t.sessions.reduce((n, s) => n + s.errors, 0);
   return [plural(t.sessions.length, "session"), plural(commits, "commit"), ...(errors ? [plural(errors, "error")] : [])].join(", ");
+}
+
+// Human phrasing for the conversation-signal classification (asl-cey; PRD
+// open question 6), shared by the markdown and html renderers so a
+// thinking-help session is labeled identically everywhere. The parenthetical
+// says what the label is grounded in — grounded language over bare tags.
+export function interactionLabel(kind: InteractionKind): string {
+  return kind === "build"
+    ? "build work (code edits or tool activity observed in dialogue)"
+    : "thinking help (dialogue only, no build activity observed)";
 }
 
 export function rollupLine(report: Report): string {

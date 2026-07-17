@@ -1,3 +1,9 @@
+// Type-only import: SanitizedTapeText brands report fields that quote
+// Engram tape content, extending the sanitizeTapeText compile-time proof
+// (asl-a5v) to the report model. redact.ts imports FactSheet from here the
+// same way — both edges are type-only and erase, so no runtime cycle.
+import type { SanitizedTapeText } from "./redact";
+
 export type Platform = "claude-code" | "codex";
 
 export type EventType =
@@ -15,6 +21,13 @@ export type Status =
 
 export type EvidenceLevel = "proven" | "partially_proven" | "claimed_only" | "unknown";
 export type Severity = "info" | "warning" | "urgent";
+
+// The conversation-signal classification vocabulary (src/connectors/engram,
+// dialogue.ts; PRD open question 6): "build" = the agent changed something or
+// worked tool-heavy; "thinking" = dialogue-dominant thinking help. Declared
+// once here — the connector's ConversationSignal and the renderers' label
+// helper both reuse it, so the union can never drift apart.
+export type InteractionKind = "build" | "thinking";
 
 export interface AgentEvent {
   timestamp: string;        // ISO-8601 UTC
@@ -90,7 +103,7 @@ export interface Narrative {
 }
 
 // One end of an orchestrator → subagent dispatch-marker link discovered by
-// the Engram connector (src/connectors/engram.ts, discoverDispatchLinks):
+// the Engram connector (src/connectors/engram, discoverDispatchLinks):
 // the other party's harness session uuid, plus its profile display name when
 // that session belongs to a profile in this report window.
 export interface DispatchRef {
@@ -108,10 +121,12 @@ export interface AgentReport {
   evidence: EvidenceLevel;
   // Human-readable citation for an evidence upgrade performed by an optional
   // enrichment connector (currently: Engram fingerprint corroboration —
-  // src/connectors/engram.ts). Additive + optional, same precedent as
+  // src/connectors/engram). Additive + optional, same precedent as
   // `trends?: string[]` below — schemaVersion stays 1. Absent unless a
-  // connector actually upgraded this report's evidence.
-  evidenceCitation?: string;
+  // connector actually upgraded this report's evidence. Branded: the
+  // citation is assembled from tape-sourced file paths, so it can only be
+  // produced through the sanitizeTapeText choke point (asl-a5v/asl-cey).
+  evidenceCitation?: SanitizedTapeText;
   facts: FactSheet;
   narrative: Narrative;
   narrativeSource: "llm" | "template";
@@ -121,7 +136,7 @@ export interface AgentReport {
   // Additive + optional, absent when empty or when no history exists —
   // schemaVersion stays 1 (same contract as Report.trivialProfiles).
   trends?: string[];
-  // Engram dispatch-marker lineage (src/connectors/engram.ts): sessions of
+  // Engram dispatch-marker lineage (src/connectors/engram): sessions of
   // this profile that were dispatched by another session's `<engram-src/>`
   // marker (dispatchedBy) and sessions this profile's runs dispatched
   // (dispatched). Additive + optional, absent when empty — schemaVersion
@@ -142,13 +157,28 @@ export interface AgentReport {
   // over false completeness. Additive + optional, absent when the walk was
   // exhaustive — schemaVersion stays 1 (same contract as trends above).
   dispatchTruncated?: true;
+  // Conversation-signal classification (src/connectors/engram, dialogue.ts;
+  // PRD open question 6): "build" when engram observed code edits or
+  // tool-dense activity in any of this profile's sessions, "thinking" when
+  // its observed sessions were dialogue-dominant — an agent that helped the
+  // human think must not be reported like a build run. Additive + optional,
+  // absent when engram is disabled or observed nothing — schemaVersion
+  // stays 1 (same contract as trends above).
+  interactionKind?: InteractionKind;
+  // The question the agent left the human with, quoted from the final
+  // msg.out of this profile's newest awaiting-user session — the decision
+  // being waited on, not just a needs_human flag. Branded: quoted DIALOGUE,
+  // producible only through the sanitizeTapeText choke point. Additive +
+  // optional, absent when no awaiting session asked anything (or engram is
+  // disabled) — schemaVersion stays 1 (same contract as trends above).
+  awaitingQuestion?: SanitizedTapeText;
 }
 
 // One member run of a TaskThread: a session reference plus evidence COUNTS
 // only (edits, commits, errors). Counts, not content, by design: thread
 // membership can be keyed off unredacted Engram dialogue, and a surface that
 // carries only shape-validated keys and counts needs no tape sanitization
-// (see taskKeyPattern in src/connectors/engram.ts). profile is the owning
+// (see taskKeyPattern in src/connectors/engram). profile is the owning
 // card's displayName, so renderers can name it exactly like a DispatchRef.
 export interface ThreadSession {
   sessionId: string;

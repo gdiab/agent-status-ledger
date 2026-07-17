@@ -25,7 +25,7 @@ const USAGE = `usage: asl report [--since 24h] [--open] [--no-llm] [--no-email] 
 // keychain lookup's bound in apikey.ts, and email's curl already self-caps
 // at --max-time 60, so 60s is the ceiling any legitimate caller needs. The
 // engram connector owns its own tighter seam (ENGRAM_TIMEOUT_MS in
-// src/connectors/engram.ts) behind the config enabled flag.
+// src/connectors/engram) behind the config enabled flag.
 const spawnExec: Exec = makeSpawnExec(60_000);
 
 async function runDoctorCli(): Promise<never> {

@@ -246,6 +246,22 @@ describe("redaction contract across all render surfaces", () => {
     expect(out).toContain("[REDACTED]");
   });
 
+  test("digest surface renders no awaitingQuestion dialogue at all (email never carries transcript text)", async () => {
+    // PRD §13: delivery summaries never include raw transcripts. The awaited
+    // question is quoted (redacted) DIALOGUE, allowed on the full report
+    // surfaces but deliberately kept out of the email digest body — same
+    // whole-and-parts pinning discipline as the citation test below.
+    const question = sanitizeTapeText(
+      "Should I revoke the old deploy key now or after the release?", []);
+    const withQuestion: Report = {
+      ...report,
+      agents: [{ ...agentWithCitation(), status: "needs_human", severity: "warning", awaitingQuestion: question }],
+    };
+    const out = renderEmailDigest(withQuestion);
+    expect(out).not.toContain(question);
+    expect(out).not.toContain("revoke the old deploy key");
+  });
+
   test("digest surface renders no citation content at all", async () => {
     // The digest never renders evidenceCitation, so a secret-absence check
     // alone is vacuous — it would pass for an UNREDACTED citation too. The

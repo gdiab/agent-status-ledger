@@ -178,7 +178,7 @@ export function checkEmailPassword(
       };
 }
 
-// The engram connector (src/connectors/engram.ts) is opt-in enrichment: a
+// The engram connector (src/connectors/engram) is opt-in enrichment: a
 // disabled connector is a healthy skip, an enabled one needs a working
 // binary at the configured path (not on PATH, not on crates.io — built from
 // source).
