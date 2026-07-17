@@ -1,15 +1,24 @@
 import type { Commit, CommitEvidence } from "./types";
+import { makeSpawnExec, type Exec } from "./exec";
 import { toUtcIso } from "./time";
 
-export async function listCommits(repoDir: string, since: Date): Promise<Commit[]> {
+// Bound for `git log`: local-disk repos answer in well under a second, but
+// the failure this seam exists for is a repo on a hung network mount, where
+// an unbounded child would stall the unattended morning run forever. 30s is
+// generous for any legitimately slow (huge/cold-cache) repo while still
+// letting the run degrade to "no commits" and move on.
+export const GIT_TIMEOUT_MS = 30_000;
+
+export async function listCommits(repoDir: string, since: Date, exec?: Exec): Promise<Commit[]> {
   try {
-    const proc = Bun.spawn(
-      ["git", "-C", repoDir, "log", `--since=${since.toISOString()}`, "--pretty=format:%H%x09%aI%x09%s"],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-    const out = await new Response(proc.stdout).text();
-    if ((await proc.exited) !== 0) return [];
-    return out
+    // No injected seam runs real git (same pattern as engram's
+    // `opts.exec ?? makeSpawnExec(...)`); tests inject fakes.
+    const realExec = exec ?? makeSpawnExec(GIT_TIMEOUT_MS);
+    const { ok, stdout } = await realExec([
+      "git", "-C", repoDir, "log", `--since=${since.toISOString()}`, "--pretty=format:%H%x09%aI%x09%s",
+    ]);
+    if (!ok) return [];
+    return stdout
       .split("\n")
       .filter(Boolean)
       .map((line) => {
