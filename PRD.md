@@ -289,7 +289,7 @@ Optional fields:
 - `last_activity_at`
 - `evidence_level`: the strongest evidence any member run produced
 
-TaskThreads are derived at report time from runs and events (consistent with the stateless-scan architecture in ADR 0002); they are a reporting construct, not a fourth ingestion object. Bead-ID keying requires configuring `connectors.engram.bead_prefixes` (an allowlist — live validation showed generic ID-shape matching mints ~10 false threads per real one); unconfigured, only file-cluster threads derive, and with no threads the report renders exactly as before. The per-agent sections remain. The digest leading with threads (the operator's question is "how is the task going," not "what did session N do") is decided but not yet shipped — the email digest still leads with the exceptions-first per-profile rollup.
+TaskThreads are derived at report time from runs and events (consistent with the stateless-scan architecture in ADR 0002); they are a reporting construct, not a fourth ingestion object. Bead-ID keying requires configuring `connectors.engram.bead_prefixes` (an allowlist — live validation showed generic ID-shape matching mints ~10 false threads per real one); unconfigured, only file-cluster threads derive, and with no threads the report renders exactly as before. The per-agent sections remain. The digest leading with threads (the operator's question is "how is the task going," not "what did session N do") shipped 2026-07-16 (asl-qlm): when threads exist, the email digest's body opens with the task-thread rollup ahead of the per-agent rows, mirroring the report's section order — the exceptions triage stays first per §9, and the thread rollup is itself worst-status-first. With no threads the digest is unchanged.
 
 ---
 

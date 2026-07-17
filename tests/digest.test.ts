@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentReport, Report } from "../src/types";
+import type { AgentReport, Report, TaskThread, ThreadSession } from "../src/types";
 import { leadSentence, renderEmailDigest } from "../src/render/digest";
 
 describe("leadSentence", () => {
@@ -119,5 +119,117 @@ describe("renderEmailDigest", () => {
     const html = renderEmailDigest({ ...report, agents: [hostile], exceptions: [] });
     expect(html).not.toContain("<img src=x onerror=alert(1)>");
     expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  });
+});
+
+function threadSession(over: Partial<ThreadSession>): ThreadSession {
+  return {
+    sessionId: "aaaaaaaa-1111-2222-3333-444444444444", profile: "w (claude-code)",
+    startedAt: "2026-07-07T09:00:00.000Z", lastEventAt: "2026-07-07T09:30:00.000Z",
+    files: 3, commits: 2, errors: 0,
+    ...over,
+  };
+}
+
+function thread(over: Partial<TaskThread>): TaskThread {
+  return {
+    threadKey: "asl-abc", source: "bead", title: "asl-abc",
+    status: "blocked", evidence: "proven",
+    firstActivityAt: "2026-07-07T09:00:00.000Z", lastActivityAt: "2026-07-08T06:45:00.000Z",
+    sessions: [
+      threadSession({}),
+      threadSession({
+        sessionId: "bbbbbbbb-1111-2222-3333-444444444444", profile: "infra (codex)",
+        startedAt: "2026-07-08T06:00:00.000Z", lastEventAt: "2026-07-08T06:45:00.000Z",
+        files: 0, commits: 1, errors: 0,
+      }),
+    ],
+    ...over,
+  };
+}
+
+describe("renderEmailDigest with task threads (PRD §7)", () => {
+  const threaded: Report = { ...report, threads: [thread({})] };
+
+  test("no threads: no Task threads section, output unchanged", () => {
+    expect(renderEmailDigest(report)).not.toContain("Task threads");
+    expect(renderEmailDigest(report)).toBe(renderEmailDigest({ ...report, threads: undefined }));
+  });
+
+  test("empty threads array behaves like no threads", () => {
+    expect(renderEmailDigest({ ...report, threads: [] })).toBe(renderEmailDigest(report));
+  });
+
+  test("threads render a Task threads section with key, status, and rollup phrase", () => {
+    const html = renderEmailDigest(threaded);
+    expect(html).toContain("Task threads");
+    expect(html).toContain("asl-abc");
+    expect(html).toContain("— blocked");
+    expect(html).toContain("2 sessions, 3 commits"); // per-member commits summed (exclusive by construction)
+  });
+
+  test("thread section sits between the exceptions triage and the per-agent rows", () => {
+    const html = renderEmailDigest(threaded);
+    const exceptions = html.indexOf("Exceptions");
+    const threads = html.indexOf("Task threads");
+    const firstAgent = html.indexOf("w (claude-code)");
+    expect(exceptions).toBeGreaterThan(-1);
+    expect(threads).toBeGreaterThan(exceptions);
+    expect(firstAgent).toBeGreaterThan(threads);
+  });
+
+  test("file-cluster threads are labelled as such", () => {
+    const html = renderEmailDigest({
+      ...report,
+      threads: [thread({ threadKey: "files:/w/src/login.ts", source: "files", title: "login.ts, session.ts" })],
+    });
+    expect(html).toContain("login.ts, session.ts");
+    expect(html).toContain("(file cluster)");
+  });
+
+  test("bead threads carry no file-cluster label", () => {
+    expect(renderEmailDigest(threaded)).not.toContain("(file cluster)");
+  });
+
+  test("thread errors surface in the rollup phrase; zero errors are suppressed", () => {
+    const noisy = thread({
+      sessions: [threadSession({}), threadSession({ sessionId: "cccccccc-1111-2222-3333-444444444444", errors: 2 })],
+    });
+    expect(renderEmailDigest({ ...report, threads: [noisy] })).toContain("2 sessions, 4 commits, 2 errors");
+    expect(renderEmailDigest(threaded)).not.toContain("error");
+  });
+
+  test("all agents exceptions + threads: exceptions triage still leads, threads follow", () => {
+    const allExceptions: Report = {
+      ...report,
+      agents: [blocked, agent({ profileId: "claude-code:/x", displayName: "x (claude-code)", status: "failed", severity: "urgent" })],
+      exceptions: [blocked, agent({ profileId: "claude-code:/x", displayName: "x (claude-code)", status: "failed", severity: "urgent" })],
+      threads: [thread({ status: "failed" })],
+    };
+    const html = renderEmailDigest(allExceptions);
+    // Exception surfacing keeps its posture: the triage box is first and
+    // still names every exception agent's recommendation.
+    expect(html.indexOf("Exceptions")).toBeLessThan(html.indexOf("Task threads"));
+    expect(html).toContain("Needs a human call on retry semantics.");
+    // The thread rollup still renders, worst status and all.
+    expect(html).toContain("asl-abc");
+    expect(html).toContain("— failed");
+  });
+
+  test("escapes HTML in thread-controlled fields", () => {
+    const hostile = thread({ title: "<script>alert(1)</script>" });
+    const html = renderEmailDigest({ ...report, threads: [hostile] });
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+  });
+
+  test("thread section never emits the patterns Gmail flattens", () => {
+    const html = renderEmailDigest(threaded);
+    expect(html).not.toContain("<details");
+    expect(html).not.toContain("<summary");
+    expect(html).not.toContain("display: grid");
+    expect(html).not.toContain("display:grid");
+    expect(html).not.toContain("light-dark(");
+    expect(html).not.toContain("<style");
   });
 });
