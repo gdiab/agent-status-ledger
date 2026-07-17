@@ -1,5 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { corroborateSessions, discoverDispatchLinks, discoverTaskKeys, findTaskKeys, upgradeEvidence } from "../src/connectors/engram";
+import { corroborateSessions, discoverDialogueFacts, discoverDispatchLinks, findDialogueFacts, upgradeEvidence } from "../src/connectors/engram";
+import type { Exec as EngramExec } from "../src/exec";
+
+// The key fold's view of one session, through the shared dialogue walk (the
+// signal side of the walk's output has its own tests in
+// engram-signals.test.ts).
+async function findTaskKeys(
+  sessionUuid: string,
+  beadPrefixes: string[],
+  binaryPath: string,
+  exec: EngramExec,
+  extraPatterns: string[],
+): Promise<string[]> {
+  return (await findDialogueFacts(sessionUuid, beadPrefixes, binaryPath, exec, extraPatterns)).keys;
+}
 import type { Exec } from "../src/exec";
 import {
   BIN, ENGRAM_SID, UUID,
@@ -1021,15 +1035,15 @@ describe("discoverDispatchLinks", () => {
 });
 
 // Task-key discovery (asl-1wm): bead IDs mentioned in a session's own
-// dialogue, for TaskThread grouping. Reuses the evidence upgrade's query
-// shape (grep the bare uuid, peek candidates) with a message-event filter
-// and the same mention-only ownership guard; extracted tokens are strict
-// prefix-allowlisted keys only, never quoted dialogue.
-describe("findTaskKeys / discoverTaskKeys", () => {
+// dialogue, for TaskThread grouping. One fold of the shared dialogue walk
+// (grep the bare uuid, peek candidates with the widest kind filter, the
+// same mention-only ownership guard applied at the walk); extracted tokens
+// are strict prefix-allowlisted keys only, never quoted dialogue.
+describe("task keys via findDialogueFacts / discoverDialogueFacts", () => {
   const PREFIXES = ["asl", "zzz"];
   const enabled = { enabled: true, binaryPath: BIN, beadPrefixes: PREFIXES };
   const disabled = { enabled: false, binaryPath: BIN, beadPrefixes: PREFIXES };
-  const MSG_FILTER = '"k":"msg.';
+  const EVENT_FILTER = '"k":"';
 
   function msgEvent(kind: "msg.in" | "msg.out", content: string, ownerUuid: string): unknown {
     return {
@@ -1081,30 +1095,33 @@ describe("findTaskKeys / discoverTaskKeys", () => {
     expect(JSON.stringify(mixed)).not.toContain("hunter2");
   });
 
-  test("all-invalid prefixes disable the pass without spawning a subprocess", async () => {
+  test("all-invalid prefixes skip the key fold: the shared walk still runs, no keys come out", async () => {
+    // The walk is shared with the signal fold, so it runs regardless of the
+    // prefix config — only the key FOLD is skipped (null pattern). Its cost
+    // is not attributable to keys: the signal pass would have paid it anyway.
     let calls = 0;
     const spy: Exec = async () => {
       calls++;
       return { ok: true, stdout: cliStdout({ error: "no_results" }), stderr: "" };
     };
     expect(await findTaskKeys(UUID, [".{0,100}"], BIN, spy, [])).toEqual([]);
-    expect(calls).toBe(0);
+    expect(calls).toBe(1); // the walk's grep — shared, not a key-pass cost
   });
 
-  test("no configured prefixes disables the pass without calling exec", async () => {
-    let calls = 0;
-    const spy: Exec = async () => {
-      calls++;
+  test("no configured prefixes yields no keys, and no EXTRA subprocesses beyond the shared walk", async () => {
+    const grepped: string[] = [];
+    const exec: Exec = async (argv) => {
+      if (argv[1] === "grep") grepped.push(argv[2]!);
       return { ok: true, stdout: cliStdout({ error: "no_results" }), stderr: "" };
     };
-    expect(await findTaskKeys(UUID, [], BIN, spy, [])).toEqual([]);
-    const r = await discoverTaskKeys(
+    expect(await findTaskKeys(UUID, [], BIN, exec, [])).toEqual([]);
+    const r = await discoverDialogueFacts(
       [{ sessionId: UUID, startedAt: "2026-07-07T12:00:00.000Z" }],
       { enabled: true, binaryPath: BIN, beadPrefixes: [] },
-      { redactPatterns: [], exec: spy },
+      { redactPatterns: [], exec },
     );
     expect(r.size).toBe(0);
-    expect(calls).toBe(0);
+    expect(grepped).toEqual([UUID, UUID]); // one walk per call above, nothing more
   });
 
   test("rejects mention-only events (another session's dialogue must not donate keys)", async () => {
@@ -1156,7 +1173,7 @@ describe("findTaskKeys / discoverTaskKeys", () => {
     expect(await findTaskKeys(UUID, PREFIXES, BIN, exec, [])).toEqual(["asl-1wm", "asl-9pd"]);
   });
 
-  test("issues the exact grep and peek argv shapes (message filter)", async () => {
+  test("issues the exact grep and peek argv shapes (widest kind filter, shared with signals)", async () => {
     const calls: string[][] = [];
     const inner = twoStepExec(grepResponse([ENGRAM_SID]), {
       [ENGRAM_SID]: peekResponse([msgEvent("msg.in", "asl-1wm", UUID)]),
@@ -1167,7 +1184,7 @@ describe("findTaskKeys / discoverTaskKeys", () => {
     };
     await findTaskKeys(UUID, PREFIXES, BIN, exec, []);
     expect(calls[0]).toEqual([BIN, "grep", UUID, "--limit", "3"]);
-    expect(calls[1]).toEqual([BIN, "peek", ENGRAM_SID, "--grep-filter", MSG_FILTER]);
+    expect(calls[1]).toEqual([BIN, "peek", ENGRAM_SID, "--grep-filter", EVENT_FILTER]);
   });
 
   test("never throws: hostile uuid, failing exec, malformed JSON all yield no keys", async () => {
@@ -1176,20 +1193,20 @@ describe("findTaskKeys / discoverTaskKeys", () => {
     expect(await findTaskKeys(UUID, PREFIXES, BIN, execOk("garbage{{"), [])).toEqual([]);
   });
 
-  test("discoverTaskKeys: disabled connector returns an empty map without calling exec", async () => {
+  test("discoverDialogueFacts: disabled connector returns an empty map without calling exec", async () => {
     let calls = 0;
     const spy: Exec = async () => {
       calls++;
       return { ok: true, stdout: cliStdout({ error: "no_results" }), stderr: "" };
     };
-    const r = await discoverTaskKeys([{ sessionId: UUID, startedAt: "2026-07-07T12:00:00.000Z" }], disabled, {
+    const r = await discoverDialogueFacts([{ sessionId: UUID, startedAt: "2026-07-07T12:00:00.000Z" }], disabled, {
       redactPatterns: [], exec: spy,
     });
     expect(r.size).toBe(0);
     expect(calls).toBe(0);
   });
 
-  test("discoverTaskKeys: probes newest-first, once per session id, and maps only key-bearing sessions", async () => {
+  test("discoverDialogueFacts: probes newest-first, once per session id, and maps key-bearing sessions", async () => {
     const OTHER = "bbbb0000-0000-4000-8000-00000000000b";
     const grepped: string[] = [];
     const exec: Exec = async (argv) => {
@@ -1200,7 +1217,7 @@ describe("findTaskKeys / discoverTaskKeys", () => {
       }
       return { ok: true, stdout: peekResponse([msgEvent("msg.in", "on asl-1wm", UUID)]), stderr: "" };
     };
-    const r = await discoverTaskKeys(
+    const r = await discoverDialogueFacts(
       [
         { sessionId: UUID, startedAt: "2026-07-07T11:00:00.000Z" },
         { sessionId: OTHER, startedAt: "2026-07-07T12:00:00.000Z" },
@@ -1210,7 +1227,7 @@ describe("findTaskKeys / discoverTaskKeys", () => {
       { redactPatterns: [], exec },
     );
     expect(grepped).toEqual([UUID, OTHER]); // duplicate skipped; newest first
-    expect(r.get(UUID)).toEqual(["asl-1wm"]);
-    expect(r.has(OTHER)).toBe(false); // no keys → no entry
+    expect(r.get(UUID)?.keys).toEqual(["asl-1wm"]);
+    expect(r.has(OTHER)).toBe(false); // no keys, no signal → no entry
   });
 });

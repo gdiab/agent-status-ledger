@@ -22,6 +22,13 @@ export type Status =
 export type EvidenceLevel = "proven" | "partially_proven" | "claimed_only" | "unknown";
 export type Severity = "info" | "warning" | "urgent";
 
+// The conversation-signal classification vocabulary (src/connectors/engram,
+// dialogue.ts; PRD open question 6): "build" = the agent changed something or
+// worked tool-heavy; "thinking" = dialogue-dominant thinking help. Declared
+// once here — the connector's ConversationSignal and the renderers' label
+// helper both reuse it, so the union can never drift apart.
+export type InteractionKind = "build" | "thinking";
+
 export interface AgentEvent {
   timestamp: string;        // ISO-8601 UTC
   type: EventType;
@@ -150,14 +157,14 @@ export interface AgentReport {
   // over false completeness. Additive + optional, absent when the walk was
   // exhaustive — schemaVersion stays 1 (same contract as trends above).
   dispatchTruncated?: true;
-  // Conversation-signal classification (src/connectors/engram, signals.ts;
+  // Conversation-signal classification (src/connectors/engram, dialogue.ts;
   // PRD open question 6): "build" when engram observed code edits or
   // tool-dense activity in any of this profile's sessions, "thinking" when
   // its observed sessions were dialogue-dominant — an agent that helped the
   // human think must not be reported like a build run. Additive + optional,
   // absent when engram is disabled or observed nothing — schemaVersion
   // stays 1 (same contract as trends above).
-  interactionKind?: "build" | "thinking";
+  interactionKind?: InteractionKind;
   // The question the agent left the human with, quoted from the final
   // msg.out of this profile's newest awaiting-user session — the decision
   // being waited on, not just a needs_human flag. Branded: quoted DIALOGUE,

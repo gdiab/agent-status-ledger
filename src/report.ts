@@ -7,7 +7,7 @@ import { attributeCommits, listCommits } from "./git";
 import { EXCEPTION_STATUSES, inferStatus } from "./status";
 import { buildFactSheet, generateNarrative, templateNarrative } from "./narrative";
 import { redact, redactFacts } from "./redact";
-import { corroborateSessions, discoverConversationSignals, discoverDispatchLinks, discoverTaskKeys } from "./connectors/engram";
+import { corroborateSessions, discoverDialogueFacts, discoverDispatchLinks, type DialogueFacts } from "./connectors/engram";
 import { deriveTaskThreads } from "./threads";
 import type { Exec } from "./exec";
 import type { SanitizedTapeText } from "./redact";
@@ -154,40 +154,66 @@ async function attachDispatchLineage(agents: AgentReport[], profiles: AgentProfi
 }
 
 // Task-thread derivation, second report-wide enrichment pass: engram bead
-// keys (fail-soft in the connector) feed the pure derivation in
-// src/threads.ts, whose file-cluster fallback works from parsed session data
-// alone — engram disabled or failing still yields file threads, and no
+// keys — one output of the shared dialogue walk — feed the pure derivation
+// in src/threads.ts, whose file-cluster fallback works from parsed session
+// data alone — engram disabled or failing still yields file threads, and no
 // threads at all yields a report byte-identical to before. The try/catch is
 // the bead's hard rule made local: a thread failure must never break the
 // report — derivation is additive garnish, the cards are the product.
-async function deriveThreads(agents: AgentReport[], profiles: AgentProfile[], opts: BuildReportOptions): Promise<TaskThread[]> {
+function deriveThreads(
+  agents: AgentReport[],
+  liveProfiles: AgentProfile[],
+  dialogue: Map<string, DialogueFacts>,
+  redactPatterns: string[],
+): TaskThread[] {
   try {
-    const { liveProfiles, sessions } = liveProjection(agents, profiles);
-    const keysBySession = await discoverTaskKeys(sessions, opts.config.connectors.engram, {
-      redactPatterns: opts.config.redactPatterns,
-      exec: opts.engramExec,
-    });
-    return deriveTaskThreads(agents, liveProfiles, keysBySession, opts.config.redactPatterns);
+    const keysBySession = new Map<string, string[]>();
+    for (const [sessionId, facts] of dialogue) {
+      if (facts.keys.length > 0) keysBySession.set(sessionId, facts.keys);
+    }
+    return deriveTaskThreads(agents, liveProfiles, keysBySession, redactPatterns);
   } catch {
     return [];
   }
 }
 
 // Conversation signals, third report-wide enrichment pass (asl-cey; PRD
-// open question 6): engram's dialogue view classifies each observed session
-// as build work vs thinking help, rolled up per profile — any build session
-// makes the profile "build"; only observed-and-all-thinking profiles read
-// "thinking" — and the newest awaiting-user session's final question lands
-// on the card as the decision being waited on. Both fields are additive
-// enrichment: engram disabled or failing leaves every card untouched.
-async function attachConversationSignals(agents: AgentReport[], profiles: AgentProfile[], opts: BuildReportOptions): Promise<void> {
+// open question 6): the dialogue walk's other output classifies each
+// observed session as build work vs thinking help, rolled up per profile —
+// any build session makes the profile "build"; only observed-and-all-
+// thinking profiles read "thinking" — and the newest awaiting-user
+// session's final question lands on the card as the decision being waited
+// on. Both fields are additive enrichment: engram disabled or failing
+// leaves every card untouched.
+//
+// Ambiguous session ownership is SUPPRESSED, not resolved: Task-tool
+// subagent transcripts inherit the parent sessionId, so one id can appear
+// under two live profiles (parent and subagent workdirs). Engram's tapes
+// for that id merge both transcripts' events into one stream — the signal
+// describes the merged stream and cannot honestly be attributed to either
+// card (a "thinking" parent would inherit its builder subagent's label, and
+// an awaiting sibling could quote the OTHER profile's final question).
+// Fail toward silence, the codebase's posture: neither card gets the
+// classification or the question, and both read exactly as they did before
+// this pass existed.
+function attachConversationSignals(
+  agents: AgentReport[],
+  liveProfiles: AgentProfile[],
+  dialogue: Map<string, DialogueFacts>,
+): void {
   try {
-    const { liveProfiles, sessions } = liveProjection(agents, profiles);
-    const signals = await discoverConversationSignals(sessions, opts.config.connectors.engram, {
-      redactPatterns: opts.config.redactPatterns,
-      exec: opts.engramExec,
-    });
-    if (signals.size === 0) return;
+    // sessionId → owning live profiles; ids owned by >1 profile are ambiguous.
+    const ownersBySession = new Map<string, Set<string>>();
+    for (const profile of liveProfiles) {
+      for (const session of profile.sessions) {
+        let owners = ownersBySession.get(session.sessionId);
+        if (!owners) {
+          owners = new Set();
+          ownersBySession.set(session.sessionId, owners);
+        }
+        owners.add(profile.profileId);
+      }
+    }
     const agentByProfile = new Map(agents.map((a) => [a.profileId, a]));
     for (const profile of liveProfiles) {
       const agent = agentByProfile.get(profile.profileId);
@@ -196,7 +222,8 @@ async function attachConversationSignals(agents: AgentReport[], profiles: AgentP
       let question: SanitizedTapeText | undefined;
       let questionAt = "";
       for (const session of profile.sessions) {
-        const signal = signals.get(session.sessionId);
+        if (ownersBySession.get(session.sessionId)!.size > 1) continue; // ambiguous ownership: suppress
+        const signal = dialogue.get(session.sessionId)?.signal;
         if (!signal) continue;
         kind = kind === "build" || signal.kind === "build" ? "build" : "thinking";
         // The question attaches only when the harness saw the run END
@@ -282,8 +309,17 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
   const trivialProfiles = results.flatMap((r) => ("trivial" in r ? [r.trivial] : [])).sort();
 
   await attachDispatchLineage(agents, profiles, opts);
-  const threads = await deriveThreads(agents, profiles, opts);
-  await attachConversationSignals(agents, profiles, opts);
+  // ONE owned-dialogue walk per session serves both dialogue consumers
+  // (task keys → threads; conversation signals → card labels/questions):
+  // the connector folds both outputs from the same event stream, so the
+  // two passes cost one walk's subprocess budget, not two.
+  const { liveProfiles, sessions: liveSessions } = liveProjection(agents, profiles);
+  const dialogue = await discoverDialogueFacts(liveSessions, config.connectors.engram, {
+    redactPatterns: config.redactPatterns,
+    exec: opts.engramExec,
+  });
+  const threads = deriveThreads(agents, liveProfiles, dialogue, config.redactPatterns);
+  attachConversationSignals(agents, liveProfiles, dialogue);
 
   agents.sort((a, b) =>
     SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || a.displayName.localeCompare(b.displayName));

@@ -11,7 +11,7 @@ import type { RawSession } from "../../types";
 import {
   ENGRAM_TIMEOUT_MS, MAX_GREP_CANDIDATES, MAX_SESSIONS_PER_PROFILE, SESSION_ID_SHAPE,
   grepPeekCandidates, sanitizeTapeText, tapeEvents,
-  type CorroborateOptions, type SanitizedTapeText,
+  type EngramPassOptions, type SanitizedTapeText,
 } from "./tape";
 
 const CODE_EDIT_FILTER = '"k":"code.edit"';
@@ -87,11 +87,11 @@ export async function upgradeEvidence(
 // The options object is required and redactPatterns has no default: the
 // user's config.redactPatterns must be threaded through explicitly, so a
 // call site that opts out ([]) is visible as configuration, never an
-// accidental omission (see CorroborateOptions in tape.ts).
+// accidental omission (see EngramPassOptions in tape.ts).
 export async function corroborateSessions(
   sessions: RawSession[],
   cfg: EngramConfig,
-  opts: CorroborateOptions,
+  opts: EngramPassOptions,
 ): Promise<UpgradeResult> {
   if (!cfg.enabled) return { matched: false };
   try {

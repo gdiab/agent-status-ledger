@@ -1,11 +1,12 @@
 // Conversation signals (asl-cey): work-vs-think classification from
 // message/edit ratios and tool-call density, plus the awaited question
 // quoted — through the sanitizeTapeText choke point — from the final
-// msg.out. Reuses the evidence upgrade's query shape (grep the bare uuid,
-// peek candidates) with the widest kind filter and the same mention-only
-// ownership guard.
+// msg.out. Signals are one fold of the shared owned-dialogue walk
+// (findDialogueFacts): ONE grep of the bare uuid + peeks with the widest
+// kind filter serve both the signal fold and the task-key fold, with the
+// same mention-only ownership guard applied at the walk.
 import { describe, expect, test } from "bun:test";
-import { discoverConversationSignals, findConversationSignal } from "../src/connectors/engram";
+import { discoverDialogueFacts, findDialogueFacts, type ConversationSignal } from "../src/connectors/engram";
 import type { Exec } from "../src/exec";
 import {
   BIN, ENGRAM_SID, UUID,
@@ -18,6 +19,18 @@ const execOk =
   (stdout: string): Exec =>
   async () => ({ ok: true, stdout, stderr: "" });
 const execFail: Exec = async () => ({ ok: false, stdout: "", stderr: "not found" });
+
+// The signal fold's view of one session, through the shared dialogue walk
+// (no bead prefixes: only the signal side of the walk's output matters here;
+// the key fold's own tests live in engram.test.ts).
+async function findConversationSignal(
+  sessionUuid: string,
+  binaryPath: string,
+  exec: Exec,
+  extraPatterns: string[],
+): Promise<ConversationSignal | undefined> {
+  return (await findDialogueFacts(sessionUuid, [], binaryPath, exec, extraPatterns)).signal;
+}
 
 function msgEvent(
   kind: "msg.in" | "msg.out",
@@ -45,7 +58,7 @@ function toolEvent(ownerUuid: string, t = "2026-07-14T13:00:00.000Z"): unknown {
 const sessionExec = (events: unknown[]): Exec =>
   twoStepExec(grepResponse([ENGRAM_SID]), { [ENGRAM_SID]: peekResponse(events) });
 
-describe("findConversationSignal — classification", () => {
+describe("findDialogueFacts — classification", () => {
   test("dialogue-only session classifies as thinking", async () => {
     const exec = sessionExec([
       msgEvent("msg.in", "how should I structure the migration?", UUID),
@@ -90,6 +103,25 @@ describe("findConversationSignal — classification", () => {
     expect(s?.kind).toBe("thinking");
   });
 
+  test("tool density EXACTLY at the threshold stays thinking (spec is strict >)", async () => {
+    const exec = sessionExec([
+      msgEvent("msg.in", "a", UUID), msgEvent("msg.out", "b", UUID),
+      msgEvent("msg.in", "c", UUID), msgEvent("msg.out", "d", UUID),
+      toolEvent(UUID), // 1 tool / 4 messages = 0.25, not > 0.25
+    ]);
+    const s = await findConversationSignal(UUID, BIN, exec, []);
+    expect(s?.kind).toBe("thinking");
+  });
+
+  test("a zero-message session with owned tool calls is build, never NaN or a crash", async () => {
+    // messages = 0: any tool call beats 0 × density — no division anywhere,
+    // and the label must come out defined, not NaN-poisoned.
+    const exec = sessionExec([toolEvent(UUID), toolEvent(UUID, "2026-07-14T13:01:00.000Z")]);
+    const s = await findConversationSignal(UUID, BIN, exec, []);
+    expect(s?.kind).toBe("build");
+    expect(s?.finalQuestion).toBeUndefined();
+  });
+
   test("no owned events at all yields no signal, never a guessed label", async () => {
     // Events exist but belong to another session (mention-only guard) —
     // exactly the orchestrator-quoting shape the evidence upgrade rejects.
@@ -111,7 +143,7 @@ describe("findConversationSignal — classification", () => {
   });
 });
 
-describe("findConversationSignal — the awaited question", () => {
+describe("findDialogueFacts — the awaited question", () => {
   test("quotes the last question sentence of the newest owned msg.out", async () => {
     const exec = sessionExec([
       msgEvent("msg.out", "Should I use SQLite? Actually, wait.", UUID, "2026-07-14T13:00:00.000Z"),
@@ -126,6 +158,27 @@ describe("findConversationSignal — the awaited question", () => {
     expect(s?.finalQuestion?.toString()).toBe(
       "Do you want the annual plan screen to keep the Maybe Later button?",
     );
+  });
+
+  test("ordinary punctuation inside the sentence never garbles the quote (filenames, versions)", async () => {
+    // A dot NOT followed by whitespace is not a sentence boundary: the old
+    // extractor quoted this as "ts or roll back?".
+    const exec = sessionExec([
+      msgEvent("msg.out", "I diffed both. Keep my_file.ts or roll back to v1.2.3?", UUID),
+    ]);
+    const s = await findConversationSignal(UUID, BIN, exec, []);
+    expect(s?.finalQuestion?.toString()).toBe("Keep my_file.ts or roll back to v1.2.3?");
+  });
+
+  test("newer instant wins even when timezone offsets make the raw timestamps sort backwards", async () => {
+    // Lexicographically "2026-07-14T20:00:00.000+09:00" > "2026-07-14T13:30:00.000Z",
+    // but as an instant it is 11:00Z — the Z-stamped 13:30 message is newer.
+    const exec = sessionExec([
+      msgEvent("msg.out", "Old ask from the offset slice?", UUID, "2026-07-14T20:00:00.000+09:00"),
+      msgEvent("msg.out", "Ship it now?", UUID, "2026-07-14T13:30:00.000Z"),
+    ]);
+    const s = await findConversationSignal(UUID, BIN, exec, []);
+    expect(s?.finalQuestion?.toString()).toBe("Ship it now?");
   });
 
   test("a final message that asks nothing yields no question — never fabricated", async () => {
@@ -187,9 +240,32 @@ describe("findConversationSignal — the awaited question", () => {
     expect(s!.finalQuestion!.length).toBeLessThanOrEqual(301); // 300 + ellipsis
     expect(s!.finalQuestion!.endsWith("…")).toBe(true);
   });
+
+  test("the cap never splits a [REDACTED] marker: the cut backs off to before it", async () => {
+    const SECRET = "sk-fixturesecret1234567890abcdef";
+    // Sanitized shape: 294 x's + " " + "[REDACTED]" (cols 295–304) + " ok?"
+    // — the naive 300-char cut lands mid-marker.
+    const exec = sessionExec([
+      msgEvent("msg.out", `${"x".repeat(294)} ${SECRET} ok?`, UUID),
+    ]);
+    const s = await findConversationSignal(UUID, BIN, exec, []);
+    expect(s?.finalQuestion?.toString()).toBe(`${"x".repeat(294)}…`);
+    expect(s!.finalQuestion!).not.toContain(SECRET);
+  });
+
+  test("the cap never splits a surrogate pair: a non-BMP char at the boundary survives whole or not at all", async () => {
+    // "😀" occupies UTF-16 units 299–300: the naive cut at 300 would keep a
+    // lone high surrogate that renders as U+FFFD.
+    const exec = sessionExec([
+      msgEvent("msg.out", `${"x".repeat(299)}😀 and then some — proceed?`, UUID),
+    ]);
+    const s = await findConversationSignal(UUID, BIN, exec, []);
+    expect(s?.finalQuestion?.toString()).toBe(`${"x".repeat(299)}…`);
+    expect(s!.finalQuestion!).not.toContain("\ud83d"); // no lone high surrogate
+  });
 });
 
-describe("findConversationSignal — probe discipline", () => {
+describe("findDialogueFacts — probe discipline", () => {
   test("issues the exact grep and peek argv shapes (widest kind filter)", async () => {
     const calls: string[][] = [];
     const inner = sessionExec([msgEvent("msg.in", "task", UUID)]);
@@ -200,6 +276,35 @@ describe("findConversationSignal — probe discipline", () => {
     await findConversationSignal(UUID, BIN, exec, []);
     expect(calls[0]).toEqual([BIN, "grep", UUID, "--limit", "3"]);
     expect(calls[1]).toEqual([BIN, "peek", ENGRAM_SID, "--grep-filter", EVENT_FILTER]);
+  });
+
+  test("ONE walk serves both folds: keys and signal come from the same grep+peek calls", async () => {
+    const calls: string[][] = [];
+    const inner = sessionExec([
+      msgEvent("msg.in", "pick up bead asl-1wm", UUID),
+      editEvent("/repo/src/a.ts", UUID),
+    ]);
+    const exec: Exec = async (argv) => {
+      calls.push(argv);
+      return inner(argv);
+    };
+    const facts = await findDialogueFacts(UUID, ["asl"], BIN, exec, []);
+    expect(facts.keys).toEqual(["asl-1wm"]);
+    expect(facts.signal?.kind).toBe("build");
+    expect(calls.length).toBe(2); // 1 grep + 1 peek, both outputs
+  });
+
+  test("no bead prefixes: the walk still runs for the signal fold, keys stay empty", async () => {
+    const calls: string[][] = [];
+    const inner = sessionExec([msgEvent("msg.in", "pick up bead asl-1wm", UUID)]);
+    const exec: Exec = async (argv) => {
+      calls.push(argv);
+      return inner(argv);
+    };
+    const facts = await findDialogueFacts(UUID, [], BIN, exec, []);
+    expect(facts.keys).toEqual([]);
+    expect(facts.signal?.kind).toBe("thinking");
+    expect(calls.length).toBe(2);
   });
 
   test("rejects hostile or malformed session ids without ever calling exec", async () => {
@@ -224,7 +329,7 @@ describe("findConversationSignal — probe discipline", () => {
   });
 });
 
-describe("discoverConversationSignals", () => {
+describe("discoverDialogueFacts", () => {
   const enabled = { enabled: true, binaryPath: BIN, beadPrefixes: [] };
   const disabled = { enabled: false, binaryPath: BIN, beadPrefixes: [] };
 
@@ -234,7 +339,7 @@ describe("discoverConversationSignals", () => {
       calls++;
       return { ok: true, stdout: cliStdout({ error: "no_results" }), stderr: "" };
     };
-    const r = await discoverConversationSignals(
+    const r = await discoverDialogueFacts(
       [{ sessionId: UUID, startedAt: "2026-07-07T12:00:00.000Z" }],
       disabled,
       { redactPatterns: [], exec: spy },
@@ -254,7 +359,7 @@ describe("discoverConversationSignals", () => {
       }
       return { ok: true, stdout: peekResponse([msgEvent("msg.in", "task", UUID)]), stderr: "" };
     };
-    const r = await discoverConversationSignals(
+    const r = await discoverDialogueFacts(
       [
         { sessionId: UUID, startedAt: "2026-07-07T11:00:00.000Z" },
         { sessionId: OTHER, startedAt: "2026-07-07T12:00:00.000Z" },
@@ -264,7 +369,7 @@ describe("discoverConversationSignals", () => {
       { redactPatterns: [], exec },
     );
     expect(grepped).toEqual([UUID, OTHER]); // duplicate skipped; newest first
-    expect(r.get(UUID)?.kind).toBe("thinking");
+    expect(r.get(UUID)?.signal?.kind).toBe("thinking");
     expect(r.has(OTHER)).toBe(false); // unobserved → no entry
   });
 
@@ -272,7 +377,7 @@ describe("discoverConversationSignals", () => {
     const throwing: Exec = async () => {
       throw new Error("boom");
     };
-    const r = await discoverConversationSignals(
+    const r = await discoverDialogueFacts(
       [{ sessionId: UUID, startedAt: "2026-07-07T12:00:00.000Z" }],
       enabled,
       { redactPatterns: [], exec: throwing },

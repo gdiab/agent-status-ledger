@@ -283,18 +283,18 @@ describe("buildReport", () => {
     };
     await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: spy });
     // Newest first: recent sessions are the ones most likely to be in the
-    // index and most relevant to today's report. Four engram passes share
+    // index and most relevant to today's report. Three engram walks share
     // the seam and all order newest-first: the per-profile evidence upgrade
     // (inside the profile loop) greps the bare uuid, then the report-wide
     // dispatch-lineage probe over the post-filter profiles greps each
-    // session's marker literal, then the report-wide task-key probe greps
-    // each session's bare uuid again, then the report-wide
-    // conversation-signal probe greps each session's bare uuid once more.
+    // session's marker literal, then the report-wide dialogue walk greps
+    // each session's bare uuid ONCE — task keys and conversation signals
+    // are both folds over that single walk, so the old back-to-back
+    // duplicate greps (8 per report here) are down to 6.
     expect(grepped).toEqual([
       "bbbb0000-0000-4000-8000-00000000000b", "aaaa0000-0000-4000-8000-00000000000a", // evidence
       markerQuery("bbbb0000-0000-4000-8000-00000000000b"), markerQuery("aaaa0000-0000-4000-8000-00000000000a"), // lineage
-      "bbbb0000-0000-4000-8000-00000000000b", "aaaa0000-0000-4000-8000-00000000000a", // task keys
-      "bbbb0000-0000-4000-8000-00000000000b", "aaaa0000-0000-4000-8000-00000000000a", // conversation signals
+      "bbbb0000-0000-4000-8000-00000000000b", "aaaa0000-0000-4000-8000-00000000000a", // dialogue (keys + signals)
     ]);
   });
 
@@ -770,9 +770,10 @@ describe("buildReport", () => {
     config.connectors.engram = { enabled: true, binaryPath: "/fake/engram", beadPrefixes: ["asl"] };
 
     // Engram double: the bare-uuid grep finds each thread member's own tape;
-    // peeking it with the message filter returns dialogue mentioning the
-    // bead. The code.edit (evidence) peeks find nothing, marker-literal
-    // (lineage) greps find nothing, and S_C's dialogue mentions no key.
+    // peeking it with the dialogue walk's widest kind filter returns
+    // dialogue mentioning the bead. The code.edit (evidence) peeks find
+    // nothing, marker-literal (lineage) greps find nothing, and S_C's
+    // dialogue mentions no key.
     const tapeByUuid: Record<string, string> = { [S_A]: TAPE_A, [S_B]: TAPE_B };
     const uuidByTape: Record<string, string> = { [TAPE_A]: S_A, [TAPE_B]: S_B };
     const exec: Exec = async (argv) => {
@@ -783,7 +784,7 @@ describe("buildReport", () => {
           stderr: "",
         };
       }
-      if (argv[1] === "peek" && argv[4] === '"k":"msg.' && uuidByTape[argv[2]!]) {
+      if (argv[1] === "peek" && argv[4] === '"k":"' && uuidByTape[argv[2]!]) {
         return {
           ok: true,
           stdout: JSON.stringify({
@@ -1046,6 +1047,83 @@ describe("buildReport", () => {
     const html = renderHtml(report);
     expect(html).toContain('class="awaiting-question"');
     expect(html).not.toContain(SECRET);
+  });
+
+  // asl-cey review R2: Task-tool subagent transcripts inherit the parent
+  // sessionId, so one id can appear under TWO profiles (parent and subagent
+  // workdirs). Engram's tapes for that id merge both transcripts, so the
+  // signal cannot honestly be attributed to either card — and naive
+  // per-session lookup would hand the awaiting sibling the OTHER profile's
+  // final question. Ambiguously-owned ids are suppressed: neither card gets
+  // the classification or the question (fail toward silence).
+  test("conversation signals: a sessionId shared by two profiles attaches to neither (ambiguous ownership suppressed)", async () => {
+    const SHARED = "aaaa0000-0000-4000-8000-00000000000a";
+    const TAPE = "1111111111111111111111111111111111111111111111111111111111111111";
+
+    const world = mkdtempSync(join(tmpdir(), "asl-report-"));
+    const ccRoot = join(world, "claude-projects");
+    // Same sessionId in two cwds → two profiles. The parent ends on a user
+    // message (not awaiting); the sibling ends on a plain assistant reply
+    // (awaiting) — the exact shape where the sibling would otherwise
+    // inherit the parent's finalQuestion.
+    const mkSession = (dirName: string, cwd: string, lines: object[]) => {
+      const dir = join(ccRoot, dirName);
+      mkdirSync(dir, { recursive: true });
+      const f = join(dir, "s.jsonl");
+      writeFileSync(f, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+      utimesSync(f, MTIME, MTIME);
+    };
+    mkSession("-work-parent", "/work/parent", [
+      { type: "user", timestamp: "2026-07-07T12:00:00.000Z", cwd: "/work/parent", sessionId: SHARED, message: { role: "user", content: "task" } },
+      { type: "assistant", timestamp: "2026-07-07T12:05:00.000Z", cwd: "/work/parent", sessionId: SHARED, message: { role: "assistant", content: "dispatching" } },
+      { type: "user", timestamp: "2026-07-07T12:10:00.000Z", cwd: "/work/parent", sessionId: SHARED, message: { role: "user", content: "carry on" } },
+    ]);
+    mkSession("-work-sub", "/work/sub", [
+      { type: "user", timestamp: "2026-07-07T12:01:00.000Z", cwd: "/work/sub", sessionId: SHARED, message: { role: "user", content: "subtask" } },
+      { type: "assistant", timestamp: "2026-07-07T12:06:00.000Z", cwd: "/work/sub", sessionId: SHARED, message: { role: "assistant", content: "done here" } },
+    ]);
+
+    const config = defaultConfig();
+    config.connectors.claudeCode.rootDir = ccRoot;
+    config.connectors.codex.enabled = false;
+    config.connectors.engram = { enabled: true, binaryPath: "/fake/engram", beadPrefixes: [] };
+
+    // Engram's merged view of the shared id: build activity plus a final
+    // question — exactly what must NOT land on either card.
+    const exec: Exec = async (argv) => {
+      if (argv[1] === "grep" && argv[2] === SHARED) {
+        return {
+          ok: true,
+          stdout: JSON.stringify({ sessions: [{ session_id: TAPE, confidence: 325.0 }] }),
+          stderr: "",
+        };
+      }
+      if (argv[1] === "peek" && argv[2] === TAPE && argv[4] === '"k":"') {
+        const events = [
+          { k: "code.edit", file: "/work/sub/src/a.ts", source: { session_id: SHARED }, t: "2026-07-07T12:03:00.000Z" },
+          { k: "msg.out", content: "Merged stream asks: revoke the key now?", source: { session_id: SHARED }, t: "2026-07-07T12:06:00.000Z" },
+        ];
+        return {
+          ok: true,
+          stdout: JSON.stringify({
+            session: { content: events.map((ev, i) => ({ line: i + 1, text: JSON.stringify(ev) })) },
+          }),
+          stderr: "",
+        };
+      }
+      if (argv[1] === "peek") return { ok: true, stdout: JSON.stringify({ session: { content: [] } }), stderr: "" };
+      return { ok: true, stdout: JSON.stringify({ error: "no_results" }), stderr: "" };
+    };
+
+    const report = await buildReport({ since: SINCE, now: NOW, config, useLlm: false, engramExec: exec });
+    const parent = report.agents.find((a) => a.workdir === "/work/parent")!;
+    const sub = report.agents.find((a) => a.workdir === "/work/sub")!;
+    expect(parent).toBeDefined();
+    expect(sub).toBeDefined();
+    for (const agent of [parent, sub]) {
+      expect(agent.interactionKind).toBeUndefined();
+      expect(agent.awaitingQuestion).toBeUndefined();
+    }
   });
 });
 

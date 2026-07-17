@@ -2,7 +2,7 @@
 // tape listing/reading (grep→peek), CLI response parsing, session-id and
 // timestamp shape validation, the query-budget ledger, and the redaction
 // choke point every tape-sourced string must pass through. The per-pass
-// modules (evidence.ts, lineage.ts, task-keys.ts) build on these primitives;
+// modules (evidence.ts, lineage.ts, dialogue.ts) build on these primitives;
 // the public surface is re-exported by index.ts so importers see one module.
 //
 // Query design: ASL keys off the harness session UUID (RawSession.sessionId),
@@ -52,27 +52,24 @@ export const ENGRAM_TIMEOUT_MS = 5_000;
 // - MAX_SESSIONS_PER_PROFILE (evidence upgrade): sessions are tried
 //   newest-first (recent sessions are the ones most likely to be in the
 //   index and most relevant to today's report).
-// - MAX_KEY_TAPES (task-key discovery): like the evidence grep, the key
-//   probe greps the bare session UUID, where the session's OWN tape slices
-//   rank far above mention-only transcripts (hundreds of touch-count points
-//   vs a handful) — but engram watch emits per-debounce tape SLICES, so the
-//   dialogue may be split across several top hits. Unlike the evidence walk
-//   (which stops at its first verified hit), the key walk reads every
-//   candidate up to the cap, because a bead mention can live in any slice.
-//   3 matches MAX_GREP_CANDIDATES: the same ranking argument bounds both.
-//   Keys are best-effort grouping hints, not completeness claims, so a
-//   truncated walk is NOT surfaced (missing a mention degrades to a smaller
-//   thread or none, never to a false statement).
-// - MAX_SIGNAL_TAPES (conversation signals): the signal probe greps the
-//   bare session UUID exactly like the key walk, and for the same
-//   slice-splitting reason it reads every candidate up to the cap (message
-//   and edit counts, and the final msg.out, can live in any slice). 3
-//   matches MAX_GREP_CANDIDATES/MAX_KEY_TAPES: the same ranking argument
-//   bounds all three. Signals are classification enrichment, not evidence,
-//   so a truncated walk is NOT surfaced (missing a slice degrades to a
-//   less-informed label or none, never to a false statement).
-// - Dispatch lineage, task-key discovery, and conversation signals have NO
-//   report-wide session cap: every session in the
+// - MAX_DIALOGUE_TAPES (dialogue facts: task keys + conversation signals):
+//   the dialogue walk greps the bare session UUID, where the session's OWN
+//   tape slices rank far above mention-only transcripts (hundreds of
+//   touch-count points vs a handful) — but engram watch emits per-debounce
+//   tape SLICES, so the dialogue may be split across several top hits.
+//   Unlike the evidence walk (which stops at its first verified hit), the
+//   dialogue walk reads every candidate up to the cap, because a bead
+//   mention, a message/edit count, or the final msg.out can live in any
+//   slice. 3 matches MAX_GREP_CANDIDATES: the same ranking argument bounds
+//   both. ONE walk serves BOTH dialogue consumers: task keys and
+//   conversation signals are pure folds over the same owned-event stream
+//   (the peek filter is the widest kind filter, which the key fold's
+//   message-only interest is a subset of), so the two passes cost one
+//   walk's subprocesses, not two. Both outputs are enrichment, not
+//   evidence, so a truncated walk is NOT surfaced (missing a slice degrades
+//   to a smaller thread or a less-informed label, never a false statement).
+// - Dispatch lineage and dialogue facts have NO report-wide session cap:
+//   every session in the
 //   window is probed (newest-first, for log readability). The bead's
 //   contract is O(report sessions) and deterministic — a cap would silently
 //   drop the oldest orchestrators exactly on busy multi-project days (live
@@ -87,23 +84,21 @@ export const ENGRAM_TIMEOUT_MS = 5_000;
 //             window, ~1 call per session in the common case.
 //   evidence: MAX_SESSIONS_PER_PROFILE × (1 grep + MAX_GREP_CANDIDATES peeks)
 //             = 5 × 4 = 20 calls per claimed_only profile
-//   task keys: (window sessions) × (1 grep + up to MAX_KEY_TAPES peeks)
+//   dialogue: (window sessions) × (1 grep + up to MAX_DIALOGUE_TAPES peeks)
 //             = 4 calls per session worst-case — linear in the report
 //             window; an unindexed session costs exactly 1 grep
-//             (no_results), and the whole pass costs 0 calls when no bead
-//             prefixes are configured.
-//   signals:  (window sessions) × (1 grep + up to MAX_SIGNAL_TAPES peeks)
-//             = 4 calls per session worst-case — same shape as task keys,
-//             but never skippable by configuration (classification needs
-//             no bead prefixes), so it runs whenever engram is enabled.
-//   report total: lineage + task keys + signals + 20 × (number of
-//             claimed_only profiles) — every term linear in the window or
-//             the profile count, no quadratic axis.
+//             (no_results). This single walk feeds both the task-key and
+//             the conversation-signal folds (formerly two identical walks
+//             at 8 calls per session worst-case); it runs whenever engram
+//             is enabled (classification needs no bead prefixes — with none
+//             configured only the key fold is skipped, not the walk).
+//   report total: lineage + dialogue + 20 × (number of claimed_only
+//             profiles) — every term linear in the window or the profile
+//             count, no quadratic axis.
 export const MAX_GREP_CANDIDATES = 3;
 export const MAX_MARKER_TAPES = 16;
 export const MAX_SESSIONS_PER_PROFILE = 5;
-export const MAX_KEY_TAPES = 3;
-export const MAX_SIGNAL_TAPES = 3;
+export const MAX_DIALOGUE_TAPES = 3;
 
 // Session ids reach argv from two untrusted sources: harness transcripts
 // (RawSession.sessionId is parsed from log files) and engram's own grep
@@ -134,18 +129,19 @@ export { sanitizeTapeText, type SanitizedTapeText } from "../../redact";
 
 // The slice of RawSession the report-wide passes need; report.ts flattens
 // every profile's sessions into this shape so the connector never learns
-// about profiles.
-export interface LineageSession {
+// about profiles. Serves all report-wide passes (lineage, dialogue facts),
+// hence the pass-neutral name.
+export interface SessionRef {
   sessionId: string;
   startedAt: string;
 }
 
 // The options shape shared by every entry point that threads user redaction
-// through (corroborateSessions, discoverTaskKeys): redactPatterns is
+// through (corroborateSessions, discoverDialogueFacts): redactPatterns is
 // required so dropping the user's config.redactPatterns is never a silent
 // default; exec stays optional inside it (tests inject fakes; production
 // omits it to run the real binary).
-export interface CorroborateOptions {
+export interface EngramPassOptions {
   redactPatterns: string[];
   exec?: Exec;
 }

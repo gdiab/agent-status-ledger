@@ -71,7 +71,7 @@ import { makeSpawnExec, type Exec } from "../../exec";
 import {
   ENGRAM_TIMEOUT_MS, MAX_MARKER_TAPES, SESSION_ID_SHAPE, TAPE_TIMESTAMP_SHAPE,
   grepPeekCandidates, tapeEvents,
-  type LineageSession,
+  type SessionRef,
 } from "./tape";
 
 // The dispatch marker as a content PREFIX (leading whitespace only) for a
@@ -201,7 +201,7 @@ const EMPTY_DISCOVERY: DispatchDiscovery = { links: [], runsByParent: [], trunca
 // here); links only ever join two sessions the report already knows, and
 // run counts only ever attach to a session the report already knows.
 export async function discoverDispatchLinks(
-  sessions: LineageSession[],
+  sessions: SessionRef[],
   cfg: EngramConfig,
   exec?: Exec,
 ): Promise<DispatchDiscovery> {
