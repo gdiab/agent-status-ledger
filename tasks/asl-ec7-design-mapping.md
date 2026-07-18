@@ -105,7 +105,7 @@ fallback for surfaces that only know severity.
 | `blocked` | warning | **warning** | #da950b / #ebaa2d | #ffefd1 / #934f00 — 5.51:1 | #4c3211 / #efba64 — 6.70:1 |
 | `needs_human` | warning | **warning** (alt: **info** to split "needs a decision" from "stuck" — Q3) | #da950b / #ebaa2d | warning pair (info pair: #dcf4ff / #005e93 — 6.10:1) | warning pair (dark info: #10364e / #78c7fd — 6.86:1) |
 | `active` | info | **accent** (Signal Green live state — dot only, never a filled badge) | #33d58e / #36de95 | dot #33d58e + word in `--fg-2` #4e5157 (7.96:1 on white) | dot #36de95 + `--fg-2` #bbbec3 (9.62:1) |
-| `idle` | info | **neutral** | `--fg-3` #6d7075 / #8d9197 | `--bg-3` #edeff1 / `--fg-2` #4e5157 — 7.0:1 | dark `--bg-3` #26292f / `--fg-2` #bbbec3 |
+| `idle` | info | **neutral** | `--fg-3` #6d7075 / #8d9197 | `--bg-3` #edeff1 / `--fg-2` #4e5157 — 7.0:1 | dark `--bg-3` #272a30 (correction: originally #26292f, a rounding slip) / `--fg-2` #bbbec3 |
 | `completed` | info | **success** | #00805a / #23b189 | #dbf8ec / #006646 — 6.24:1 | #083c2d / #6fd5b0 — 6.98:1 |
 
 Contrast notes:
