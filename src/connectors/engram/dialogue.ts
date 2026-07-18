@@ -67,7 +67,7 @@ import { redact } from "../../redact";
 import type { InteractionKind } from "../../types";
 import {
   ENGRAM_TIMEOUT_MS, MAX_DIALOGUE_TAPES, SESSION_ID_SHAPE, TAPE_TIMESTAMP_SHAPE,
-  grepPeekCandidates, sanitizeTapeText, tapeEvents,
+  capSanitizedText, grepPeekCandidates, sanitizeTapeText, tapeEvents,
   type EngramPassOptions, type SessionRef, type SanitizedTapeText,
 } from "./tape";
 
@@ -86,13 +86,9 @@ const EVENT_FILTER = '"k":"';
 const THINKING_MAX_TOOL_DENSITY = 0.25;
 
 // The quoted question stays a one-liner on a report card, not a transcript
-// excerpt: cap after sanitization and cut at the cap with an ellipsis.
+// excerpt: cap after sanitization and cut at the cap with an ellipsis (via
+// the shared safe-boundary truncator, capSanitizedText in src/redact.ts).
 const QUESTION_MAX_CHARS = 300;
-
-// What redact()/sanitizeTapeText substitute for a matched secret. The cap
-// must never cut through an occurrence: a split marker ("…[REDA…") reads as
-// garbage and could be mistaken for leaked content.
-const REDACTION_MARKER = "[REDACTED]";
 
 export interface ConversationSignal {
   kind: InteractionKind;
@@ -179,25 +175,6 @@ function lastQuestionSentence(content: string): string | undefined {
   return undefined;
 }
 
-// Cut an over-cap sanitized question at a SAFE boundary before appending the
-// ellipsis: never through a surrogate pair (a split non-BMP char renders as
-// U+FFFD garbage) and never through a redaction marker (a split "[REDA…"
-// reads as noise and could be mistaken for leaked content) — in both cases
-// the cut backs off to before the atom. Marker characters are ASCII, so the
-// marker back-off can never re-create a surrogate split.
-function capQuestion(sanitized: SanitizedTapeText): SanitizedTapeText {
-  if (sanitized.length <= QUESTION_MAX_CHARS) return sanitized;
-  let cut = QUESTION_MAX_CHARS;
-  const hi = sanitized.charCodeAt(cut - 1);
-  const lo = sanitized.charCodeAt(cut);
-  if (hi >= 0xd800 && hi <= 0xdbff && lo >= 0xdc00 && lo <= 0xdfff) cut--;
-  const markerStart = sanitized.lastIndexOf(REDACTION_MARKER, cut - 1);
-  if (markerStart !== -1 && cut > markerStart && cut < markerStart + REDACTION_MARKER.length) {
-    cut = markerStart;
-  }
-  return `${sanitized.slice(0, cut).trimEnd()}…` as SanitizedTapeText;
-}
-
 // Pure fold: classification + final question over the walked session's owned
 // events. Undefined = no owned events at all (never a guessed label).
 export function foldConversationSignal(
@@ -240,7 +217,7 @@ export function foldConversationSignal(
   if (question !== undefined) {
     // Sanitize BEFORE capping: a cap on raw text could cut a secret in
     // half and hide it from the redactor.
-    finalQuestion = capQuestion(sanitizeTapeText(question, extraPatterns));
+    finalQuestion = capSanitizedText(sanitizeTapeText(question, extraPatterns), QUESTION_MAX_CHARS);
   }
   return { kind, ...(finalQuestion !== undefined ? { finalQuestion } : {}) };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentReport, Report, TaskThread, ThreadSession } from "../src/types";
-import type { SanitizedTapeText } from "../src/redact";
+import { sanitizeTapeText, type SanitizedTapeText } from "../src/redact";
 import { AWAITING_QUESTION_MAX, leadSentence, renderEmailDigest } from "../src/render/digest";
 
 describe("leadSentence", () => {
@@ -115,13 +115,46 @@ describe("renderEmailDigest", () => {
       exceptions: [{ ...blocked, awaitingQuestion: atCap as SanitizedTapeText }],
     });
     expect(htmlAt).toContain(`“${atCap}”`);
-    expect(htmlAt).not.toContain("…");
+    // scope to the exceptions box (like the one-line test above) so an
+    // unrelated future ellipsis elsewhere in the digest can't break this
+    const boxAt = htmlAt.slice(htmlAt.indexOf("Exceptions"), htmlAt.indexOf("</div>"));
+    expect(boxAt).not.toContain("…");
     const htmlOver = renderEmailDigest({
       ...report,
       exceptions: [{ ...blocked, awaitingQuestion: overCap as SanitizedTapeText }],
     });
-    expect(htmlOver).toContain(`“${"q".repeat(AWAITING_QUESTION_MAX - 1)}…”`);
-    expect(htmlOver).not.toContain(atCap); // never more than the cap
+    expect(htmlOver).toContain(`“${"q".repeat(AWAITING_QUESTION_MAX)}…”`);
+    expect(htmlOver).not.toContain(overCap); // never more content than the cap
+  });
+
+  test("truncation backs off rather than splitting a [REDACTED] marker straddling the cap", () => {
+    const SECRET = "sk-fixturesecret1234567890abcdef";
+    // Sanitized shape: 134 x's + " " + "[REDACTED]" (indices 135–144) + " ok?"
+    // — a naive AWAITING_QUESTION_MAX-char cut lands mid-marker and reads as
+    // leaked-content noise.
+    const q = sanitizeTapeText(`${"x".repeat(134)} ${SECRET} ok?`, []);
+    expect(q).toBe(`${"x".repeat(134)} [REDACTED] ok?` as SanitizedTapeText); // fixture sanity
+    const html = renderEmailDigest({
+      ...report,
+      exceptions: [{ ...blocked, awaitingQuestion: q }],
+    });
+    expect(html).toContain(`“${"x".repeat(134)}…”`);
+    expect(html).not.toContain(SECRET);
+    expect(html).not.toContain("[REDACTED"); // whole marker backed off, never split
+  });
+
+  test("truncation never leaves a lone surrogate when an astral char straddles the cap", () => {
+    // "😀" occupies UTF-16 units 138–139 (0-indexed): a naive
+    // slice(0, cap - 1) cut keeps a lone high surrogate that renders as
+    // U+FFFD; the safe cut keeps the pair whole.
+    const q = `${"x".repeat(138)}😀 and then some — proceed?` as SanitizedTapeText;
+    const html = renderEmailDigest({
+      ...report,
+      exceptions: [{ ...blocked, awaitingQuestion: q }],
+    });
+    expect(html).toContain(`“${"x".repeat(138)}😀…”`);
+    expect(html).not.toContain("\ud83d"); // no lone high surrogate
+    expect(html).not.toContain("�");
   });
 
   test("hostile content in the awaiting question is escaped, and truncation happens before escaping", () => {

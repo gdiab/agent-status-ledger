@@ -125,7 +125,7 @@ export const TAPE_TIMESTAMP_SHAPE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d
 // belong beside the redaction rules, not in a connector module (asl-cey,
 // resolving the asl-a5v deferred design note). Re-exported here so the
 // connector's modules and public surface keep one import path.
-export { sanitizeTapeText, type SanitizedTapeText } from "../../redact";
+export { capSanitizedText, sanitizeTapeText, type SanitizedTapeText } from "../../redact";
 
 // The slice of RawSession the report-wide passes need; report.ts flattens
 // every profile's sessions into this shape so the connector never learns

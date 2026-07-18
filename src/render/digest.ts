@@ -1,4 +1,5 @@
 import type { AgentReport, Report, TaskThread } from "../types";
+import { capSanitizedText } from "../redact";
 import { rollupLine, threadRollupSummary } from "./rollup";
 import { esc, SEVERITY_COLOR } from "./html";
 import { STATUS_SEVERITY } from "../status";
@@ -20,13 +21,13 @@ function h2(text: string): string {
   return `<h2 style="font-size:1rem; margin:0 0 .25rem;">${esc(text)}</h2>`;
 }
 
-// Cap for the awaiting-question line below. Truncation runs on the raw
-// string before esc(), so an HTML entity is never sliced mid-way; the
-// ellipsis replaces the last character, keeping the total at the cap.
+// Cap for the awaiting-question line below (the digest's policy constant;
+// the shared cut lives in src/redact.ts's capSanitizedText). Truncation runs
+// on the raw string before esc(), so an HTML entity is never sliced mid-way,
+// and the shared truncator's safe-boundary cut never splits a surrogate pair
+// (no U+FFFD garbage) or a [REDACTED] marker (no leaked-content noise) —
+// the cut backs off to before the atom instead.
 export const AWAITING_QUESTION_MAX = 140;
-
-const truncateQuestion = (q: string): string =>
-  q.length > AWAITING_QUESTION_MAX ? `${q.slice(0, AWAITING_QUESTION_MAX - 1)}…` : q;
 
 // Each exception row may add AT MOST one line: the awaiting question. This
 // is a deliberate narrow carve-out from PRD §13's "no transcript text in the
@@ -38,7 +39,7 @@ function exceptionsSection(report: Report): string {
     ? report.exceptions
         .map(
           (a) =>
-            `<li style="margin:0 0 .4rem;"><strong>${esc(a.displayName)}</strong> — ${esc(a.status)}: ${esc(a.narrative.recommendation)}${a.awaitingQuestion ? `<div style="font-size:.85rem; opacity:.8; margin:.15rem 0 0;">Waiting on: “${esc(truncateQuestion(a.awaitingQuestion))}”</div>` : ""}</li>`,
+            `<li style="margin:0 0 .4rem;"><strong>${esc(a.displayName)}</strong> — ${esc(a.status)}: ${esc(a.narrative.recommendation)}${a.awaitingQuestion ? `<div style="font-size:.85rem; opacity:.8; margin:.15rem 0 0;">Waiting on: “${esc(capSanitizedText(a.awaitingQuestion, AWAITING_QUESTION_MAX))}”</div>` : ""}</li>`,
         )
         .join("")
     : `<li style="margin:0;">No exceptions — nothing needs you.</li>`;

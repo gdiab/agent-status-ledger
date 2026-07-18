@@ -246,20 +246,23 @@ describe("redaction contract across all render surfaces", () => {
     expect(out).toContain("[REDACTED]");
   });
 
-  test("digest surface renders no awaitingQuestion dialogue at all (email never carries transcript text)", async () => {
-    // PRD §13: delivery summaries never include raw transcripts. The awaited
-    // question is quoted (redacted) DIALOGUE, allowed on the full report
-    // surfaces but deliberately kept out of the email digest body — same
-    // whole-and-parts pinning discipline as the citation test below.
+  test("digest carve-out: an exception's sanitized awaitingQuestion renders — marker present, secret absent", async () => {
+    // PRD §13 carve-out (decided 2026-07-17, asl-94g): the ONLY transcript
+    // text in the digest is each exception row's awaiting-question line. It
+    // reaches the report exclusively through sanitizeTapeText, so what the
+    // digest must pin is that the SANITIZED question is rendered while the
+    // raw secret never survives.
     const question = sanitizeTapeText(
-      "Should I revoke the old deploy key now or after the release?", []);
+      `Should I revoke ${SECRET} now or after the release?`, []);
+    const waiting = { ...agentWithCitation(), status: "needs_human" as const, severity: "warning" as const, awaitingQuestion: question };
     const withQuestion: Report = {
       ...report,
-      agents: [{ ...agentWithCitation(), status: "needs_human", severity: "warning", awaitingQuestion: question }],
+      agents: [waiting],
+      exceptions: [waiting],
     };
     const out = renderEmailDigest(withQuestion);
-    expect(out).not.toContain(question);
-    expect(out).not.toContain("revoke the old deploy key");
+    expect(out).toContain("Waiting on: “Should I revoke [REDACTED] now or after the release?”");
+    expect(out).not.toContain(SECRET);
   });
 
   test("digest surface renders no citation content at all", async () => {

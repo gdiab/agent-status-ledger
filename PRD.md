@@ -606,7 +606,7 @@ Agent Status Ledger should be local-first by default.
 ### MVP privacy rules
 
 - Raw transcripts are never sent externally by default.
-- Delivery summaries (the email digest, and any future channel such as Telegram) include only concise summaries and statuses, with the full HTML report as an attachment — never raw transcript content. One narrow carve-out (decided 2026-07-17, asl-94g): each exception agent's row in the digest triage may carry a single `awaitingQuestion` line — the quoted decision the run is waiting on — which enters the report only through the `sanitizeTapeText` choke point below and is truncated to a fixed cap before rendering.
+- Delivery summaries (the email digest, and any future channel such as Telegram) include only concise summaries and statuses, with the full HTML report as an attachment — never raw transcript content. One narrow carve-out (decided 2026-07-17, asl-94g): each exception agent's row in the digest triage may carry a single `awaitingQuestion` line — the quoted decision the run is waiting on — which enters the report only through the `sanitizeTapeText` choke point below and is truncated to a fixed cap (140 characters) before rendering.
 - Reports include local artifact paths or links, not full sensitive content, unless explicitly configured.
 - A redaction pass runs before report generation to catch obvious secrets, tokens, API keys, credentials, and private keys.
 - Source sensitivity labels propagate to events and reports.
