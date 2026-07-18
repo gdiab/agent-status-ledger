@@ -2,7 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseCodexSession, scanCodex } from "../src/connectors/codex";
+import { parseCodexSession, scanCodex, stripAmbientBlocks } from "../src/connectors/codex";
 import { makeClip } from "../src/connectors/jsonl";
 
 const completed = readFileSync("fixtures/codex/rollout-completed.jsonl", "utf8");
@@ -353,6 +353,69 @@ describe("modern rollout schema (codex-cli 0.144+)", () => {
     expect(t.sessionKind).toBe("guardian");
   });
 
+  test("interleaved tool outputs attribute failures by call_id, not adjacency", () => {
+    const t = parse([
+      line({ type: "response_item", timestamp: "2026-07-16T09:01:00Z", payload: { type: "custom_tool_call", call_id: "cA", name: "exec", input: 'tools.exec_command({cmd:"make build"})' } }),
+      line({ type: "response_item", timestamp: "2026-07-16T09:01:01Z", payload: { type: "custom_tool_call", call_id: "cB", name: "exec", input: 'tools.exec_command({cmd:"bun test"})' } }),
+      line({ type: "response_item", timestamp: "2026-07-16T09:01:05Z", payload: { type: "custom_tool_call_output", call_id: "cB", output: "Script failed: exit 1\ntests failed" } }),
+      line({ type: "response_item", timestamp: "2026-07-16T09:01:06Z", payload: { type: "custom_tool_call_output", call_id: "cA", output: "Command exited with code 2" } }),
+    ]);
+    expect(t.errors.length).toBe(2);
+    expect(t.errors[0]).toContain("— while exec: bun test");
+    expect(t.errors[1]).toContain("— while exec: make build");
+  });
+
+  test("a non-exec call's failing output is never blamed on a prior exec", () => {
+    const t = parse([
+      line({ type: "response_item", timestamp: "2026-07-16T09:01:00Z", payload: { type: "custom_tool_call", call_id: "cA", name: "exec", input: 'tools.exec_command({cmd:"ls"})' } }),
+      line({ type: "response_item", timestamp: "2026-07-16T09:01:01Z", payload: { type: "custom_tool_call_output", call_id: "cA", output: "Script completed\nok" } }),
+      line({ type: "response_item", timestamp: "2026-07-16T09:01:02Z", payload: { type: "function_call", call_id: "cB", name: "web_search" } }),
+      line({ type: "response_item", timestamp: "2026-07-16T09:01:05Z", payload: { type: "function_call_output", call_id: "cB", output: "Script failed: exit 1\nsearch backend down" } }),
+    ]);
+    expect(t.errors.length).toBe(1);
+    expect(t.errors[0]).not.toContain("— while exec");
+  });
+
+  test("a null jsonl line mid-file does not discard the session", () => {
+    const t = parseCodexSession([
+      meta,
+      "null",
+      line({ type: "event_msg", timestamp: "2026-07-16T09:00:03Z", payload: { type: "task_complete", last_agent_message: "done" } }),
+      "42",
+    ].join("\n"), new Map());
+    expect(t).not.toBeNull();
+    expect(t!.events.some((e) => e.type === "completed")).toBe(true);
+  });
+
+  test("read-only then workspace-write turn contexts do NOT tag the session review", () => {
+    const t = parseCodexSession([
+      line({ type: "session_meta", timestamp: "2026-07-16T09:00:00Z", payload: { id: "cm3", cwd: "/w", source: "mcp" } }),
+      line({ type: "turn_context", timestamp: "2026-07-16T09:00:01Z", payload: { model: "gpt-5.6-sol", sandbox_policy: { type: "read-only" } } }),
+      line({ type: "turn_context", timestamp: "2026-07-16T09:05:00Z", payload: { model: "gpt-5.6-sol", sandbox_policy: { type: "workspace-write" } } }),
+      line({ type: "event_msg", timestamp: "2026-07-16T09:05:03Z", payload: { type: "task_started" } }),
+    ].join("\n"), new Map())!;
+    expect(t.sessionKind).toBeUndefined();
+  });
+
+  test("extractExecCmd tolerates a JSON-quoted cmd key", () => {
+    const t = parse([
+      line({ type: "response_item", timestamp: "2026-07-16T09:01:00Z", payload: { type: "custom_tool_call", call_id: "c1", name: "exec", input: '{"cmd":"git status","workdir":"/w"}' } }),
+    ]);
+    expect(t.events.some((e) => e.summary === "exec: git status")).toBe(true);
+  });
+
+  describe("stripAmbientBlocks robustness", () => {
+    test("case-variant tags are stripped", () => {
+      expect(stripAmbientBlocks('do it <IN-APP-BROWSER-CONTEXT>tabs</IN-APP-BROWSER-CONTEXT> now')).toBe("do it  now".trim());
+      expect(stripAmbientBlocks('go <Div Source="Ambient-ui">x</Div>')).toBe("go");
+    });
+
+    test("an unclosed ambient block strips from the opening tag to end of message", () => {
+      expect(stripAmbientBlocks('fix the bug <in-app-browser-context source="ambient-ui-state">\ntab dump that never closes')).toBe("fix the bug");
+      expect(stripAmbientBlocks('<other source="ambient-tabs">dangling forever')).toBe("");
+    });
+  });
+
   test("user redactPatterns still run before truncation on task and exec text", () => {
     const clip = makeClip(["CORPSECRET_[A-Z_]+"]);
     const secret = "CORPSECRET_" + "Z".repeat(60);
@@ -436,6 +499,36 @@ describe("scanCodex", () => {
       } finally {
         warn.mockRestore();
         chmodSync(p, 0o644);
+      }
+    });
+
+    test("a fresh-mtime file whose events all predate the window is rejected post-parse", async () => {
+      const root = mkdtempSync(join(tmpdir(), "asl-cx-touch-"));
+      // A backup/copy tool touched an old rollout (mtime inside the window)
+      // but its newest event is 2026-07-16T09:00:53Z — outside since. The
+      // post-parse lastEventAt check must exclude it.
+      plant(root, "2026/07/16", "rollout-2026-07-16T09-00-00-cx-modern-1.jsonl", "rollout-modern.jsonl", new Date("2026-07-17T08:30:00.000Z"));
+      const staleSince = new Date("2026-07-16T12:00:00.000Z");
+      expect(await scanCodex({ since: staleSince, now, rootDir: root, redactPatterns: [] })).toEqual([]);
+      // Sanity: with a window covering the events, the same file IS ingested.
+      const wide = await scanCodex({ since: new Date("2026-07-16T00:00:00.000Z"), now, rootDir: root, redactPatterns: [] });
+      expect(wide.map((s) => s.sessionId)).toEqual(["cx-modern-1"]);
+    });
+
+    test("an unreadable date dir does not prevent other dirs' sessions from loading", async () => {
+      const root = mkdtempSync(join(tmpdir(), "asl-cx-eacces-"));
+      plant(root, "2026/07/16", "rollout-2026-07-16T09-00-00-cx-modern-1.jsonl", "rollout-modern.jsonl", new Date("2026-07-17T08:30:00.000Z"));
+      const badDay = join(root, "sessions", "2026", "07", "15");
+      mkdirSync(badDay, { recursive: true });
+      chmodSync(badDay, 0o000);
+      const warn = spyOn(console, "error");
+      try {
+        const sessions = await scanCodex({ since: new Date("2026-07-16T00:00:00.000Z"), now, rootDir: root, redactPatterns: [] });
+        expect(sessions.map((s) => s.sessionId)).toEqual(["cx-modern-1"]);
+        expect(warn.mock.calls.some((c) => String(c[0]).includes(badDay))).toBe(true);
+      } finally {
+        warn.mockRestore();
+        chmodSync(badDay, 0o755);
       }
     });
 

@@ -11,15 +11,24 @@ const TITLE_MAX = 80;
 // They are machine-supplied UI state, not the human's request — stripped
 // before task-text extraction so ambient text never masquerades as the task.
 // Two nets: any element self-declaring source="ambient-…", plus the known
-// in-app-browser-context tag in case a client omits the attribute.
+// in-app-browser-context tag in case a client omits the attribute. Matching
+// is case-insensitive (clients aren't trusted to keep tag casing stable), and
+// an UNCLOSED ambient block strips from its opening tag to end of message —
+// conservative: better to lose tail text than let ambient content masquerade
+// as the task.
 const AMBIENT_BLOCKS = [
-  /<([a-zA-Z][\w-]*)\b[^>]*\bsource="ambient-[^"]*"[^>]*>[\s\S]*?<\/\1>/g,
-  /<in-app-browser-context\b[^>]*>[\s\S]*?<\/in-app-browser-context>/g,
+  /<([a-zA-Z][\w-]*)\b[^>]*\bsource="ambient-[^"]*"[^>]*>[\s\S]*?<\/\1>/gi,
+  /<in-app-browser-context\b[^>]*>[\s\S]*?<\/in-app-browser-context>/gi,
+];
+const AMBIENT_OPENERS = [
+  /<[a-zA-Z][\w-]*\b[^>]*\bsource="ambient-[^"]*"[^>]*>[\s\S]*$/i,
+  /<in-app-browser-context\b[^>]*>[\s\S]*$/i,
 ];
 
 export function stripAmbientBlocks(message: string): string {
   let out = message;
   for (const re of AMBIENT_BLOCKS) out = out.replace(re, "");
+  for (const re of AMBIENT_OPENERS) out = out.replace(re, "");
   return out.trim();
 }
 
@@ -29,7 +38,7 @@ export function stripAmbientBlocks(message: string): string {
 // whole JS expression is a command.
 function extractExecCmd(input: unknown): string | undefined {
   if (typeof input !== "string") return undefined;
-  const m = input.match(/\bcmd\s*:\s*"((?:\\.|[^"\\])*)"/);
+  const m = input.match(/["']?\bcmd\b["']?\s*:\s*"((?:\\.|[^"\\])*)"/);
   if (!m) return undefined;
   try {
     return JSON.parse(`"${m[1]}"`) as string;
@@ -79,6 +88,12 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
   const events: AgentEvent[] = [];
   const errors: string[] = [];
   const filesTouched = new Set<string>();
+  // New-schema (response_item) tool calls correlate to their outputs by
+  // call_id — a Map, not adjacency, so interleaved calls can never blame the
+  // wrong command for a failure (claude-code connector idiom). lastCommand
+  // adjacency survives ONLY for the legacy event_msg branches, which carry
+  // no ids at all.
+  const execCommands = new Map<string, string>();
   let lastCommand: string | undefined;
   let derivedTitle: string | undefined;
   // Classification inputs (asl-n7l): session_meta.source + turn_context.model
@@ -87,9 +102,27 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
   let source: unknown;
   let subagentSource = false;
   let autoReviewModel = false;
-  let readOnlySandbox = false;
+  // Review rule: a session counts as a review only if EVERY observed
+  // turn_context carrying a sandbox_policy is read-only (and at least one
+  // was seen). One early read-only turn must not permanently tag a session
+  // that later runs workspace-write — that session writes, so it works.
+  let sawSandboxPolicy = false;
+  let allSandboxReadOnly = true;
+
+  const recordFailure = (ts: string, message: string, command?: string) => {
+    const base = clip(message);
+    const msg = command ? withContext(base, "exec", command, clip) : base;
+    errors.push(msg);
+    events.push({ timestamp: ts, type: "failed", summary: msg });
+  };
 
   for (const entry of jsonlEntries(text, path)) {
+    // A line can be valid JSON yet not an object (null, number, string) —
+    // skip it rather than crash the whole file's session on property access.
+    if (typeof entry !== "object" || entry === null) {
+      console.error(`warning: non-object jsonl entry skipped in ${path ?? "input"}`);
+      continue;
+    }
     const ts = typeof entry.timestamp === "string" ? toUtcIso(entry.timestamp) : undefined;
     if (ts) {
       if (!startedAt || ts < startedAt) startedAt = ts;
@@ -106,7 +139,11 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
     if (entry.type === "turn_context" && entry.payload) {
       if (typeof entry.payload.cwd === "string" && !cwd) cwd = entry.payload.cwd;
       if (entry.payload.model === "codex-auto-review") autoReviewModel = true;
-      if (entry.payload.sandbox_policy?.type === "read-only") readOnlySandbox = true;
+      const sandbox = entry.payload.sandbox_policy?.type;
+      if (typeof sandbox === "string") {
+        sawSandboxPolicy = true;
+        if (sandbox !== "read-only") allSandboxReadOnly = false;
+      }
       continue;
     }
     // 0.144+ moved exec activity out of event_msg into top-level
@@ -127,7 +164,9 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
           const cmd = name === "exec" ? extractExecCmd(p.input) : undefined;
           if (cmd) {
             // Stored raw; clipped (redacted + sliced) only at output points.
-            lastCommand = cmd;
+            // Keyed by call_id so an interleaved or out-of-order output blames
+            // its own command, never whichever exec happened to run last.
+            if (typeof p.call_id === "string") execCommands.set(p.call_id, cmd);
             events.push({ timestamp: ts, type: "run_progressed", summary: `exec: ${clip(cmd)}` });
           } else {
             events.push({ timestamp: ts, type: "run_progressed", summary: `tool: ${clip(name)}` });
@@ -138,14 +177,11 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
         }
         case "custom_tool_call_output":
         case "function_call_output": {
+          const callId = typeof p.call_id === "string" ? p.call_id : undefined;
+          const command = callId ? execCommands.get(callId) : undefined;
+          if (callId) execCommands.delete(callId); // consumed — a later error is not this command's fault
           const failure = inferFailure(outputText(p.output));
-          if (failure) {
-            const base = clip(failure);
-            const msg = lastCommand ? withContext(base, "exec", lastCommand, clip) : base;
-            errors.push(msg);
-            events.push({ timestamp: ts, type: "failed", summary: msg });
-          }
-          lastCommand = undefined; // don't blame a finished command for a later error
+          if (failure) recordFailure(ts, failure, command);
           awaitingUser = false;
           midWork = true; // output delivered, agent still owes processing
           break;
@@ -219,10 +255,7 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
           break;
         case "error":
         case "stream_error": {
-          const base = clip(String(p.message ?? "error"));
-          const msg = lastCommand ? withContext(base, "exec", lastCommand, clip) : base;
-          errors.push(msg);
-          events.push({ timestamp: ts, type: "failed", summary: msg });
+          recordFailure(ts, String(p.message ?? "error"), lastCommand);
           awaitingUser = false;
           midWork = false;
           break;
@@ -241,7 +274,7 @@ export function parseCodexSession(text: string, titles: Map<string, string>, pat
 
   if (!sessionId || !startedAt || !lastEventAt) return null;
   const guardian = subagentSource || autoReviewModel;
-  const review = !guardian && source === "mcp" && readOnlySandbox;
+  const review = !guardian && source === "mcp" && sawSandboxPolicy && allSandboxReadOnly;
   return {
     platform: "codex",
     sessionId,
@@ -281,12 +314,25 @@ export function loadCodexTitles(rootDir: string): Map<string, string> {
 // enumeration is a readdir per day-dir (cheap, bounded by history length),
 // while file reads/parses scale with files ACTIVE in the window, not with
 // history size — an untouched 11MB rollout is stat'd, never read.
+// Fail-soft: one unreadable or vanished dir (permissions, concurrent prune)
+// must not throw out of scanCodex and kill the whole report — warn and let
+// every other dir's sessions load, matching the per-file behavior in
+// scanSessionFile.
+function safeReaddir(dir: string) {
+  try {
+    return readdirSync(dir, { withFileTypes: true });
+  } catch (e) {
+    console.error(`warning: skipping ${dir}: ${e}`);
+    return [];
+  }
+}
+
 function* allDateDirs(sessionsDir: string): Generator<string> {
   const numeric = (dir: string) =>
-    readdirSync(dir, { withFileTypes: true })
+    safeReaddir(dir)
       .filter((e) => e.isDirectory() && /^\d+$/.test(e.name))
       .map((e) => e.name)
-      .sort();
+      .sort((a, b) => Number(a) - Number(b));
   for (const y of numeric(sessionsDir))
     for (const m of numeric(join(sessionsDir, y)))
       for (const d of numeric(join(sessionsDir, y, m)))
@@ -299,15 +345,23 @@ export async function scanCodex(opts: ScanOptions): Promise<RawSession[]> {
   if (!existsSync(sessionsDir)) return out;
   const titles = loadCodexTitles(opts.rootDir);
   const clip = makeClip(opts.redactPatterns);
+  const sinceIso = opts.since.toISOString();
   for (const dir of allDateDirs(sessionsDir)) {
-    for (const file of readdirSync(dir)) {
+    for (const entry of safeReaddir(dir)) {
+      const file = entry.name;
       if (!file.endsWith(".jsonl")) continue;
       const path = join(dir, file);
       const session = scanSessionFile(path, opts, (text) => parseCodexSession(text, titles, path, clip));
+      if (!session) continue;
+      // The mtime gate is only a cheap pre-filter: a backup/copy tool touching
+      // an old rollout refreshes mtime without adding events, which would
+      // resurrect a genuinely stale session into today's report. The parsed
+      // lastEventAt is the truth — reject sessions with no activity in window.
+      if (session.lastEventAt < sinceIso) continue;
       // Guardian auto-review meta-sessions are approval reviewers watching a
       // real agent, not working agents — surfacing them double-counts every
       // guarded session as a phantom twin. Excluded here, tagged at parse.
-      if (session && session.sessionKind !== "guardian") out.push(session);
+      if (session.sessionKind !== "guardian") out.push(session);
     }
   }
   return out;
