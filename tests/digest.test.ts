@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentReport, Report, TaskThread, ThreadSession } from "../src/types";
-import { leadSentence, renderEmailDigest } from "../src/render/digest";
+import { sanitizeTapeText, type SanitizedTapeText } from "../src/redact";
+import { AWAITING_QUESTION_MAX, leadSentence, renderEmailDigest } from "../src/render/digest";
 
 describe("leadSentence", () => {
   test("returns the first sentence of a multi-sentence standup", () => {
@@ -91,6 +92,83 @@ describe("renderEmailDigest", () => {
     const html = renderEmailDigest(report);
     expect(html).toContain("Needs a human call on retry semantics.");
     expect(html).not.toContain("Review the commit."); // non-exception agent's recommendation stays out of Exceptions
+  });
+
+  test("exception row carries the awaiting question on one line; absent field, absent line", () => {
+    const waiting: AgentReport = {
+      ...blocked,
+      awaitingQuestion: "retry with backoff, or fail the deploy?" as SanitizedTapeText,
+    };
+    const html = renderEmailDigest({ ...report, agents: [agent({}), waiting], exceptions: [waiting] });
+    const box = html.slice(html.indexOf("Exceptions"), html.indexOf("</div>"));
+    expect(box).toContain("Waiting on: “retry with backoff, or fail the deploy?”");
+    // absent question keeps the plain row (also pinned by NO_THREADS_GOLDEN)
+    const bare = renderEmailDigest(report);
+    expect(bare).not.toContain("Waiting on");
+  });
+
+  test("awaiting question is truncated at AWAITING_QUESTION_MAX with an ellipsis; the boundary survives intact", () => {
+    const atCap = "q".repeat(AWAITING_QUESTION_MAX);
+    const overCap = "q".repeat(AWAITING_QUESTION_MAX + 1);
+    const htmlAt = renderEmailDigest({
+      ...report,
+      exceptions: [{ ...blocked, awaitingQuestion: atCap as SanitizedTapeText }],
+    });
+    expect(htmlAt).toContain(`“${atCap}”`);
+    // scope to the exceptions box (like the one-line test above) so an
+    // unrelated future ellipsis elsewhere in the digest can't break this
+    const boxAt = htmlAt.slice(htmlAt.indexOf("Exceptions"), htmlAt.indexOf("</div>"));
+    expect(boxAt).not.toContain("…");
+    const htmlOver = renderEmailDigest({
+      ...report,
+      exceptions: [{ ...blocked, awaitingQuestion: overCap as SanitizedTapeText }],
+    });
+    // the cap bounds the OUTPUT, ellipsis included — never 141 chars on a 140 cap
+    expect(htmlOver).toContain(`“${"q".repeat(AWAITING_QUESTION_MAX - 1)}…”`);
+    expect(htmlOver).not.toContain(overCap); // never more content than the cap
+  });
+
+  test("truncation backs off rather than splitting a [REDACTED] marker straddling the cap", () => {
+    const SECRET = "sk-fixturesecret1234567890abcdef";
+    // Sanitized shape: 134 x's + " " + "[REDACTED]" (indices 135–144) + " ok?"
+    // — a naive AWAITING_QUESTION_MAX-char cut lands mid-marker and reads as
+    // leaked-content noise.
+    const q = sanitizeTapeText(`${"x".repeat(134)} ${SECRET} ok?`, []);
+    expect(q).toBe(`${"x".repeat(134)} [REDACTED] ok?` as SanitizedTapeText); // fixture sanity
+    const html = renderEmailDigest({
+      ...report,
+      exceptions: [{ ...blocked, awaitingQuestion: q }],
+    });
+    expect(html).toContain(`“${"x".repeat(134)}…”`);
+    expect(html).not.toContain(SECRET);
+    expect(html).not.toContain("[REDACTED"); // whole marker backed off, never split
+  });
+
+  test("truncation never leaves a lone surrogate when an astral char straddles the cap", () => {
+    // "😀" occupies UTF-16 units 138–139 (0-indexed): the cap-inclusive cut
+    // at unit 139 lands mid-pair, so a naive slice keeps a lone high
+    // surrogate that renders as U+FFFD; the safe cut backs off to before
+    // the pair.
+    const q = `${"x".repeat(138)}😀 and then some — proceed?` as SanitizedTapeText;
+    const html = renderEmailDigest({
+      ...report,
+      exceptions: [{ ...blocked, awaitingQuestion: q }],
+    });
+    expect(html).toContain(`“${"x".repeat(138)}…”`);
+    expect(html).not.toContain("\ud83d"); // no lone high surrogate
+    expect(html).not.toContain("�");
+  });
+
+  test("hostile content in the awaiting question is escaped, and truncation happens before escaping", () => {
+    const hostile = `<img src=x onerror=alert(1)>${"a".repeat(AWAITING_QUESTION_MAX)}`;
+    const html = renderEmailDigest({
+      ...report,
+      exceptions: [{ ...blocked, awaitingQuestion: hostile as SanitizedTapeText }],
+    });
+    expect(html).not.toContain("<img src=x onerror=alert(1)>");
+    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    // truncated on raw chars, then escaped — the entity is not sliced mid-way
+    expect(html).toContain("…");
   });
 
   test("no exceptions renders the reassurance line", () => {

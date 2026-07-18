@@ -215,7 +215,10 @@ export function renderHtml(report: Report, opts: { layout?: HtmlLayout } = {}): 
   const day = report.windowEnd.slice(0, 10);
   const exceptions = report.exceptions.length
     ? report.exceptions.map((a) =>
-        `<li><strong>${esc(a.displayName)}</strong> — ${esc(a.status)}: ${esc(a.narrative.recommendation)}</li>`).join("")
+        // Awaiting question quoted like the card row (line 138), sharing its
+        // awaiting-question class: the triage li names the decision being
+        // waited on, not just the recommendation.
+        `<li><strong>${esc(a.displayName)}</strong> — ${esc(a.status)}: ${esc(a.narrative.recommendation)}${a.awaitingQuestion ? ` — Waiting on: <span class="awaiting-question">“${esc(a.awaitingQuestion)}”</span>` : ""}</li>`).join("")
     : "<li>No exceptions — nothing needs you.</li>";
   // Agents are already sorted exceptions-first; labeled sections make the
   // split explicit, but only when both kinds exist — a homogeneous morning

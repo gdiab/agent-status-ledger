@@ -178,6 +178,33 @@ export function sanitizeTapeText(s: string, extraPatterns: string[]): SanitizedT
   return redact(preStripped.replace(TAPE_UNSAFE, ""), extraPatterns) as SanitizedTapeText;
 }
 
+// What redact()/sanitizeTapeText substitute for a matched secret. A length
+// cap must never cut through an occurrence: a split "[REDA…" reads as
+// garbage and could be mistaken for leaked content.
+export const REDACTION_MARKER = "[REDACTED]";
+
+// Cut an over-cap sanitized string at a SAFE boundary before appending the
+// ellipsis: never through a surrogate pair (a split non-BMP char renders as
+// U+FFFD garbage) and never through a REDACTION_MARKER — in both cases the
+// cut backs off to before the atom. Marker characters are ASCII, so the
+// marker back-off can never re-create a surrogate split. The cap is a hard
+// bound on the OUTPUT, ellipsis included — a "140-char cap" surface never
+// emits 141. The one truncator for sanitized tape text; per-surface policy
+// caps live at the call sites (dialogue.ts's QUESTION_MAX_CHARS, digest.ts's
+// AWAITING_QUESTION_MAX).
+export function capSanitizedText(s: SanitizedTapeText, max: number): SanitizedTapeText {
+  if (s.length <= max) return s;
+  let cut = max - 1;
+  const hi = s.charCodeAt(cut - 1);
+  const lo = s.charCodeAt(cut);
+  if (hi >= 0xd800 && hi <= 0xdbff && lo >= 0xdc00 && lo <= 0xdfff) cut--;
+  const markerStart = s.lastIndexOf(REDACTION_MARKER, cut - 1);
+  if (markerStart !== -1 && cut > markerStart && cut < markerStart + REDACTION_MARKER.length) {
+    cut = markerStart;
+  }
+  return `${s.slice(0, cut).trimEnd()}…` as SanitizedTapeText;
+}
+
 export function redactFacts(facts: FactSheet, extraPatterns: string[] = []): FactSheet {
   const r = (s: string) => redact(s, extraPatterns);
   return {

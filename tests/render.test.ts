@@ -139,6 +139,22 @@ describe("renderers", () => {
     expect(bare).not.toContain("Waiting on");
   });
 
+  test("markdown: exception triage line carries the awaiting question, md-escaped, absent otherwise", () => {
+    const waiting = agent({
+      status: "needs_human", severity: "warning",
+      // Forged brand (see the citation tests): renderer-side escaping is its
+      // own defense layer, so the fixture carries raw markdown metachars.
+      awaitingQuestion: "keep my_file.ts or [roll back]?" as SanitizedTapeText,
+    });
+    const md = renderMarkdown({ ...report, agents: [waiting], exceptions: [waiting] });
+    const exceptionsBlock = md.slice(md.indexOf("## Exceptions"), md.indexOf("## Agents"));
+    expect(exceptionsBlock).toContain("— Waiting on: “keep my\\_file.ts or \\[roll back\\]?”");
+    // an exception agent without a question keeps the plain triage line
+    const bare = renderMarkdown(report);
+    const bareBlock = bare.slice(bare.indexOf("## Exceptions"), bare.indexOf("## Agents"));
+    expect(bareBlock).not.toContain("Waiting on");
+  });
+
   test("markdown: dispatch lineage renders on both ends, md-escaped, absent otherwise", () => {
     const parent = agent({
       dispatched: [
@@ -310,6 +326,21 @@ describe("renderers", () => {
     const bare = renderHtml(report);
     expect(bare).not.toContain("interaction-kind");
     expect(bare).not.toContain("awaiting-question");
+  });
+
+  test("html: exception li carries the awaiting question, escaped, absent otherwise", () => {
+    const waiting = agent({
+      status: "needs_human", severity: "warning",
+      awaitingQuestion: 'merge the "big" branch & <tag> it?' as SanitizedTapeText, // forged brand, raw chars on purpose
+    });
+    const html = renderHtml({ ...report, agents: [waiting], exceptions: [waiting] });
+    const exceptionsBlock = html.slice(html.indexOf("<h2>Exceptions</h2>"), html.indexOf("All agents"));
+    expect(exceptionsBlock).toContain('— Waiting on: <span class="awaiting-question">“merge the &quot;big&quot; branch &amp; &lt;tag&gt; it?”</span>');
+    expect(exceptionsBlock).not.toContain("<tag>");
+    // an exception agent without a question keeps the plain triage li
+    const bare = renderHtml(report);
+    const bareBlock = bare.slice(bare.indexOf("<h2>Exceptions</h2>"), bare.indexOf("All agents"));
+    expect(bareBlock).not.toContain("awaiting-question");
   });
 
   test("html: no citation markup when evidenceCitation is absent", () => {
