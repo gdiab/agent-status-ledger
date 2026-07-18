@@ -1,19 +1,20 @@
-import type { AgentReport, Report, Severity, TaskThread } from "../types";
+import type { AgentReport, Report, Severity, Status, TaskThread } from "../types";
 import { dispatchRefLabel, dispatchedBody, interactionLabel, plural, rollupCounts, rollupLine, threadSessionSummary } from "./rollup";
 import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 import { STATUS_SEVERITY } from "../status";
 import { FILLER_BLOCKED, FILLER_COMPLETED, FILLER_IN_PROGRESS, FILLER_RECOMMENDATION } from "../narrative";
+import { COLORS_HEX, FONT_MONO, FONT_SANS, LEADING, RADIUS, SPACING, STATUS_COLORS, TEXT_SCALE, TRACKING, WEIGHT, type ColorRole } from "./theme";
 
 export function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+// Digest-only legacy palette (asl-ec7): the HTML report now styles by status
+// via theme.ts, but digest.ts still inlines these hexes and its golden is
+// byte-pinned, so the values must not change until the digest slice re-pins.
 // warning is #8a6d00, not the classic #b8860b: white-on-#b8860b is 3.25:1,
 // below AA for badge-size text.
 export const SEVERITY_COLOR: Record<Severity, string> = { urgent: "#c0392b", warning: "#8a6d00", info: "#2d7a46" };
-// #c0392b on the dark canvas is 3.20:1; the page opts into color-scheme
-// light dark, so error red must adapt per scheme.
-const ERROR_RED = "light-dark(#c0392b, #e07b6c)";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -31,18 +32,70 @@ export function isHtmlLayout(x: string): x is HtmlLayout {
   return (HTML_LAYOUTS as readonly string[]).includes(x);
 }
 
-// Severity → CSS class carrying the `--sev` custom property; the .badge and
-// .card rules consume it for background and left edge, so per-scheme color
-// tweaks are a one-line CSS edit. SEVERITY_COLOR stays the source of truth
-// (the .sev-* rules are generated from it below, and digest.ts reuses it).
+// Severity → CSS class on card/thread containers; urgent containers get the
+// full danger-subtle background tint (asl-ec7 §8 Q6) and the class stays a
+// stable hook for tests and future styling. Badges color by *status* instead
+// (stClass below) so e.g. active reads as live and completed as success.
 function sevClass(severity: Severity): string {
   return `sev-${severity}`;
 }
 
-// The .sev-* rules are generated from SEVERITY_COLOR so the hex values keep a
-// single home; changing a per-scheme severity color is then one CSS edit.
-const SEV_CSS = (Object.entries(SEVERITY_COLOR) as [Severity, string][])
-  .map(([sev, hex]) => `.${sevClass(sev)} { --sev: ${hex}; }`).join("\n");
+// Status → CSS class driving the Futurist dot+word badge colors.
+function stClass(status: Status): string {
+  return `st-${status}`;
+}
+
+// ── Generated CSS: Futurist tokens as custom properties (asl-ec7 slice B) ──
+// theme.ts is the single source (Token Contract Rule, DESIGN.md §2): every
+// color below is emitted from COLORS_HEX, light values on :root and dark
+// under prefers-color-scheme — the report stays a single self-contained file
+// (the system's [data-theme] switch doesn't apply to a static artifact).
+
+function colorTokenCss(scheme: "light" | "dark"): string {
+  return Object.entries(COLORS_HEX).map(([token, pair]) => `${token}: ${pair[scheme]};`).join(" ");
+}
+
+const SCALAR_TOKEN_CSS = Object.entries({
+  "--font-sans": FONT_SANS,
+  "--font-mono": FONT_MONO,
+  ...TEXT_SCALE,
+  ...SPACING,
+  ...RADIUS,
+  ...WEIGHT,
+  ...LEADING,
+  ...TRACKING,
+}).map(([token, v]) => `${token}: ${v};`).join(" ");
+
+// Badge var() names per color role — the var-name twin of theme.ts's
+// STATUS_COLORS resolution (which carries hexes for email surfaces): semantic
+// roles use their `-subtle` pair with the solid hue as dot; the two special
+// roles mirror theme.ts's composed() choices.
+function roleBadgeVars(role: ColorRole): { bg: string; fg: string; dot: string } {
+  switch (role) {
+    // One Signal Rule (DESIGN.md §2): live state is the Signal Green dot
+    // only — the word stays body ink, never a green filled badge. Transparent
+    // bg (not --bg-1): "a small colored dot plus a word, not a filled pill".
+    case "accent":
+      return { bg: "transparent", fg: "var(--fg-2)", dot: "var(--accent)" };
+    case "neutral":
+      return { bg: "var(--bg-3)", fg: "var(--fg-2)", dot: "var(--fg-3)" };
+    default:
+      return { bg: `var(--${role}-subtle)`, fg: `var(--${role}-subtle-fg)`, dot: `var(--${role})` };
+  }
+}
+
+// One .st-* rule per status, generated from STATUS_COLORS so the Record<Status, …>
+// exhaustiveness check covers the CSS too. Hollow dots (silent: absence of
+// signal, §8 Q2) ring the hue instead of filling it.
+const STATUS_CSS = (Object.entries(STATUS_COLORS) as [Status, (typeof STATUS_COLORS)[Status]][])
+  .flatMap(([status, c]) => {
+    const v = roleBadgeVars(c.role);
+    const rules = [`.${stClass(status)} { background: ${v.bg}; color: ${v.fg}; --dot: ${v.dot}; }`];
+    if (c.dot === "hollow") {
+      rules.push(`.${stClass(status)} .dot { width: 7px; height: 7px; background: transparent; border: 1.5px solid var(--dot); }`);
+    }
+    return rules;
+  }).join("\n");
 
 // Defensive front-of-card cap: the standup blurb is length-limited prompt-side
 // (~400 chars), but a pathological or non-LLM blurb could still blow out the
@@ -52,8 +105,14 @@ function capStandup(s: string): string {
   return s.length > STANDUP_MAX ? s.slice(0, STANDUP_MAX).trimEnd() + "…" : s;
 }
 
+// Futurist badge: a small colored dot plus a word (DESIGN.md §5), colored by
+// status. The dot is presentational; the word carries the meaning.
+function statusBadge(status: Status, label: string): string {
+  return `<span class="badge ${stClass(status)}" title="${esc(STATUS_HELP[status])}"><span class="dot" aria-hidden="true"></span>${esc(label)}</span>`;
+}
+
 function badges(a: AgentReport): string {
-  return `<span class="badge ${sevClass(a.severity)}" title="${esc(STATUS_HELP[a.status])}">${esc(a.status)}</span>
+  return `${statusBadge(a.status, a.status)}
     <span class="evidence" title="${esc(EVIDENCE_HELP[a.evidence])}">${esc(a.evidence.replace("_", " "))}</span>`;
 }
 
@@ -154,11 +213,11 @@ function cardBody(a: AgentReport): string {
 // fmtUtc convention with the full ISO in a title.
 function threadBlock(t: TaskThread): string {
   const runs = t.sessions.map((s) =>
-    `<li title="${esc(s.startedAt)}">${esc(fmtUtc(s.startedAt))} — ${esc(dispatchRefLabel({ sessionId: s.sessionId, profile: s.profile }))}: ${esc(threadSessionSummary(s))}</li>`,
+    `<li title="${esc(s.startedAt)}"><span class="ts">${esc(fmtUtc(s.startedAt))}</span> — ${esc(dispatchRefLabel({ sessionId: s.sessionId, profile: s.profile }))}: ${esc(threadSessionSummary(s))}</li>`,
   ).join("");
   return `<div class="thread ${sevClass(STATUS_SEVERITY[t.status])}">
   <h3>${esc(t.title)}${t.source === "files" ? ` <span class="thread-source">(file cluster)</span>` : ""}
-    <span class="badge ${sevClass(STATUS_SEVERITY[t.status])}" title="${esc(STATUS_HELP[t.status])}">${esc(t.status)}</span>
+    ${statusBadge(t.status, t.status)}
     <span class="evidence" title="${esc(EVIDENCE_HELP[t.evidence])}">${esc(t.evidence.replace("_", " "))}</span>
   </h3>
   <ul>${runs}</ul>
@@ -188,8 +247,7 @@ function flatCard(a: AgentReport): string {
 function rollupChips(report: Report): string {
   if (report.agents.length === 0) return `<p class="rollup">${esc(rollupLine(report))}</p>`;
   const c = rollupCounts(report);
-  const chips = c.byStatus.map(({ status, count }) =>
-    `<span class="badge ${sevClass(STATUS_SEVERITY[status])}" title="${esc(STATUS_HELP[status])}">${count} ${esc(status)}</span>`).join(" ");
+  const chips = c.byStatus.map(({ status, count }) => statusBadge(status, `${count} ${status}`)).join(" ");
   return `<p class="rollup">${plural(c.agents, "agent")}: ${chips} · ${plural(c.commits, "commit")}, ${plural(c.files, "file")} touched</p>`;
 }
 
@@ -234,18 +292,18 @@ export function renderHtml(report: Report, opts: { layout?: HtmlLayout } = {}): 
   const agentsSection = `<section><h2>All agents</h2>${agentCards}</section>`;
   const cardCss = layout === "cards" ? `
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); gap: 1rem; align-items: start; }
-.group { font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; opacity: .7; margin: 1.25rem 0 .5rem; }
+.group { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--fg-3); margin: 1.25rem 0 .5rem; }
+.group::before { content: "// "; }
 .cards .card { margin: 0; }
-.cards .name { font-size: 1.1rem; font-weight: 600; }
+.cards .name { font-size: 1.1rem; font-weight: var(--weight-semibold); color: var(--fg-1); }
 .cards dl { grid-template-columns: 6rem minmax(0, 1fr); }
-.cards dt { font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; }
-details.card > summary { cursor: pointer; list-style: none; position: relative; padding-right: 1.5rem; }
-details.card > summary:hover { background: #8881; }
-details.card > summary::after { content: "▸"; position: absolute; right: 0; top: 0; opacity: .5; }
+details.card > summary { cursor: pointer; list-style: none; position: relative; padding-right: 1.5rem; border-radius: var(--radius-md); }
+details.card > summary:hover { background: var(--bg-2); }
+details.card > summary::after { content: "▸"; position: absolute; right: 0; top: 0; color: var(--fg-4); }
 details.card[open] > summary::after { content: "▾"; }
 details.card > summary::-webkit-details-marker { display: none; }
-details.card .standup { display: block; margin-top: .5rem; border-left: 2px solid #8884; padding-left: .6rem; opacity: .85; }
-details.card .detail { margin-top: .75rem; border-top: 1px solid #8884; padding-top: .5rem; }` : "";
+details.card .standup { display: block; margin-top: .5rem; background: var(--bg-2); border-radius: var(--radius-md); padding: .45rem .6rem; color: var(--fg-2); }
+details.card .detail { margin-top: .75rem; border-top: 1px solid var(--border-1); padding-top: .5rem; }` : "";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -253,29 +311,44 @@ details.card .detail { margin-top: .75rem; border-top: 1px solid #8884; padding-
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent Standup — ${esc(day)}</title>
 <style>
-:root { color-scheme: light dark; font-family: -apple-system, system-ui, sans-serif; }
-body { max-width: 80rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
-h1 { font-size: 1.5rem; } h3 { margin: 0; font-size: 1.1rem; }
-.window { opacity: .7; font-size: .85rem; }
-.exceptions { border: 1px solid light-dark(#c0392b55, #e07b6c55); border-radius: 8px; padding: 1rem 1.5rem; margin: 1rem 0; overflow-wrap: anywhere; }
-.card { border: 1px solid #8884; border-left: 3px solid var(--sev); border-radius: 8px; padding: 1rem 1.25rem; margin: 1rem 0; overflow-wrap: anywhere; }
+@import url('https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+:root { color-scheme: light dark; ${SCALAR_TOKEN_CSS} }
+:root { ${colorTokenCss("light")} }
+@media (prefers-color-scheme: dark) {
+:root { ${colorTokenCss("dark")} }
+}
+body { max-width: var(--max-content); margin: 2rem auto; padding: 0 var(--gutter); background: var(--bg-0); color: var(--fg-2); font-family: var(--font-sans); font-size: var(--text-base); line-height: var(--leading-normal); }
+h1 { font-size: var(--text-2xl); line-height: var(--leading-tight); font-weight: var(--weight-semibold); letter-spacing: var(--tracking-tight); color: var(--fg-1); }
+h2 { font-size: var(--text-lg); line-height: var(--leading-snug); font-weight: var(--weight-semibold); letter-spacing: var(--tracking-tight); color: var(--fg-1); }
+h3 { margin: 0; font-size: 1.1rem; color: var(--fg-1); }
+h4 { margin: .75rem 0 .25rem; font-size: var(--text-sm); color: var(--fg-1); }
+:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-ring); border-radius: var(--radius-sm); }
+.window { color: var(--fg-3); font-size: var(--text-xs); font-family: var(--font-mono); }
+.exceptions { background: var(--danger-subtle); border: 1px solid var(--border-1); border-radius: var(--radius-lg); padding: var(--card-pad); margin: 1rem 0; overflow-wrap: anywhere; }
+.exceptions h2 { margin: 0 0 .5rem; font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--danger-subtle-fg); }
+.exceptions h2::before { content: "// "; }
+.card { background: var(--bg-1); border: 1px solid var(--border-1); border-radius: var(--radius-lg); padding: var(--card-pad); margin: 1rem 0; overflow-wrap: anywhere; }
+.card.sev-urgent { background: var(--danger-subtle); }
 .card header { display: flex; flex-wrap: wrap; gap: .6rem; row-gap: .25rem; align-items: center; margin-bottom: .5rem; }
-${SEV_CSS}
-.badge { color: #fff; background: var(--sev); border-radius: 999px; padding: .1rem .6rem; font-size: .75rem; }
-.evidence { opacity: .6; font-size: .75rem; }
+.badge { display: inline-flex; align-items: center; gap: .4em; height: 18px; padding: 0 7px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: 0.03em; line-height: 1; }
+.badge .dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--dot); }
+${STATUS_CSS}
+.evidence { color: var(--fg-3); font-family: var(--font-mono); font-size: var(--text-2xs); }
 .badge[title], .evidence[title] { text-decoration: underline dotted; text-underline-offset: .15em; cursor: help; }
 dl { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: .25rem .75rem; margin: .5rem 0; }
-dt { font-weight: 600; opacity: .75; } dd { margin: 0; }
-.filler { grid-column: 1 / -1; opacity: .5; }
-.errors li { color: ${ERROR_RED}; }
-.errors li > code { display: block; color: CanvasText; overflow-x: auto; white-space: pre-wrap; font-size: .75rem; opacity: .8; }
-code { font-size: .85em; }
-.dir { opacity: .6; }
-.legend { opacity: .8; font-size: .85rem; margin: 1.5rem 0; }
-.thread { border: 1px solid #8884; border-left: 3px solid var(--sev); border-radius: 8px; padding: .75rem 1.25rem; margin: 1rem 0; overflow-wrap: anywhere; }
+dt { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--fg-3); padding-top: .2em; } dd { margin: 0; }
+.filler { grid-column: 1 / -1; color: var(--fg-4); }
+.errors li { color: var(--danger-subtle-fg); }
+.errors li > code { display: block; color: var(--fg-3); overflow-x: auto; white-space: pre-wrap; font-size: var(--text-xs); }
+code { font-family: var(--font-mono); font-size: .92em; }
+.dir { color: var(--fg-4); }
+.legend { color: var(--fg-3); font-size: var(--text-sm); margin: 1.5rem 0; }
+.ts { font-family: var(--font-mono); }
+.thread { background: var(--bg-1); border: 1px solid var(--border-1); border-radius: var(--radius-lg); padding: .75rem var(--card-pad); margin: 1rem 0; overflow-wrap: anywhere; }
+.thread.sev-urgent { background: var(--danger-subtle); }
 .thread h3 { display: flex; flex-wrap: wrap; gap: .6rem; row-gap: .25rem; align-items: center; }
 .thread ul { margin: .5rem 0 0; }
-.thread-source { opacity: .6; font-size: .8rem; font-weight: 400; }${cardCss}
+.thread-source { color: var(--fg-3); font-size: var(--text-xs); font-weight: var(--weight-regular); }${cardCss}
 </style>
 </head>
 <body>

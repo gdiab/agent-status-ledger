@@ -418,8 +418,8 @@ describe("renderers", () => {
     const start = html.indexOf('<p class="rollup">');
     const rollup = html.slice(start, html.indexOf("</p>", start));
     expect(rollup).toContain("2 agents:");
-    expect(rollup).toContain('class="badge sev-warning"'); // needs_human chip
-    expect(rollup).toContain('class="badge sev-info"'); // completed chip
+    expect(rollup).toContain('class="badge st-needs_human"'); // needs_human chip
+    expect(rollup).toContain('class="badge st-completed"'); // completed chip
     expect(rollup).toContain("1 needs_human");
     expect(rollup).toContain("1 completed");
     // worst-first, same order as the markdown rollup line
@@ -558,17 +558,45 @@ describe("renderers", () => {
     expect(card).toContain("<dt>Worked on</dt>");
   });
 
-  test("html: every card carries a severity class driving a colored left edge in both layouts", () => {
+  test("html: cards are hairline surfaces with token badge pairs, no severity side stripe", () => {
     for (const layout of ["cards", "flat"] as const) {
       const html = renderHtml(report, { layout });
-      expect(html).toContain("card sev-warning"); // warning card
-      expect(html).toContain("card sev-info"); // info card
-      // The colored edge is one CSS rule consuming the class's --sev property.
-      expect(cssRule(html, ".card")).toContain("border-left: 3px solid var(--sev)");
-      expect(cssRule(html, ".sev-warning")).toContain("--sev: #8a6d00");
-      expect(cssRule(html, ".sev-info")).toContain("--sev: #2d7a46");
-      expect(cssRule(html, ".sev-urgent")).toContain("--sev: #c0392b");
+      expect(html).toContain("card sev-warning"); // severity class stays a container hook
+      expect(html).toContain("card sev-info");
+      // Side-stripe ban (DESIGN.md §6): hairline card, no colored left edge.
+      const card = cssRule(html, ".card");
+      expect(card).toContain("border: 1px solid var(--border-1)");
+      expect(card).toContain("background: var(--bg-1)");
+      expect(card).toContain("border-radius: var(--radius-lg)");
+      expect(html).not.toContain("border-left: 3px");
+      // Urgent containers get the full danger-subtle tint (asl-ec7 §8 Q6).
+      expect(cssRule(html, ".card.sev-urgent")).toContain("background: var(--danger-subtle)");
+      // Badges color by status via the theme's subtle pairs.
+      expect(cssRule(html, ".st-needs_human")).toContain("background: var(--warning-subtle)");
+      expect(cssRule(html, ".st-needs_human")).toContain("color: var(--warning-subtle-fg)");
+      expect(cssRule(html, ".st-failed")).toContain("background: var(--danger-subtle)");
+      expect(cssRule(html, ".st-completed")).toContain("background: var(--success-subtle)");
     }
+  });
+
+  test("html: silent badge is hollow warning amber; failed stays filled danger", () => {
+    const html = renderHtml(report);
+    // §8 Q2: silent reads as caution (hollow dot, warning hue), display only —
+    // its severity stays urgent. failed keeps the filled danger dot.
+    expect(cssRule(html, ".st-silent")).toContain("--dot: var(--warning)");
+    expect(cssRule(html, ".st-silent .dot")).toContain("background: transparent");
+    expect(cssRule(html, ".st-silent .dot")).toContain("border: 1.5px solid var(--dot)");
+    expect(cssRule(html, ".st-failed")).toContain("--dot: var(--danger)");
+    expect(html).not.toContain(".st-failed .dot");
+  });
+
+  test("html: active badge is a Signal Green dot with a neutral word, never a green fill", () => {
+    const html = renderHtml(report);
+    // One Signal Rule (DESIGN.md §2): accent marks live state via the dot only.
+    const active = cssRule(html, ".st-active");
+    expect(active).toContain("background: transparent");
+    expect(active).toContain("color: var(--fg-2)");
+    expect(active).toContain("--dot: var(--accent)");
   });
 
   test("html: cards layout splits needs-attention from FYI when both exist", () => {
@@ -588,10 +616,11 @@ describe("renderers", () => {
     expect(allWarn).not.toContain("FYI");
   });
 
-  test("html: flat layout keeps the severity edge but no triage grouping", () => {
+  test("html: flat layout keeps the severity container class but no triage grouping", () => {
     const flat = renderHtml(report, { layout: "flat" });
     expect(flat).toContain('<article class="card sev-warning">');
-    expect(cssRule(flat, ".card")).toContain("border-left: 3px solid var(--sev)");
+    expect(cssRule(flat, ".card")).toContain("border: 1px solid var(--border-1)");
+    expect(flat).not.toContain("border-left: 3px");
     expect(flat).not.toContain("Needs attention");
     expect(flat).not.toContain("FYI");
   });
@@ -634,31 +663,64 @@ describe("renderers", () => {
 
   test("html: cards layout summary shows a chevron affordance and hover cue", () => {
     const html = renderHtml(report);
-    expect(cssRule(html, "details.card > summary::after")).toContain('"▸"');
+    const marker = cssRule(html, "details.card > summary::after");
+    expect(marker).toContain('"▸"');
+    expect(marker).toContain("color: var(--fg-4)"); // dimmed to the ink-ramp floor
     expect(cssRule(html, "details.card[open] > summary::after")).toContain('"▾"');
-    expect(cssRule(html, "details.card > summary:hover")).toContain("background: #8881");
+    // Interaction states: hover steps the surface, focus rings with the accent.
+    expect(cssRule(html, "details.card > summary:hover")).toContain("background: var(--bg-2)");
+    expect(cssRule(html, ":focus-visible")).toContain("box-shadow: 0 0 0 3px var(--accent-ring)");
   });
 
-  test("html: warning badge gold and error red meet AA contrast", () => {
+  test("html: badge and error colors come from theme token pairs, legacy hexes gone", () => {
     const html = renderHtml(report);
-    // Gold now lives once in the .sev-warning rule; the badge paints it via --sev.
-    expect(cssRule(html, ".sev-warning")).toContain("--sev: #8a6d00");
-    expect(cssRule(html, ".badge")).toContain("background: var(--sev)");
+    // The tinted-pair badge idiom dissolves the old solid-fill contrast hacks:
+    // no #8a6d00 dark ochre, no light-dark() error red, no white-on-solid pill.
+    expect(html).not.toContain("#8a6d00");
     expect(html).not.toContain("#b8860b");
-    expect(cssRule(html, ".errors li")).toContain("light-dark(#c0392b, #e07b6c)");
+    expect(html).not.toContain("#c0392b");
+    const badge = cssRule(html, ".badge");
+    expect(badge).toContain("font-family: var(--font-mono)");
+    expect(badge).toContain("font-size: var(--text-2xs)");
+    expect(badge).toContain("border-radius: var(--radius-sm)");
+    expect(cssRule(html, ".badge .dot")).toContain("background: var(--dot)");
+    // Errors use the danger-subtle ink — AA in both themes via the var pair.
+    expect(cssRule(html, ".errors li")).toContain("color: var(--danger-subtle-fg)");
   });
 
-  test("html: cards layout narrows dl labels to 6rem uppercase; flat keeps 8rem", () => {
+  test("html: Futurist tokens ride :root with a dark-scheme override, fonts imported with fallback", () => {
+    const html = renderHtml(report);
+    // Light values on :root, dark under prefers-color-scheme (self-contained
+    // adaptation of the system's [data-theme] switch).
+    expect(html).toContain("--bg-0: #f9fafb;");
+    expect(html).toContain("@media (prefers-color-scheme: dark)");
+    expect(html).toContain("--bg-0: #0f1114;");
+    expect(html).toContain("color-scheme: light dark");
+    // Q1: Google Fonts @import with the system's own fallback stacks.
+    expect(html).toContain("@import url('https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next");
+    expect(html).toContain('--font-sans: "Atkinson Hyperlegible Next"');
+    expect(html).toContain('--font-mono: "IBM Plex Mono", ui-monospace');
+    const body = cssRule(html, "body");
+    expect(body).toContain("background: var(--bg-0)");
+    expect(body).toContain("color: var(--fg-2)");
+    expect(body).toContain("font-family: var(--font-sans)");
+  });
+
+  test("html: cards layout narrows dl labels to 6rem; dt is the mono eyebrow in both layouts", () => {
     const html = renderHtml(report);
     expect(cssRule(html, ".cards dl")).toContain("6rem minmax(0, 1fr)");
-    const dt = cssRule(html, ".cards dt");
-    expect(dt).toContain("font-size: .8rem");
+    const dt = cssRule(html, "dt");
+    expect(dt).toContain("font-family: var(--font-mono)");
+    expect(dt).toContain("font-size: var(--text-2xs)");
     expect(dt).toContain("text-transform: uppercase");
+    expect(dt).toContain("letter-spacing: var(--tracking-caps)");
     expect(renderHtml(report, { layout: "flat" })).not.toContain(".cards dl");
   });
 
-  test("html: body max-width admits a third card column on wide screens", () => {
-    expect(cssRule(renderHtml(report), "body")).toContain("max-width: 80rem");
+  test("html: body max-width is the token content width", () => {
+    const body = cssRule(renderHtml(report), "body");
+    expect(body).toContain("max-width: var(--max-content)");
+    expect(renderHtml(report)).toContain("--max-content: 1200px;");
   });
 
   test("html: window and footer timestamps are human-readable UTC, full ISO in title", () => {
@@ -671,11 +733,12 @@ describe("renderers", () => {
     expect(html).not.toContain(">2026-07-07T07:00:00.000Z");
   });
 
-  test("html: standup blurb is upright with a quote-bar, not italic", () => {
+  test("html: standup blurb is an upright inset tint, no quote-bar", () => {
     const standup = cssRule(renderHtml(report), "details.card .standup");
     expect(standup).not.toContain("italic");
-    expect(standup).toContain("border-left: 2px solid #8884");
-    expect(standup).toContain("opacity: .85");
+    expect(standup).not.toContain("border-left"); // stripe idiom retired with the ban
+    expect(standup).toContain("background: var(--bg-2)");
+    expect(standup).toContain("color: var(--fg-2)");
   });
 
   test("html: exception-severity cards render open; info cards stay collapsed", () => {
@@ -722,7 +785,7 @@ describe("renderers", () => {
       expect(html).not.toContain("<dt>In progress</dt>");
       expect(html).not.toContain("<dt>Blocked</dt>");
       expect(html).not.toContain("<dt>Next</dt>");
-      expect(cssRule(html, ".filler")).toContain("opacity: .5");
+      expect(cssRule(html, ".filler")).toContain("color: var(--fg-4)");
     }
   });
 
@@ -773,8 +836,8 @@ describe("renderers", () => {
     expect(rule).toContain("display: block");
     expect(rule).toContain("overflow-x: auto");
     expect(rule).toContain("white-space: pre-wrap");
-    expect(rule).toContain("font-size: .75rem");
-    expect(rule).toContain("opacity: .8");
+    expect(rule).toContain("font-size: var(--text-xs)");
+    expect(rule).toContain("color: var(--fg-3)"); // de-emphasized vs the red reason
   });
 
   test("html: error lines without the marker render as before, escaped", () => {
@@ -789,7 +852,7 @@ describe("renderers", () => {
     const html = renderHtml({ ...report, exceptions: [], agents: [a] });
     expect(html).toContain('<code><span class="dir">/w/src/deep/</span>login.ts</code>');
     expect(html).toContain("<code>README.md</code>"); // no dir → no wrapper
-    expect(cssRule(html, ".dir")).toContain("opacity: .6");
+    expect(cssRule(html, ".dir")).toContain("color: var(--fg-4)");
   });
 
   test("html: dimmed file paths stay escaped", () => {
@@ -845,9 +908,10 @@ describe("renderers", () => {
     expect(html).not.toContain("hunter2secret");
   });
 
-  test("html: status badge carries the severity class, no inline style", () => {
-    const html = renderHtml({ ...report, agents: [blocked] }); // needs_human = warning
-    expect(html).toContain('<span class="badge sev-warning" title=');
+  test("html: status badge is a dot+word span classed by status, no inline style", () => {
+    const html = renderHtml({ ...report, agents: [blocked] });
+    expect(html).toContain('<span class="badge st-needs_human" title=');
+    expect(html).toContain('<span class="dot" aria-hidden="true"></span>needs_human</span>');
     expect(html).not.toContain('style="background:');
   });
 
