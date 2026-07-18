@@ -1,7 +1,7 @@
 import type { AgentReport, Report, Status, TaskThread } from "../types";
 import { capSanitizedText } from "../redact";
 import { rollupLine, threadRollupSummary } from "./rollup";
-import { esc } from "./html";
+import { esc } from "./esc";
 import { COLORS_HEX, STATUS_COLORS, statusHex } from "./theme";
 
 // ── Futurist tokens resolved to light-theme hex literals (asl-ec7 slice C) ──

@@ -192,6 +192,10 @@ export interface AgentReport {
 export interface ThreadSession {
   sessionId: string;
   profile: string;          // owning AgentReport.displayName
+  // Owning profile's platform, carried structurally so renderers never parse
+  // it back out of the display string. Additive on the serialized report —
+  // schemaVersion stays 1 (same contract as trends).
+  platform: Platform;
   startedAt: string;
   lastEventAt: string;
   files: number;            // filesTouched count

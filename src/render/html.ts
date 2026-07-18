@@ -4,10 +4,8 @@ import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 import { STATUS_SEVERITY } from "../status";
 import { FILLER_BLOCKED, FILLER_COMPLETED, FILLER_IN_PROGRESS, FILLER_RECOMMENDATION } from "../narrative";
 import { COLORS_HEX, FONT_MONO, FONT_SANS, LEADING, RADIUS, SPACING, STATUS_COLORS, statusCssVars, TEXT_SCALE, TRACKING, WEIGHT } from "./theme";
-
-export function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
+import { platformIcon } from "./icons";
+import { esc } from "./esc";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -201,7 +199,7 @@ function cardBody(a: AgentReport): string {
 // fmtUtc convention with the full ISO in a title.
 function threadBlock(t: TaskThread): string {
   const runs = t.sessions.map((s) =>
-    `<li title="${esc(s.startedAt)}"><span class="ts">${esc(fmtUtc(s.startedAt))}</span> — ${esc(dispatchRefLabel({ sessionId: s.sessionId, profile: s.profile }))}: ${esc(threadSessionSummary(s))}</li>`,
+    `<li title="${esc(s.startedAt)}"><span class="ts">${esc(fmtUtc(s.startedAt))}</span> — ${platformIcon(s.platform)}${esc(dispatchRefLabel({ sessionId: s.sessionId, profile: s.profile }))}: ${esc(threadSessionSummary(s))}</li>`,
   ).join("");
   return `<div class="thread ${sevClass(STATUS_SEVERITY[t.status])}">
   <h3>${esc(t.title)}${t.source === "files" ? ` <span class="thread-source">(file cluster)</span>` : ""}
@@ -223,7 +221,7 @@ ${report.threads.map(threadBlock).join("\n")}
 function flatCard(a: AgentReport): string {
   return `<article class="card ${sevClass(a.severity)}">
   <header>
-    <h3>${esc(a.displayName)}</h3>
+    ${platformIcon(a.platform)}<h3>${esc(a.displayName)}</h3>
     ${badges(a)}
   </header>
   ${cardBody(a)}
@@ -231,12 +229,17 @@ function flatCard(a: AgentReport): string {
 }
 
 // Counts-by-status as small badge-styled chips: always-visible legend, and
-// the eye can match chip color to card badges without reading.
+// the eye can match chip color to card badges without reading. The platform
+// split (asl-9j3) renders rollupCounts.byPlatform as icon + count segments,
+// labeled icons — here the mark alone names the platform, so it carries the
+// accessible name. The status chip row stays status-only — the platform
+// split is provenance, not a status signal.
 function rollupChips(report: Report): string {
   if (report.agents.length === 0) return `<p class="rollup">${esc(rollupLine(report))}</p>`;
   const c = rollupCounts(report);
+  const platforms = c.byPlatform.map(({ platform, count }) => `${platformIcon(platform, { labeled: true })} ${count}`).join(" · ");
   const chips = c.byStatus.map(({ status, count }) => statusBadge(status, `${count} ${status}`)).join(" ");
-  return `<p class="rollup">${plural(c.agents, "agent")}: ${chips} · ${plural(c.commits, "commit")}, ${plural(c.files, "file")} touched</p>`;
+  return `<p class="rollup">${plural(c.agents, "agent")}: <span class="platforms">${platforms}</span> · ${chips} · ${plural(c.commits, "commit")}, ${plural(c.files, "file")} touched</p>`;
 }
 
 function standupCard(a: AgentReport): string {
@@ -247,7 +250,7 @@ function standupCard(a: AgentReport): string {
   // outside the heading element keeps tooltip text out of its accessible name.
   return `<details class="card ${sevClass(a.severity)}"${a.severity === "info" ? "" : " open"}>
   <summary>
-    <span class="name" role="heading" aria-level="3">${esc(a.displayName)}</span> ${badges(a)}
+    ${platformIcon(a.platform)}<span class="name" role="heading" aria-level="3">${esc(a.displayName)}</span> ${badges(a)}
     <span class="standup">${esc(capStandup(a.narrative.standup))}</span>
   </summary>
   <div class="detail">
@@ -334,6 +337,13 @@ h4 { margin: .75rem 0 .25rem; font-size: var(--text-sm); color: var(--fg-1); }
 .badge .dot { flex: none; width: ${DOT_SIZE}; height: ${DOT_SIZE}; border-radius: 50%; background: var(--dot); }
 ${STATUS_CSS}
 .evidence { color: var(--fg-3); font-family: var(--font-mono); font-size: var(--text-2xs); }
+/* Platform marks (asl-9j3): 14px currentColor product logos before names.
+   Alignment lives here, not inline, per the stylesheet convention; the flex
+   card header already spaces siblings with its gap, so the inline-flow
+   margin is zeroed there. */
+.platform-icon { vertical-align: -0.125em; margin-right: .35em; flex: none; }
+.card header .platform-icon { margin-right: 0; }
+.platforms { color: var(--fg-3); white-space: nowrap; }
 .badge[title], .evidence[title] { text-decoration: underline dotted; text-underline-offset: .15em; cursor: help; }
 dl { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: .25rem .75rem; margin: .5rem 0; }
 dt { color: var(--fg-3); padding-top: .2em; } dd { margin: 0; }

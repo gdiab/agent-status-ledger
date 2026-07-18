@@ -6,6 +6,10 @@ const STATUS_ORDER = (Object.keys(STATUS_RANK) as Status[]).sort((a, b) => STATU
 export interface RollupCounts {
   agents: number;
   byStatus: { status: Status; count: number }[]; // worst-first, zero statuses omitted
+  // Per-platform agent counts, largest first (platform id breaks ties, so
+  // equal-count order is deterministic). String-keyed on purpose: agent
+  // platforms may carry future config-driven ids beyond the Platform union.
+  byPlatform: { platform: string; count: number }[];
   commits: number;
   files: number;
 }
@@ -15,16 +19,21 @@ export const plural = (count: number, word: string) => `${count} ${word}${count 
 // Counts only — renderers own presentation (markdown prose, HTML chips).
 export function rollupCounts(report: Report): RollupCounts {
   const counts = new Map<Status, number>();
+  const platforms = new Map<string, number>();
   let commits = 0;
   const files = new Set<string>();
   for (const a of report.agents) {
     counts.set(a.status, (counts.get(a.status) ?? 0) + 1);
+    platforms.set(a.platform, (platforms.get(a.platform) ?? 0) + 1);
     commits += a.commits.filter((c) => c.attributed).length;
     for (const f of a.facts.filesTouched) files.add(f);
   }
   return {
     agents: report.agents.length,
     byStatus: STATUS_ORDER.filter((s) => counts.has(s)).map((s) => ({ status: s, count: counts.get(s)! })),
+    byPlatform: [...platforms.entries()]
+      .sort(([pa, ca], [pb, cb]) => cb - ca || pa.localeCompare(pb))
+      .map(([platform, count]) => ({ platform, count })),
     commits,
     files: files.size,
   };
