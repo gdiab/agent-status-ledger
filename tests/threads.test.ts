@@ -203,7 +203,9 @@ describe("deriveTaskThreads: file clusters", () => {
     expect(JSON.stringify(threads[0])).not.toContain("hunter2secret");
   });
 
-  test("bead threads sort before file threads; within a source, worst status first", () => {
+  // Shared fixture for the ordering tests: one bead thread in /w1, one
+  // file-cluster thread in /w2, with the file agent's status overridable.
+  function beadAndFileThreads(fileAgentOver: Partial<AgentReport> = {}) {
     const shared = ["/r/a.ts", "/r/b.ts"];
     const bead1 = sess({ sessionId: "a1", cwd: "/w1", startedAt: "2026-07-07T09:00:00.000Z" });
     const bead2 = sess({ sessionId: "a2", cwd: "/w1", startedAt: "2026-07-07T10:00:00.000Z" });
@@ -212,10 +214,20 @@ describe("deriveTaskThreads: file clusters", () => {
     const p1 = prof("/w1", [bead1, bead2]);
     const p2 = prof("/w2", [file1, file2]);
     const a1 = agent(p1);
-    const a2 = agent(p2, { status: "failed", severity: "urgent" }); // file thread is WORSE, bead still leads
-    const threads = deriveTaskThreads([a1, a2], [p1, p2], keys([["a1", ["asl-1wm"]], ["a2", ["asl-1wm"]]]), []);
+    const a2 = agent(p2, fileAgentOver);
+    return deriveTaskThreads([a1, a2], [p1, p2], keys([["a1", ["asl-1wm"]], ["a2", ["asl-1wm"]]]), []);
+  }
+
+  test("worst status sorts first across sources: a failed file cluster leads a completed bead thread", () => {
+    const threads = beadAndFileThreads({ status: "failed", severity: "urgent" });
+    expect(threads.map((t) => t.source)).toEqual(["files", "bead"]);
+    expect(threads[0]!.status).toBe("failed");
+  });
+
+  test("equal statuses keep bead threads before file clusters (derivation-order tiebreak)", () => {
+    const threads = beadAndFileThreads(); // both agents completed
+    expect(threads.map((t) => t.status)).toEqual(["completed", "completed"]);
     expect(threads.map((t) => t.source)).toEqual(["bead", "files"]);
-    expect(threads[1]!.status).toBe("failed");
   });
 
   test("no keys and no overlap yields no threads at all", () => {
