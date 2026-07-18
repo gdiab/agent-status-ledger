@@ -36,9 +36,15 @@ const EVENT_LINE_MAX = 200;   // per highlight line, ellipsis included — match
 // connector emits verbatim ("task_started", "agent_message"). "task complete"
 // is the codex fallback when last_agent_message is absent.
 const CONTENT_FREE = new Set(["session started", "task complete", "user turn", "assistant turn"]);
-const TYPE_NAME_TOKEN = /^[a-z]+(?:_[a-z]+)+$/; // "task_started", "agent_message", "exec_command_begin"
+// Closed set of bare event-type tokens connectors emit verbatim as the whole
+// summary. Deliberately NOT a snake_case pattern: legitimate content can be
+// exactly one snake_case token (a verdict like "request_changes", a status
+// like "needs_human"), and dropping a session's true last completion would
+// silently promote an earlier one to sessionOutcome. Deletable stopgap, same
+// as CONTENT_FREE: goes away once connectors stop emitting type names.
+const TYPE_NAME_TOKENS = new Set(["task_started", "agent_message", "user_message", "task_complete"]);
 const hasContent = (summary: string): boolean =>
-  !CONTENT_FREE.has(summary) && !TYPE_NAME_TOKEN.test(summary);
+  !CONTENT_FREE.has(summary) && !TYPE_NAME_TOKENS.has(summary);
 
 // One choke point for every event-derived line: connector-level redaction
 // (makeClip) already ran, but the line is re-sanitized and re-capped here so
@@ -55,31 +61,35 @@ const toLine = (raw: string, max: number, redactPatterns: string[]): string =>
 export function buildNarrativeFacts(facts: FactSheet, profile: AgentProfile, redactPatterns: string[]): NarrativeFacts {
   // Outcomes: per session, the LAST content-bearing completion message —
   // newest sessions first (sessions are sorted ascending), capped.
-  const outcomeEvents = new Set<AgentEvent>();
+  // Exclusion keys are values (type+summary), not object identities, so the
+  // invariant survives events being cloned anywhere upstream.
+  const eventKey = (e: AgentEvent) => `${e.type}\n${e.summary}`;
+  const outcomeKeys = new Set<string>();
   const sessionOutcomes: string[] = [];
   for (const session of [...profile.sessions].reverse()) {
     if (sessionOutcomes.length >= OUTCOMES_MAX) break;
     const last = [...session.events].reverse().find((e) => e.type === "completed" && hasContent(e.summary));
     if (!last) continue;
-    outcomeEvents.add(last);
+    outcomeKeys.add(eventKey(last));
     sessionOutcomes.push(toLine(`${last.timestamp} ${last.summary}`, OUTCOME_LINE_MAX, redactPatterns));
   }
 
   // Highlights: three priority tiers over all content-bearing events not
   // already quoted as an outcome — failures, then task/run boundaries, then
-  // recent activity — each tier newest first, deduped on type+summary so a
-  // repeating error doesn't crowd out the rest.
+  // recent activity — newest first within each tier, deduped on the
+  // type+sanitized summary so a repeating error (or distinct secrets that
+  // all sanitize to the same [REDACTED] line) doesn't crowd out the rest.
   const BOUNDARY = new Set(["completed", "run_started", "approval_requested", "blocked", "artifact_created"]);
+  const tier = (e: AgentEvent) => (e.type === "failed" ? 0 : BOUNDARY.has(e.type) ? 1 : 2);
   const candidates = profile.sessions
     .flatMap((s) => s.events)
-    .filter((e) => hasContent(e.summary) && !outcomeEvents.has(e))
-    .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-  const tier = (e: AgentEvent) => (e.type === "failed" ? 0 : BOUNDARY.has(e.type) ? 1 : 2);
+    .filter((e) => hasContent(e.summary) && !outcomeKeys.has(eventKey(e)))
+    .sort((a, b) => tier(a) - tier(b) || b.timestamp.localeCompare(a.timestamp));
   const seen = new Set<string>();
   const eventHighlights: string[] = [];
-  for (const e of candidates.sort((a, b) => tier(a) - tier(b))) {
+  for (const e of candidates) {
     if (eventHighlights.length >= EVENT_LINES_MAX) break;
-    const key = `${e.type}\n${e.summary}`;
+    const key = `${e.type}\n${toLine(e.summary, EVENT_LINE_MAX, redactPatterns)}`;
     if (seen.has(key)) continue;
     seen.add(key);
     eventHighlights.push(toLine(`${e.timestamp} ${e.type}: ${e.summary}`, EVENT_LINE_MAX, redactPatterns));

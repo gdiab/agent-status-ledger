@@ -56,7 +56,7 @@ function mkProfile(sessions: RawSession[]): AgentProfile {
 const at = (h: number, m = 0) =>
   `2026-07-07T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00.000Z`;
 
-function facts(profile: AgentProfile) {
+function enrichedFacts(profile: AgentProfile) {
   return buildNarrativeFacts(buildFactSheet(profile, []), profile, []);
 }
 
@@ -73,7 +73,7 @@ describe("buildNarrativeFacts", () => {
         { timestamp: at(11, 45), type: "completed", summary: "Final answer: the bug is in redact.ts" },
       ]),
     ]);
-    const f = facts(profile);
+    const f = enrichedFacts(profile);
     expect(f.sessionOutcomes).toEqual([
       `${at(11, 45)} Final answer: the bug is in redact.ts`,
       `${at(9, 30)} Review verdict: LGTM with two nits`,
@@ -83,7 +83,7 @@ describe("buildNarrativeFacts", () => {
   test("caps outcomes to the newest sessions", () => {
     const sessions = Array.from({ length: 8 }, (_, i) =>
       mkSession(`s${i}`, at(i + 1), [{ timestamp: at(i + 1), type: "completed", summary: `conclusion ${i}` }]));
-    const f = facts(mkProfile(sessions));
+    const f = enrichedFacts(mkProfile(sessions));
     expect(f.sessionOutcomes).toHaveLength(5);
     expect(f.sessionOutcomes![0]).toContain("conclusion 7");
     expect(f.sessionOutcomes!.at(-1)).toContain("conclusion 3");
@@ -100,9 +100,34 @@ describe("buildNarrativeFacts", () => {
         { timestamp: at(9, 5), type: "completed", summary: "task complete" },
       ]),
     ]);
-    const f = facts(profile);
+    const f = enrichedFacts(profile);
     expect(f.sessionOutcomes).toBeUndefined();
     expect(f.eventHighlights).toBeUndefined();
+  });
+
+  test("meaningful snake_case summary is kept as the session outcome", () => {
+    // A verdict can be exactly one snake_case token; only the closed set of
+    // connector type-name tokens is content-free. Dropping "request_changes"
+    // would misreport the earlier intermediate completion as the conclusion.
+    const profile = mkProfile([
+      mkSession("s1", at(9), [
+        { timestamp: at(9, 10), type: "completed", summary: "intermediate analysis of the diff" },
+        { timestamp: at(9, 20), type: "run_progressed", summary: "task_started" },
+        { timestamp: at(9, 30), type: "completed", summary: "request_changes" },
+      ]),
+    ]);
+    const f = enrichedFacts(profile);
+    expect(f.sessionOutcomes).toEqual([`${at(9, 30)} request_changes`]);
+  });
+
+  test("highlights dedupe on the sanitized line, not raw summaries", () => {
+    const mkSecret = (c: string) => `sk-${c.repeat(24)}`;
+    const events: AgentEvent[] = ["a", "b"].map((c, i) => ({
+      timestamp: at(9, i), type: "failed" as const, summary: `auth failed with ${mkSecret(c)}`,
+    }));
+    const f = enrichedFacts(mkProfile([mkSession("s1", at(9), events)]));
+    expect(f.eventHighlights).toHaveLength(1);
+    expect(f.eventHighlights![0]).toContain(REDACTION_MARKER);
   });
 
   test("prioritizes failures over other events when over the line cap", () => {
@@ -112,7 +137,7 @@ describe("buildNarrativeFacts", () => {
     const failures: AgentEvent[] = Array.from({ length: 4 }, (_, i) => ({
       timestamp: at(12, i), type: "failed" as const, summary: `boom ${i}`,
     }));
-    const f = facts(mkProfile([mkSession("s1", at(10), [...noise, ...failures])]));
+    const f = enrichedFacts(mkProfile([mkSession("s1", at(10), [...noise, ...failures])]));
     expect(f.eventHighlights).toHaveLength(12);
     for (let i = 0; i < 4; i++) expect(f.eventHighlights!.join("\n")).toContain(`boom ${i}`);
     // failures come first, then recent progress
@@ -128,7 +153,7 @@ describe("buildNarrativeFacts", () => {
         timestamp: at(10, i % 60), type: "run_progressed" as const, summary: `detail ${i} ${long}`,
       })),
     ];
-    const f = facts(mkProfile([mkSession("s1", at(9), events)]));
+    const f = enrichedFacts(mkProfile([mkSession("s1", at(9), events)]));
     expect(f.eventHighlights!.length).toBeLessThanOrEqual(12);
     for (const line of f.eventHighlights!) {
       expect(line.length).toBeLessThanOrEqual(200);
@@ -159,7 +184,7 @@ describe("buildNarrativeFacts", () => {
         { timestamp: at(9, 30), type: "completed", summary: "the only conclusion" },
       ]),
     ]);
-    const f = facts(profile);
+    const f = enrichedFacts(profile);
     expect(f.sessionOutcomes).toHaveLength(1);
     expect(f.eventHighlights).toBeUndefined();
   });
@@ -179,7 +204,7 @@ describe("buildNarrativeFacts", () => {
         { timestamp: at(8, 40), type: "completed", summary: verdict },
       ]),
     ]);
-    const f = facts(profile);
+    const f = enrichedFacts(profile);
     expect(f.titles).toEqual([]);
     expect(f.commits).toEqual([]);
     expect(f.sessionOutcomes).toEqual([`${at(8, 40)} ${verdict}`]);
