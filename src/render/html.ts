@@ -84,6 +84,12 @@ function roleBadgeVars(role: ColorRole): { bg: string; fg: string; dot: string }
   }
 }
 
+// Dot geometry: the 7px hollow ring optically matches the 5px filled dot —
+// a stroked circle reads smaller than a filled one at equal diameter.
+const DOT_SIZE = "5px";
+const HOLLOW_DOT_SIZE = "7px";
+const HOLLOW_DOT_RING = "1.5px";
+
 // One .st-* rule per status, generated from STATUS_COLORS so the Record<Status, …>
 // exhaustiveness check covers the CSS too. Hollow dots (silent: absence of
 // signal, §8 Q2) ring the hue instead of filling it.
@@ -92,7 +98,7 @@ const STATUS_CSS = (Object.entries(STATUS_COLORS) as [Status, (typeof STATUS_COL
     const v = roleBadgeVars(c.role);
     const rules = [`.${stClass(status)} { background: ${v.bg}; color: ${v.fg}; --dot: ${v.dot}; }`];
     if (c.dot === "hollow") {
-      rules.push(`.${stClass(status)} .dot { width: 7px; height: 7px; background: transparent; border: 1.5px solid var(--dot); }`);
+      rules.push(`.${stClass(status)} .dot { width: ${HOLLOW_DOT_SIZE}; height: ${HOLLOW_DOT_SIZE}; background: transparent; border: ${HOLLOW_DOT_RING} solid var(--dot); }`);
     }
     return rules;
   }).join("\n");
@@ -292,7 +298,7 @@ export function renderHtml(report: Report, opts: { layout?: HtmlLayout } = {}): 
   const agentsSection = `<section><h2>All agents</h2>${agentCards}</section>`;
   const cardCss = layout === "cards" ? `
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); gap: 1rem; align-items: start; }
-.group { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--fg-3); margin: 1.25rem 0 .5rem; }
+.group { color: var(--fg-3); margin: 1.25rem 0 .5rem; }
 .group::before { content: "// "; }
 .cards .card { margin: 0; }
 .cards .name { font-size: 1.1rem; font-weight: var(--weight-semibold); color: var(--fg-1); }
@@ -322,22 +328,24 @@ h1 { font-size: var(--text-2xl); line-height: var(--leading-tight); font-weight:
 h2 { font-size: var(--text-lg); line-height: var(--leading-snug); font-weight: var(--weight-semibold); letter-spacing: var(--tracking-tight); color: var(--fg-1); }
 h3 { margin: 0; font-size: 1.1rem; color: var(--fg-1); }
 h4 { margin: .75rem 0 .25rem; font-size: var(--text-sm); color: var(--fg-1); }
-:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-ring); border-radius: var(--radius-sm); }
+:focus-visible { outline: 3px solid var(--accent-ring); outline-offset: 1px; border-radius: var(--radius-sm); }
 .window { color: var(--fg-3); font-size: var(--text-xs); font-family: var(--font-mono); }
 .exceptions { background: var(--danger-subtle); border: 1px solid var(--border-1); border-radius: var(--radius-lg); padding: var(--card-pad); margin: 1rem 0; overflow-wrap: anywhere; }
-.exceptions h2 { margin: 0 0 .5rem; font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--danger-subtle-fg); }
+/* Mono eyebrow: the one caps-label idiom shared by section labels and dl terms. */
+.group, .exceptions h2, dt { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-caps); text-transform: uppercase; }
+.exceptions h2 { margin: 0 0 .5rem; color: var(--danger-subtle-fg); }
 .exceptions h2::before { content: "// "; }
 .card { background: var(--bg-1); border: 1px solid var(--border-1); border-radius: var(--radius-lg); padding: var(--card-pad); margin: 1rem 0; overflow-wrap: anywhere; }
-.card.sev-urgent { background: var(--danger-subtle); }
+.card.sev-urgent, .thread.sev-urgent { background: var(--danger-subtle); }
 .card header { display: flex; flex-wrap: wrap; gap: .6rem; row-gap: .25rem; align-items: center; margin-bottom: .5rem; }
-.badge { display: inline-flex; align-items: center; gap: .4em; height: 18px; padding: 0 7px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: 0.03em; line-height: 1; }
-.badge .dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--dot); }
+.badge { display: inline-flex; align-items: center; gap: .4em; min-height: 18px; padding: 0 7px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: 0.03em; line-height: 1; }
+.badge .dot { flex: none; width: ${DOT_SIZE}; height: ${DOT_SIZE}; border-radius: 50%; background: var(--dot); }
 ${STATUS_CSS}
 .evidence { color: var(--fg-3); font-family: var(--font-mono); font-size: var(--text-2xs); }
 .badge[title], .evidence[title] { text-decoration: underline dotted; text-underline-offset: .15em; cursor: help; }
 dl { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: .25rem .75rem; margin: .5rem 0; }
-dt { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--fg-3); padding-top: .2em; } dd { margin: 0; }
-.filler { grid-column: 1 / -1; color: var(--fg-4); }
+dt { color: var(--fg-3); padding-top: .2em; } dd { margin: 0; }
+.filler { grid-column: 1 / -1; color: var(--fg-3); }
 .errors li { color: var(--danger-subtle-fg); }
 .errors li > code { display: block; color: var(--fg-3); overflow-x: auto; white-space: pre-wrap; font-size: var(--text-xs); }
 code { font-family: var(--font-mono); font-size: .92em; }

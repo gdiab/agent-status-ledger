@@ -570,7 +570,7 @@ describe("renderers", () => {
       expect(card).toContain("border-radius: var(--radius-lg)");
       expect(html).not.toContain("border-left: 3px");
       // Urgent containers get the full danger-subtle tint (asl-ec7 §8 Q6).
-      expect(cssRule(html, ".card.sev-urgent")).toContain("background: var(--danger-subtle)");
+      expect(cssRule(html, ".card.sev-urgent, .thread.sev-urgent")).toContain("background: var(--danger-subtle)");
       // Badges color by status via the theme's subtle pairs.
       expect(cssRule(html, ".st-needs_human")).toContain("background: var(--warning-subtle)");
       expect(cssRule(html, ".st-needs_human")).toContain("color: var(--warning-subtle-fg)");
@@ -668,8 +668,9 @@ describe("renderers", () => {
     expect(marker).toContain("color: var(--fg-4)"); // dimmed to the ink-ramp floor
     expect(cssRule(html, "details.card[open] > summary::after")).toContain('"▾"');
     // Interaction states: hover steps the surface, focus rings with the accent.
+    // Outline (not box-shadow) so the ring survives forced-colors mode.
     expect(cssRule(html, "details.card > summary:hover")).toContain("background: var(--bg-2)");
-    expect(cssRule(html, ":focus-visible")).toContain("box-shadow: 0 0 0 3px var(--accent-ring)");
+    expect(cssRule(html, ":focus-visible")).toContain("outline: 3px solid var(--accent-ring)");
   });
 
   test("html: badge and error colors come from theme token pairs, legacy hexes gone", () => {
@@ -709,7 +710,7 @@ describe("renderers", () => {
   test("html: cards layout narrows dl labels to 6rem; dt is the mono eyebrow in both layouts", () => {
     const html = renderHtml(report);
     expect(cssRule(html, ".cards dl")).toContain("6rem minmax(0, 1fr)");
-    const dt = cssRule(html, "dt");
+    const dt = cssRule(html, ".group, .exceptions h2, dt");
     expect(dt).toContain("font-family: var(--font-mono)");
     expect(dt).toContain("font-size: var(--text-2xs)");
     expect(dt).toContain("text-transform: uppercase");
@@ -785,7 +786,9 @@ describe("renderers", () => {
       expect(html).not.toContain("<dt>In progress</dt>");
       expect(html).not.toContain("<dt>Blocked</dt>");
       expect(html).not.toContain("<dt>Next</dt>");
-      expect(cssRule(html, ".filler")).toContain("color: var(--fg-4)");
+      // --fg-3, not --fg-4: filler is a readable sentence, so it stays at the
+      // design system's readable-text floor (AA contrast), merely de-emphasized.
+      expect(cssRule(html, ".filler")).toContain("color: var(--fg-3)");
     }
   });
 
