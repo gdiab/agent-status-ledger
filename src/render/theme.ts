@@ -6,9 +6,10 @@
 // (tokens/colors.css); email clients need hex, so COLORS_HEX carries sRGB
 // conversions of every color token, light and dark (§8 Q7: this table is the
 // one owner of the conversion and lands upstream as tokens/colors.hex.json).
-// Values follow the asl-ec7 proposal §1/§3, cross-checked with an independent
-// oklch→sRGB implementation (culori). One proposal typo corrected: dark
-// --bg-3 is #272a30, not #26292f.
+// Values follow the asl-ec7 proposal §1/§3 and are re-derived executably:
+// tests/helpers/futurist-oklch.ts vendors the upstream oklch source values and
+// tests/theme.test.ts asserts every hex here equals its oklch→sRGB conversion.
+// One proposal typo corrected in place: dark --bg-3 is #272a30, not #26292f.
 
 import type { Severity, Status } from "../types";
 import { STATUS_RANK, STATUS_SEVERITY } from "../status";
@@ -89,8 +90,16 @@ export const TEXT_SCALE = {
   "--text-2xl": "1.5rem", // 24px — headline role
 } as const satisfies Record<string, string>;
 
-export const WEIGHT = { regular: 400, medium: 500, semibold: 600 } as const;
-export const LEADING = { tight: 1.15, snug: 1.3, normal: 1.5 } as const;
+export const WEIGHT = {
+  "--weight-regular": 400,
+  "--weight-medium": 500,
+  "--weight-semibold": 600,
+} as const satisfies Record<string, number>;
+export const LEADING = {
+  "--leading-tight": 1.15,
+  "--leading-snug": 1.3,
+  "--leading-normal": 1.5,
+} as const satisfies Record<string, number>;
 export const TRACKING = {
   "--tracking-tight": "-0.011em", // headings
   "--tracking-caps": "0.08em", // mono eyebrows / labels
@@ -140,14 +149,19 @@ export interface StatusColor {
 // hex here would be the "hardcoded values are drift" failure the upstream
 // Token Contract Rule (DESIGN.md §2) names.
 function fromRole(role: "danger" | "warning" | "success" | "info") {
-  const subtle = COLORS_HEX[`--${role}-subtle`];
-  const subtleFg = COLORS_HEX[`--${role}-subtle-fg`];
   return {
     solid: COLORS_HEX[`--${role}`],
-    subtle: {
-      light: { bg: subtle.light, fg: subtleFg.light },
-      dark: { bg: subtle.dark, fg: subtleFg.dark },
-    },
+    subtle: composed(`--${role}-subtle`, `--${role}-subtle-fg`),
+  };
+}
+
+// A theme-aware bg/fg pairing of two palette tokens.
+function composed(bgToken: keyof typeof COLORS_HEX, fgToken: keyof typeof COLORS_HEX) {
+  const bg = COLORS_HEX[bgToken];
+  const fg = COLORS_HEX[fgToken];
+  return {
+    light: { bg: bg.light, fg: fg.light },
+    dark: { bg: bg.dark, fg: fg.dark },
   };
 }
 
@@ -167,19 +181,13 @@ export const STATUS_COLORS: Record<Status, StatusColor> = {
     role: "accent",
     dot: "filled",
     solid: COLORS_HEX["--accent"],
-    subtle: {
-      light: { bg: COLORS_HEX["--bg-1"].light, fg: COLORS_HEX["--fg-2"].light },
-      dark: { bg: COLORS_HEX["--bg-1"].dark, fg: COLORS_HEX["--fg-2"].dark },
-    },
+    subtle: composed("--bg-1", "--fg-2"),
   },
   idle: {
     role: "neutral",
     dot: "filled",
     solid: COLORS_HEX["--fg-3"],
-    subtle: {
-      light: { bg: COLORS_HEX["--bg-3"].light, fg: COLORS_HEX["--fg-2"].light },
-      dark: { bg: COLORS_HEX["--bg-3"].dark, fg: COLORS_HEX["--fg-2"].dark },
-    },
+    subtle: composed("--bg-3", "--fg-2"),
   },
   completed: { role: "success", dot: "filled", ...fromRole("success") },
 };

@@ -3,12 +3,15 @@ import { STATUS_RANK, STATUS_SEVERITY } from "../src/status";
 import type { Severity, Status } from "../src/types";
 import {
   COLORS_HEX,
+  LEADING,
   RADIUS,
   SEVERITY_COLORS,
   SPACING,
   STATUS_COLORS,
   TEXT_SCALE,
+  WEIGHT,
 } from "../src/render/theme";
+import { COLORS_OKLCH, oklchToHex } from "./helpers/futurist-oklch";
 
 const STATUSES = Object.keys(STATUS_SEVERITY) as Status[];
 const HEX6 = /^#[0-9a-f]{6}$/; // opaque sRGB, lowercase
@@ -25,8 +28,31 @@ describe("COLORS_HEX token table", () => {
     }
   });
 
-  test("token names mirror the upstream custom properties", () => {
+  test("token names are exactly the upstream custom-property set", () => {
     for (const name of Object.keys(COLORS_HEX)) expect(name).toMatch(/^--[a-z0-9-]+$/);
+    // The vendored oklch map mirrors upstream tokens/colors.css token for
+    // token — a missing, extra, or renamed token fails here.
+    expect(Object.keys(COLORS_HEX).sort()).toEqual(Object.keys(COLORS_OKLCH).sort());
+  });
+
+  test("every hex value re-derives from the vendored upstream oklch source", () => {
+    // 46 tokens × 2 themes = 92 values, alpha bytes included. Exact equality:
+    // upstream drift or a fat-fingered hex fails loudly.
+    for (const name of Object.keys(COLORS_OKLCH) as (keyof typeof COLORS_OKLCH)[]) {
+      const pair = COLORS_HEX[name];
+      expect(`${name} light ${pair.light}`).toBe(`${name} light ${oklchToHex(COLORS_OKLCH[name].light)}`);
+      expect(`${name} dark ${pair.dark}`).toBe(`${name} dark ${oklchToHex(COLORS_OKLCH[name].dark)}`);
+    }
+  });
+
+  test("exactly the ring/scrim/overlay tokens carry alpha bytes", () => {
+    const ALPHA_TOKENS = ["--surface-overlay", "--scrim", "--stroke-inverse", "--accent-ring"];
+    const HEX8 = /^#[0-9a-f]{8}$/;
+    for (const [name, pair] of Object.entries(COLORS_HEX)) {
+      const expected = ALPHA_TOKENS.includes(name) ? HEX8 : HEX6;
+      expect(pair.light).toMatch(expected);
+      expect(pair.dark).toMatch(expected);
+    }
   });
 
   test("anchor values pin the oklch-to-sRGB derivation", () => {
@@ -135,5 +161,14 @@ describe("non-color tokens", () => {
     expect(RADIUS["--radius-sm"]).toBe("3px");
     expect(TEXT_SCALE["--text-base"]).toBe("0.875rem");
     expect(TEXT_SCALE["--text-2xs"]).toBe("0.6875rem");
+  });
+
+  test("weight and leading keys mirror upstream typography.css", () => {
+    expect(WEIGHT["--weight-regular"]).toBe(400);
+    expect(WEIGHT["--weight-semibold"]).toBe(600);
+    expect(LEADING["--leading-tight"]).toBe(1.15);
+    expect(LEADING["--leading-normal"]).toBe(1.5);
+    for (const key of [...Object.keys(WEIGHT), ...Object.keys(LEADING)])
+      expect(key).toMatch(/^--(weight|leading)-[a-z]+$/);
   });
 });
