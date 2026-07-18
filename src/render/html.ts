@@ -3,18 +3,11 @@ import { dispatchRefLabel, dispatchedBody, interactionLabel, plural, rollupCount
 import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 import { STATUS_SEVERITY } from "../status";
 import { FILLER_BLOCKED, FILLER_COMPLETED, FILLER_IN_PROGRESS, FILLER_RECOMMENDATION } from "../narrative";
-import { COLORS_HEX, FONT_MONO, FONT_SANS, LEADING, RADIUS, SPACING, STATUS_COLORS, TEXT_SCALE, TRACKING, WEIGHT, type ColorRole } from "./theme";
+import { COLORS_HEX, FONT_MONO, FONT_SANS, LEADING, RADIUS, SPACING, STATUS_COLORS, statusCssVars, TEXT_SCALE, TRACKING, WEIGHT } from "./theme";
 
 export function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
-
-// Digest-only legacy palette (asl-ec7): the HTML report now styles by status
-// via theme.ts, but digest.ts still inlines these hexes and its golden is
-// byte-pinned, so the values must not change until the digest slice re-pins.
-// warning is #8a6d00, not the classic #b8860b: white-on-#b8860b is 3.25:1,
-// below AA for badge-size text.
-export const SEVERITY_COLOR: Record<Severity, string> = { urgent: "#c0392b", warning: "#8a6d00", info: "#2d7a46" };
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -66,24 +59,6 @@ const SCALAR_TOKEN_CSS = Object.entries({
   ...TRACKING,
 }).map(([token, v]) => `${token}: ${v};`).join(" ");
 
-// Badge var() names per color role — the var-name twin of theme.ts's
-// STATUS_COLORS resolution (which carries hexes for email surfaces): semantic
-// roles use their `-subtle` pair with the solid hue as dot; the two special
-// roles mirror theme.ts's composed() choices.
-function roleBadgeVars(role: ColorRole): { bg: string; fg: string; dot: string } {
-  switch (role) {
-    // One Signal Rule (DESIGN.md §2): live state is the Signal Green dot
-    // only — the word stays body ink, never a green filled badge. Transparent
-    // bg (not --bg-1): "a small colored dot plus a word, not a filled pill".
-    case "accent":
-      return { bg: "transparent", fg: "var(--fg-2)", dot: "var(--accent)" };
-    case "neutral":
-      return { bg: "var(--bg-3)", fg: "var(--fg-2)", dot: "var(--fg-3)" };
-    default:
-      return { bg: `var(--${role}-subtle)`, fg: `var(--${role}-subtle-fg)`, dot: `var(--${role})` };
-  }
-}
-
 // Dot geometry: the 7px hollow ring optically matches the 5px filled dot —
 // a stroked circle reads smaller than a filled one at equal diameter.
 const DOT_SIZE = "5px";
@@ -95,7 +70,7 @@ const HOLLOW_DOT_RING = "1.5px";
 // signal, §8 Q2) ring the hue instead of filling it.
 const STATUS_CSS = (Object.entries(STATUS_COLORS) as [Status, (typeof STATUS_COLORS)[Status]][])
   .flatMap(([status, c]) => {
-    const v = roleBadgeVars(c.role);
+    const v = statusCssVars(c);
     const rules = [`.${stClass(status)} { background: ${v.bg}; color: ${v.fg}; --dot: ${v.dot}; }`];
     if (c.dot === "hollow") {
       rules.push(`.${stClass(status)} .dot { width: ${HOLLOW_DOT_SIZE}; height: ${HOLLOW_DOT_SIZE}; background: transparent; border: ${HOLLOW_DOT_RING} solid var(--dot); }`);
