@@ -210,11 +210,13 @@ export function deriveTaskThreads(
   // over double-reporting the claimed run.
   threads.push(...fileClusterThreads(members.filter((m) => !claimed.has(m.session.sessionId)), redactPatterns));
 
-  // Bead threads before file clusters (key quality order), then worst status
-  // first (exceptions-first, like the agent sort), most recent activity, key.
+  // Worst status first (exceptions-first, like the agent sort) — the
+  // canonical order every surface (markdown, HTML, JSON, digest) renders
+  // as-is; within a status, bead threads before file clusters (key quality
+  // order), most recent activity, key.
   return threads.sort((a, b) =>
-    (a.source === b.source ? 0 : a.source === "bead" ? -1 : 1) ||
     STATUS_RANK[a.status] - STATUS_RANK[b.status] ||
+    (a.source === b.source ? 0 : a.source === "bead" ? -1 : 1) ||
     b.lastActivityAt.localeCompare(a.lastActivityAt) ||
     a.threadKey.localeCompare(b.threadKey));
 }

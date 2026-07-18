@@ -1,7 +1,7 @@
 import type { AgentReport, Report, TaskThread } from "../types";
 import { rollupLine, threadRollupSummary } from "./rollup";
 import { esc, SEVERITY_COLOR } from "./html";
-import { STATUS_RANK, STATUS_SEVERITY } from "../status";
+import { STATUS_SEVERITY } from "../status";
 
 // First sentence of a standup narrative (standup always opens with "I " —
 // see src/narrative.ts's Narrative.standup doc). The digest has room for a
@@ -51,17 +51,14 @@ function threadRow(t: TaskThread): string {
 // placement the markdown/html reports reconciled in asl-1wm: the exceptions
 // triage stays first (PRD §9: "the digest starts with exceptions"), threads
 // lead the body ahead of the run-by-run agent rows. Threads arrive
-// source-first from deriveTaskThreads (bead threads before file clusters —
-// a key-quality order, not a triage order), so the digest re-sorts them
-// worst-status-first to keep the exceptions-first posture: a failed file
-// cluster must outrank a completed bead thread. The sort is stable, so
-// within a status the derivation order (recency, key) is preserved. Absent
-// threads = absent section (and no Agents heading), byte-identical output.
+// worst-status-first from deriveTaskThreads (the canonical order for every
+// surface), so the exceptions-first posture holds with no local re-sort.
+// Absent threads = absent section (and no Agents heading), byte-identical
+// output.
 function threadsSection(report: Report): string {
   if (!report.threads?.length) return "";
-  const threads = [...report.threads].sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status]);
   return `${h2("Task threads")}
-<table role="presentation" style="width:100%; border-collapse:collapse; margin:0 0 1rem;">${threads.map(threadRow).join("")}</table>
+<table role="presentation" style="width:100%; border-collapse:collapse; margin:0 0 1rem;">${report.threads.map(threadRow).join("")}</table>
 `;
 }
 
