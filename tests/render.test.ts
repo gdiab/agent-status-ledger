@@ -409,29 +409,49 @@ describe("renderers", () => {
 
   test("html: rollup appears before exceptions", () => {
     const html = renderHtml(report);
-    expect(html).toContain("2 agents:");
-    expect(html.indexOf("2 agents:")).toBeLessThan(html.indexOf("Exceptions"));
+    expect(html).toContain('<div class="rollup-strip">');
+    expect(html.indexOf('class="rollup-strip"')).toBeLessThan(html.indexOf("Exceptions"));
   });
 
-  test("html: rollup renders counts as status chips reusing badge styling", () => {
+  test("html: rollup renders as a labeled stat strip, status chips reusing badge styling", () => {
     const html = renderHtml(report);
-    const start = html.indexOf('<p class="rollup">');
-    const rollup = html.slice(start, html.indexOf("</p>", start));
-    expect(rollup).toContain("2 agents:");
-    expect(rollup).toContain('class="badge st-needs_human"'); // needs_human chip
-    expect(rollup).toContain('class="badge st-completed"'); // completed chip
-    expect(rollup).toContain("1 needs_human");
-    expect(rollup).toContain("1 completed");
-    // worst-first, same order as the markdown rollup line
-    expect(rollup.indexOf("1 needs_human")).toBeLessThan(rollup.indexOf("1 completed"));
-    expect(rollup).toContain("2 commits");
-    expect(rollup).toContain("1 file touched"); // both fixtures touch the same file
+    const start = html.indexOf('<div class="rollup-strip">');
+    const strip = html.slice(start, html.indexOf("\n", start));
+    // four labeled segments in fixed order: Agents → Platforms → Status → Output
+    const labels = [...strip.matchAll(/<span class="seg-label">([^<]+)<\/span>/g)].map((m) => m[1]);
+    expect(labels).toEqual(["Agents", "Platforms", "Status", "Output"]);
+    expect(strip.match(/<div class="seg">/g)?.length).toBe(4);
+    // agent count is a bare mono value under its eyebrow, no "agents:" prose
+    expect(strip).toContain('<span class="seg-label">Agents</span><span class="seg-value">2</span>');
+    expect(strip).not.toContain("agents:");
+    // status chips are byte-identical statusBadge output, worst-first
+    expect(strip).toContain(`<span class="badge st-needs_human" title="${STATUS_HELP.needs_human}"><span class="dot" aria-hidden="true"></span>1 needs_human</span>`);
+    expect(strip).toContain('class="badge st-completed"');
+    expect(strip.indexOf("1 needs_human")).toBeLessThan(strip.indexOf("1 completed"));
+    // output counts: bare numbers with muted unit words, plural/singular correct
+    expect(strip).toContain('2 <span class="unit">commits</span>');
+    expect(strip).toContain('1 <span class="unit">file</span>'); // both fixtures touch the same file
   });
 
-  test("html: empty report rolls up to a plain sentence, no chips", () => {
+  test("html: strip values are mono; seg-label joins the shared eyebrow rule; hairline dividers", () => {
+    const html = renderHtml(report);
+    const value = cssRule(html, ".rollup-strip .seg-value");
+    expect(value).toContain("font-family: var(--font-mono)");
+    expect(value).toContain("color: var(--fg-1)");
+    expect(cssRule(html, ".rollup-strip .seg-value .unit")).toContain("color: var(--fg-3)");
+    // hairline segment dividers (Hairline-First Rule), suppressed on the first
+    expect(cssRule(html, ".rollup-strip .seg")).toContain("border-left: 1px solid var(--border-1)");
+    expect(cssRule(html, ".rollup-strip .seg:first-child")).toContain("border-left: none");
+    // masthead placement matches the old .rollup rule
+    expect(cssRule(html, ".rollup-strip")).toContain("margin: var(--space-4) 0 0");
+  });
+
+  test("html: empty report rolls up to a plain sentence, no chips, no strip", () => {
     const html = renderHtml({ ...report, exceptions: [], agents: [] });
-    expect(html).toContain("No agent activity in this window.");
+    expect(html).toContain('<p class="rollup">No agent activity in this window.</p>');
     expect(html).not.toContain('class="badge"');
+    // strip CSS is static, but no strip markup renders for an empty report
+    expect(html).not.toContain('<div class="rollup-strip">');
   });
 
   test("json: round-trips with schemaVersion", () => {
@@ -493,7 +513,7 @@ describe("renderers", () => {
     for (const layout of ["cards", "flat"] as const) {
       const html = renderHtml(report, { layout });
       const legend = html.indexOf('<details class="legend">');
-      expect(legend).toBeGreaterThan(html.indexOf('class="rollup"'));
+      expect(legend).toBeGreaterThan(html.indexOf('class="rollup-strip"'));
       expect(legend).toBeLessThan(html.indexOf("<h2>Exceptions</h2>"));
     }
   });
@@ -710,7 +730,7 @@ describe("renderers", () => {
   test("html: cards layout narrows dl labels to 6rem; dt is the mono eyebrow in both layouts", () => {
     const html = renderHtml(report);
     expect(cssRule(html, ".cards dl")).toContain("6rem minmax(0, 1fr)");
-    const dt = cssRule(html, ".kicker, .foot-brand, .group, .exceptions h2, dt, .legend > summary");
+    const dt = cssRule(html, ".kicker, .foot-brand, .group, .exceptions h2, dt, .legend > summary, .rollup-strip .seg-label");
     expect(dt).toContain("font-family: var(--font-mono)");
     expect(dt).toContain("font-size: var(--text-2xs)");
     expect(dt).toContain("text-transform: uppercase");
@@ -745,7 +765,7 @@ describe("renderers", () => {
     expect(masthead).toContain("<h1>Jul 8, 2026</h1>");
     expect(masthead.indexOf('class="kicker"')).toBeLessThan(masthead.indexOf("<h1>"));
     expect(masthead.indexOf("<h1>")).toBeLessThan(masthead.indexOf('class="window"'));
-    expect(masthead.indexOf('class="window"')).toBeLessThan(masthead.indexOf('class="rollup"'));
+    expect(masthead.indexOf('class="window"')).toBeLessThan(masthead.indexOf('class="rollup-strip"'));
     // Legend lives inside the masthead as a quiet affordance.
     expect(masthead).toContain('<details class="legend">');
     // Hairline rule separates the masthead from content; kicker shares the
@@ -934,7 +954,7 @@ describe("renderers", () => {
   test("html: report-level trends line sits under the rollup, escaped", () => {
     const html = renderHtml({ ...report, trends: ["2 commits vs 5 yesterday (-3)", "<x>"] });
     expect(html).toContain("Trends: 2 commits vs 5 yesterday (-3); &lt;x&gt;");
-    expect(html.indexOf('class="rollup"')).toBeLessThan(html.indexOf("Trends:"));
+    expect(html.indexOf('class="rollup-strip"')).toBeLessThan(html.indexOf("Trends:"));
     expect(html.indexOf("Trends:")).toBeLessThan(html.indexOf('<details class="legend">'));
     expect(renderHtml(report)).not.toContain("Trends:");
   });
