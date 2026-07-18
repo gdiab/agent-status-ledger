@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentProfile, CommitEvidence, FactSheet } from "../src/types";
-import { buildFactSheet, generateNarrative, templateNarrative } from "../src/narrative";
+import type { AgentEvent, AgentProfile, CommitEvidence, FactSheet, RawSession } from "../src/types";
+import { buildFactSheet, buildNarrativeFacts, generateNarrative, templateNarrative } from "../src/narrative";
+import { REDACTION_MARKER } from "../src/redact";
 
 const profile: AgentProfile = {
   profileId: "claude-code:/w", platform: "claude-code", workdir: "/w", displayName: "w (claude-code)",
@@ -35,6 +36,153 @@ describe("buildFactSheet", () => {
     expect(f.firstActivity).toBe("2026-07-07T09:00:00.000Z");
     expect(f.lastActivity).toBe("2026-07-07T11:30:00.000Z");
     expect(f.errors).toEqual(["Error: flaky test"]);
+  });
+});
+
+// ── buildNarrativeFacts: bounded event-derived signal for the LLM prompt ────
+
+function mkSession(sessionId: string, startedAt: string, events: AgentEvent[], over: Partial<RawSession> = {}): RawSession {
+  return {
+    platform: "codex", sessionId, cwd: "/w", startedAt,
+    lastEventAt: events.at(-1)?.timestamp ?? startedAt,
+    events, filesTouched: [], errors: [], ...over,
+  };
+}
+
+function mkProfile(sessions: RawSession[]): AgentProfile {
+  return { profileId: "codex:/w", platform: "codex", workdir: "/w", displayName: "w (codex)", sessions };
+}
+
+const at = (h: number, m = 0) =>
+  `2026-07-07T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00.000Z`;
+
+function facts(profile: AgentProfile) {
+  return buildNarrativeFacts(buildFactSheet(profile, []), profile, []);
+}
+
+describe("buildNarrativeFacts", () => {
+  test("carries the last completion message per session, newest session first", () => {
+    const profile = mkProfile([
+      mkSession("s1", at(9), [
+        { timestamp: at(9), type: "run_started", summary: "session started" },
+        { timestamp: at(9, 30), type: "completed", summary: "Review verdict: LGTM with two nits" },
+      ]),
+      mkSession("s2", at(11), [
+        { timestamp: at(11), type: "run_started", summary: "session started" },
+        { timestamp: at(11, 15), type: "completed", summary: "intermediate answer" },
+        { timestamp: at(11, 45), type: "completed", summary: "Final answer: the bug is in redact.ts" },
+      ]),
+    ]);
+    const f = facts(profile);
+    expect(f.sessionOutcomes).toEqual([
+      `${at(11, 45)} Final answer: the bug is in redact.ts`,
+      `${at(9, 30)} Review verdict: LGTM with two nits`,
+    ]);
+  });
+
+  test("caps outcomes to the newest sessions", () => {
+    const sessions = Array.from({ length: 8 }, (_, i) =>
+      mkSession(`s${i}`, at(i + 1), [{ timestamp: at(i + 1), type: "completed", summary: `conclusion ${i}` }]));
+    const f = facts(mkProfile(sessions));
+    expect(f.sessionOutcomes).toHaveLength(5);
+    expect(f.sessionOutcomes![0]).toContain("conclusion 7");
+    expect(f.sessionOutcomes!.at(-1)).toContain("conclusion 3");
+  });
+
+  test("skips content-free summaries everywhere", () => {
+    const profile = mkProfile([
+      mkSession("s1", at(9), [
+        { timestamp: at(9), type: "run_started", summary: "session started" },
+        { timestamp: at(9, 1), type: "run_progressed", summary: "task_started" },
+        { timestamp: at(9, 2), type: "run_progressed", summary: "agent_message" },
+        { timestamp: at(9, 3), type: "run_progressed", summary: "user turn" },
+        { timestamp: at(9, 4), type: "run_progressed", summary: "assistant turn" },
+        { timestamp: at(9, 5), type: "completed", summary: "task complete" },
+      ]),
+    ]);
+    const f = facts(profile);
+    expect(f.sessionOutcomes).toBeUndefined();
+    expect(f.eventHighlights).toBeUndefined();
+  });
+
+  test("prioritizes failures over other events when over the line cap", () => {
+    const noise: AgentEvent[] = Array.from({ length: 20 }, (_, i) => ({
+      timestamp: at(10, i), type: "run_progressed" as const, summary: `progress detail ${i}`,
+    }));
+    const failures: AgentEvent[] = Array.from({ length: 4 }, (_, i) => ({
+      timestamp: at(12, i), type: "failed" as const, summary: `boom ${i}`,
+    }));
+    const f = facts(mkProfile([mkSession("s1", at(10), [...noise, ...failures])]));
+    expect(f.eventHighlights).toHaveLength(12);
+    for (let i = 0; i < 4; i++) expect(f.eventHighlights!.join("\n")).toContain(`boom ${i}`);
+    // failures come first, then recent progress
+    expect(f.eventHighlights![0]).toContain("boom 3");
+  });
+
+  test("enforces per-line caps including ellipsis and total line cap", () => {
+    const long = "x".repeat(1000);
+    const events: AgentEvent[] = [
+      { timestamp: at(9), type: "failed", summary: long },
+      { timestamp: at(9, 30), type: "completed", summary: long },
+      ...Array.from({ length: 40 }, (_, i) => ({
+        timestamp: at(10, i % 60), type: "run_progressed" as const, summary: `detail ${i} ${long}`,
+      })),
+    ];
+    const f = facts(mkProfile([mkSession("s1", at(9), events)]));
+    expect(f.eventHighlights!.length).toBeLessThanOrEqual(12);
+    for (const line of f.eventHighlights!) {
+      expect(line.length).toBeLessThanOrEqual(200);
+      expect(line.endsWith("…")).toBe(true);
+    }
+    for (const line of f.sessionOutcomes!) {
+      expect(line.length).toBeLessThanOrEqual(400);
+    }
+  });
+
+  test("outcome lines flow through redaction before capping", () => {
+    const secret = `sk-${"a".repeat(24)}`;
+    const profile = mkProfile([
+      mkSession("s1", at(9), [
+        { timestamp: at(9), type: "completed", summary: `done, key was ${secret}` },
+        { timestamp: at(9, 5), type: "failed", summary: `auth failed with ${secret}` },
+      ]),
+    ]);
+    const f = buildNarrativeFacts(buildFactSheet(profile, []), profile, []);
+    const all = [...(f.sessionOutcomes ?? []), ...(f.eventHighlights ?? [])].join("\n");
+    expect(all).not.toContain(secret);
+    expect(all).toContain(REDACTION_MARKER);
+  });
+
+  test("completion events used as outcomes are not duplicated into highlights", () => {
+    const profile = mkProfile([
+      mkSession("s1", at(9), [
+        { timestamp: at(9, 30), type: "completed", summary: "the only conclusion" },
+      ]),
+    ]);
+    const f = facts(profile);
+    expect(f.sessionOutcomes).toHaveLength(1);
+    expect(f.eventHighlights).toBeUndefined();
+  });
+
+  test("base factsheet fields pass through untouched", () => {
+    const f = buildNarrativeFacts(buildFactSheet(profile, commits), profile, []);
+    expect(f.titles).toEqual(["Fix login bug"]);
+    expect(f.sessionCount).toBe(2);
+  });
+
+  test("codex-review-shaped profile (no titles/files/commits) still yields usable content", () => {
+    const verdict = "Overall: the diff is correct. Two findings: (1) missing null check in parse(); (2) test asserts wrong constant.";
+    const profile = mkProfile([
+      mkSession("rev1", at(8), [
+        { timestamp: at(8), type: "run_started", summary: "session started" },
+        { timestamp: at(8, 1), type: "run_progressed", summary: "task_started" },
+        { timestamp: at(8, 40), type: "completed", summary: verdict },
+      ]),
+    ]);
+    const f = facts(profile);
+    expect(f.titles).toEqual([]);
+    expect(f.commits).toEqual([]);
+    expect(f.sessionOutcomes).toEqual([`${at(8, 40)} ${verdict}`]);
   });
 });
 
@@ -91,6 +239,27 @@ describe("generateNarrative", () => {
       new Response(JSON.stringify({ content: [{ type: "text", text: "not json at all" }] }), { status: 200 })) as unknown as typeof fetch;
     const r = await generateNarrative(facts, "completed", { model: "m", apiKey: "k", fetchFn });
     expect(r.source).toBe("template");
+  });
+
+  test("prompt carries sessionOutcomes and eventHighlights when present", async () => {
+    const enriched = {
+      ...facts,
+      sessionOutcomes: ["2026-07-07T09:30:00.000Z Review verdict: LGTM"],
+      eventHighlights: ["2026-07-07T09:10:00.000Z failed: boom"],
+    };
+    let prompt = "";
+    const fetchFn = (async (_url: any, init: any) => {
+      prompt = JSON.parse(init.body).messages[0].content;
+      return new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify({ workedOn: "w", completed: "c", inProgress: "i", blocked: "b", recommendation: "r", standup: "I did." }) }] }), { status: 200 });
+    }) as typeof fetch;
+    await generateNarrative(enriched, "completed", { model: "m", apiKey: "k", fetchFn });
+    expect(prompt).toContain("Review verdict: LGTM");
+    expect(prompt).toContain("failed: boom");
+  });
+
+  test("templateNarrative ignores enrichment fields (no-llm output unchanged)", () => {
+    const enriched = { ...facts, sessionOutcomes: ["x"], eventHighlights: ["y"] };
+    expect(templateNarrative(enriched, "completed")).toEqual(templateNarrative(facts, "completed"));
   });
 
   test("LLM response missing standup keeps llm source, template-fills standup only", async () => {
