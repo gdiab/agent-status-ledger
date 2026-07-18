@@ -14,7 +14,10 @@ export interface RollupCounts {
   files: number;
 }
 
-export const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+// Word-form rule exported on its own so renderers that place their own markup
+// between count and word (HTML unit spans) share the same singular/plural seam.
+export const pluralWord = (count: number, word: string) => `${word}${count === 1 ? "" : "s"}`;
+export const plural = (count: number, word: string) => `${count} ${pluralWord(count, word)}`;
 
 // Counts only — renderers own presentation (markdown prose, HTML chips).
 export function rollupCounts(report: Report): RollupCounts {

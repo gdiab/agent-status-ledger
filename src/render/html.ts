@@ -1,5 +1,5 @@
 import type { AgentReport, Report, Severity, Status, TaskThread } from "../types";
-import { dispatchRefLabel, dispatchedBody, interactionLabel, plural, rollupCounts, rollupLine, threadSessionSummary } from "./rollup";
+import { dispatchRefLabel, dispatchedBody, interactionLabel, plural, pluralWord, rollupCounts, rollupLine, threadSessionSummary } from "./rollup";
 import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 import { STATUS_SEVERITY } from "../status";
 import { FILLER_BLOCKED, FILLER_COMPLETED, FILLER_IN_PROGRESS, FILLER_RECOMMENDATION } from "../narrative";
@@ -69,6 +69,13 @@ const SCALAR_TOKEN_CSS = Object.entries({
 const DOT_SIZE = "5px";
 const HOLLOW_DOT_SIZE = "7px";
 const HOLLOW_DOT_RING = "1.5px";
+
+// Badge chip height, shared with the rollup strip: .seg-value reserves the
+// rendered chip height so text-only segments (Agents, Output) match the
+// Status segment's row height instead of jittering shorter. If .badge's
+// min-height or vertical metrics change, revisit SEG_VALUE_MIN_HEIGHT.
+const BADGE_MIN_HEIGHT = "18px";
+const SEG_VALUE_MIN_HEIGHT = "22px"; // BADGE_MIN_HEIGHT + 4px optical breathing
 
 // One .st-* rule per status, generated from STATUS_COLORS so the Record<Status, …>
 // exhaustiveness check covers the CSS too. Hollow dots (silent: absence of
@@ -241,9 +248,9 @@ function rollupStrip(report: Report): string {
   if (report.agents.length === 0) return `<p class="rollup">${esc(rollupLine(report))}</p>`;
   const c = rollupCounts(report);
   const seg = (label: string, value: string) => `<div class="seg"><span class="seg-label">${label}</span><span class="seg-value">${value}</span></div>`;
-  // Bare mono number, unit word demoted to a muted span; plural() keeps the
-  // singular/plural rule single-sourced (its output is "N word(s)").
-  const unit = (count: number, word: string) => plural(count, word).replace(/ (.+)$/, ' <span class="unit">$1</span>');
+  // Bare mono number, unit word demoted to a muted span; pluralWord keeps the
+  // singular/plural rule single-sourced with plural().
+  const unit = (count: number, word: string) => `${count} <span class="unit">${pluralWord(count, word)}</span>`;
   const platforms = c.byPlatform.map(({ platform, count }) => `${platformIcon(platform, { labeled: true })} ${count}`).join(" · ");
   const chips = c.byStatus.map(({ status, count }) => statusBadge(status, `${count} ${status}`)).join(" ");
   return `<div class="rollup-strip">${seg("Agents", String(c.agents))}${seg("Platforms", `<span class="platforms">${platforms}</span>`)}${seg("Status", chips)}${seg("Output", `${unit(c.commits, "commit")} ${unit(c.files, "file")}`)}</div>`;
@@ -332,12 +339,16 @@ h4 { margin: .75rem 0 .25rem; font-size: var(--text-sm); color: var(--fg-1); }
 .masthead .window { margin: var(--space-1) 0 0; }
 .masthead .rollup { margin: var(--space-4) 0 0; } /* zero-agent prose fallback */
 /* Rollup strip: labeled stat segments (futurist Stat pattern), hairline
-   dividers between segments (Hairline-First Rule). */
-.rollup-strip { display: flex; flex-wrap: wrap; margin: var(--space-4) 0 0; }
-.rollup-strip .seg { display: flex; flex-direction: column; gap: var(--space-2); padding: 0 var(--space-5); border-left: 1px solid var(--border-1); }
-.rollup-strip .seg:first-child { padding-left: 0; border-left: none; }
+   dividers between segments (Hairline-First Rule). Wrap safety: dividers are
+   clipped ::before lines centered in the column-gap, not border-left — a
+   border-left divider dangles on whichever segment starts a wrapped row.
+   Here every seg draws one, and overflow:hidden clips the first child's AND
+   each wrapped-row leader's divider at the container edge uniformly. */
+.rollup-strip { display: flex; flex-wrap: wrap; column-gap: calc(2 * var(--space-5)); row-gap: var(--space-3); margin: var(--space-4) 0 0; overflow: hidden; }
+.rollup-strip .seg { position: relative; display: flex; flex-direction: column; gap: var(--space-2); }
+.rollup-strip .seg::before { content: ""; position: absolute; left: calc(-1 * var(--space-5)); top: 0; width: 1px; height: 100%; background: var(--border-1); }
 .rollup-strip .seg-label { color: var(--fg-3); }
-.rollup-strip .seg-value { font-family: var(--font-mono); font-size: var(--text-base); color: var(--fg-1); display: flex; align-items: center; gap: var(--space-2); min-height: 22px; }
+.rollup-strip .seg-value { font-family: var(--font-mono); font-size: var(--text-base); color: var(--fg-1); display: flex; align-items: center; gap: var(--space-2); min-height: ${SEG_VALUE_MIN_HEIGHT}; }
 .rollup-strip .seg-value .unit { color: var(--fg-3); }
 .exceptions { background: var(--danger-subtle); border: 1px solid var(--border-1); border-radius: var(--radius-lg); padding: var(--card-pad); margin: 1rem 0; overflow-wrap: anywhere; }
 /* Mono eyebrow: the one caps-label idiom shared by the masthead kicker,
@@ -348,7 +359,7 @@ h4 { margin: .75rem 0 .25rem; font-size: var(--text-sm); color: var(--fg-1); }
 .card { background: var(--bg-1); border: 1px solid var(--border-1); border-radius: var(--radius-lg); padding: var(--card-pad); margin: 1rem 0; overflow-wrap: anywhere; }
 .card.sev-urgent, .thread.sev-urgent { background: var(--danger-subtle); }
 .card header { display: flex; flex-wrap: wrap; gap: .6rem; row-gap: .25rem; align-items: center; margin-bottom: .5rem; }
-.badge { display: inline-flex; align-items: center; gap: .4em; min-height: 18px; padding: 0 7px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: 0.03em; line-height: 1; }
+.badge { display: inline-flex; align-items: center; gap: .4em; min-height: ${BADGE_MIN_HEIGHT}; padding: 0 7px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: 0.03em; line-height: 1; }
 .badge .dot { flex: none; width: ${DOT_SIZE}; height: ${DOT_SIZE}; border-radius: 50%; background: var(--dot); }
 ${STATUS_CSS}
 .evidence { color: var(--fg-3); font-family: var(--font-mono); font-size: var(--text-2xs); }

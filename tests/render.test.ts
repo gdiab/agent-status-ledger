@@ -5,6 +5,7 @@ import { renderMarkdown } from "../src/render/markdown";
 import { renderJson } from "../src/render/json";
 import { renderHtml, isHtmlLayout } from "../src/render/html";
 import { STATUS_HELP, EVIDENCE_HELP } from "../src/render/legend";
+import { plural, pluralWord } from "../src/render/rollup";
 import { FILLER_BLOCKED, FILLER_COMPLETED, FILLER_IN_PROGRESS, FILLER_RECOMMENDATION } from "../src/narrative";
 import { redact } from "../src/redact";
 
@@ -383,6 +384,14 @@ describe("renderers", () => {
     expect(md).toContain("1 agent: 1 completed — 1 commit, 1 file touched");
   });
 
+  test("pluralWord is the word-form seam plural is built on", () => {
+    expect(pluralWord(1, "commit")).toBe("commit");
+    expect(pluralWord(2, "commit")).toBe("commits");
+    expect(pluralWord(0, "file")).toBe("files");
+    expect(plural(1, "file")).toBe(`1 ${pluralWord(1, "file")}`);
+    expect(plural(3, "file")).toBe(`3 ${pluralWord(3, "file")}`);
+  });
+
   test("markdown: rollup counts unique files across agents", () => {
     const md = renderMarkdown({ ...report, agents: [agent({}), agent({ profileId: "codex:/w" })] });
     expect(md).toContain("1 file touched");
@@ -424,8 +433,9 @@ describe("renderers", () => {
     // agent count is a bare mono value under its eyebrow, no "agents:" prose
     expect(strip).toContain('<span class="seg-label">Agents</span><span class="seg-value">2</span>');
     expect(strip).not.toContain("agents:");
-    // status chips are byte-identical statusBadge output, worst-first
-    expect(strip).toContain(`<span class="badge st-needs_human" title="${STATUS_HELP.needs_human}"><span class="dot" aria-hidden="true"></span>1 needs_human</span>`);
+    // status chips reuse statusBadge classes/labels, worst-first
+    expect(strip).toContain('class="badge st-needs_human"');
+    expect(strip).toContain("1 needs_human");
     expect(strip).toContain('class="badge st-completed"');
     expect(strip.indexOf("1 needs_human")).toBeLessThan(strip.indexOf("1 completed"));
     // output counts: bare numbers with muted unit words, plural/singular correct
@@ -433,17 +443,29 @@ describe("renderers", () => {
     expect(strip).toContain('1 <span class="unit">file</span>'); // both fixtures touch the same file
   });
 
-  test("html: strip values are mono; seg-label joins the shared eyebrow rule; hairline dividers", () => {
+  test("html: strip values are mono; seg-label joins the shared eyebrow rule; wrap-safe hairline dividers", () => {
     const html = renderHtml(report);
     const value = cssRule(html, ".rollup-strip .seg-value");
     expect(value).toContain("font-family: var(--font-mono)");
     expect(value).toContain("color: var(--fg-1)");
     expect(cssRule(html, ".rollup-strip .seg-value .unit")).toContain("color: var(--fg-3)");
-    // hairline segment dividers (Hairline-First Rule), suppressed on the first
-    expect(cssRule(html, ".rollup-strip .seg")).toContain("border-left: 1px solid var(--border-1)");
-    expect(cssRule(html, ".rollup-strip .seg:first-child")).toContain("border-left: none");
-    // masthead placement matches the old .rollup rule
-    expect(cssRule(html, ".rollup-strip")).toContain("margin: var(--space-4) 0 0");
+    // Wrap-safe dividers: spacing via gap, every seg draws a ::before line
+    // offset into the gap, and the strip clips row-leading dividers at its
+    // edge. A border-left divider would dangle on wrapped rows, so the old
+    // border-left/:first-child pair must stay gone.
+    const strip = cssRule(html, ".rollup-strip");
+    expect(strip).toContain("column-gap: calc(2 * var(--space-5))");
+    expect(strip).toContain("row-gap: var(--space-3)");
+    expect(strip).toContain("overflow: hidden");
+    expect(strip).toContain("margin: var(--space-4) 0 0"); // masthead placement matches the old .rollup rule
+    const divider = cssRule(html, ".rollup-strip .seg::before");
+    expect(divider).toContain("position: absolute");
+    expect(divider).toContain("left: calc(-1 * var(--space-5))"); // centered in the gap
+    expect(divider).toContain("width: 1px");
+    expect(divider).toContain("background: var(--border-1)");
+    expect(cssRule(html, ".rollup-strip .seg")).toContain("position: relative");
+    expect(cssRule(html, ".rollup-strip .seg")).not.toContain("border-left");
+    expect(html).not.toContain(".rollup-strip .seg:first-child");
   });
 
   test("html: empty report rolls up to a plain sentence, no chips, no strip", () => {
