@@ -253,17 +253,19 @@ describe("renderEmailDigest with task threads (PRD §7)", () => {
   test("threads render in report order — deriveTaskThreads' worst-status-first is canonical", () => {
     // deriveTaskThreads sorts worst-status-first (bead-before-cluster within
     // a status); the digest must not re-order, so the canonical order is the
-    // one every surface (markdown, HTML, JSON, digest) shows.
+    // one every surface (markdown, HTML, JSON, digest) shows. The fixture is
+    // deliberately NOT in status order — a reintroduced status re-sort in the
+    // digest would move asl-ok and fail this test.
     const html = renderEmailDigest({
       ...report,
       threads: [
+        thread({ threadKey: "asl-ok", title: "asl-ok", source: "bead", status: "completed" }),
         thread({ threadKey: "files:/w/src/login.ts", title: "login.ts, session.ts", source: "files", status: "failed" }),
         thread({ threadKey: "asl-stuck", title: "asl-stuck", source: "bead", status: "blocked" }),
         thread({ threadKey: "files:/w/src/api.ts", title: "api.ts", source: "files", status: "blocked" }),
-        thread({ threadKey: "asl-ok", title: "asl-ok", source: "bead", status: "completed" }),
       ],
     });
-    const order = ["login.ts, session.ts", "asl-stuck", "api.ts", "asl-ok"].map((t) => html.indexOf(t));
+    const order = ["asl-ok", "login.ts, session.ts", "asl-stuck", "api.ts"].map((t) => html.indexOf(t));
     expect(order.every((i) => i > -1)).toBe(true);
     expect(order).toEqual([...order].sort((a, b) => a - b)); // report order preserved verbatim
   });
