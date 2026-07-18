@@ -217,3 +217,24 @@ opacity-based muting → literal `--fg-3` #6d7075), 14px base / 12px meta sizes,
    on Q4; last, smallest, easiest to drop.
 
 Markdown/JSON renderers: explicitly out of scope (no styling surface; goldens stay green).
+
+## 8. Decisions (George, 2026-07-17)
+
+- **Q1 fonts:** `@import` with system fallback for now. Longer term the report is served by a small
+  cron-ensured `Bun.serve()` dashboard (fonts local, history view) — exploration filed as asl-eia;
+  history location/retention/lifecycle to be fleshed out there.
+- **Q2 silent:** hollow dot ○ (absence of signal) in **caution amber**, not danger red — silent may
+  or may not be an issue, so it reads as caution; `failed` stays filled danger ●. Note this is a
+  display hue only: `STATUS_SEVERITY.silent` remains `urgent` and the exception partition is
+  unchanged. §3's silent row supersedes accordingly (warning family, hollow). Companion feature
+  filed as asl-kjo: silent rows should surface what the agent was working on right before it went
+  dark, to drive triage.
+- **Q3 needs_human:** warning amber (no semantic drift).
+- **Q4 signature grammar:** implementer's judgment, guided by DESIGN.md's "deliberately, not on
+  every section"; George reviews visually.
+- **Q5 side stripes:** ban accepted — dot+word badges + `-subtle` tints replace all stripes.
+- **Q6 urgent card weight:** full `danger-subtle` background tint (system precedent); dial back to
+  badge-only if too loud on review.
+- **Q7 hex fallbacks:** yes — derived hex table lands upstream in futurist-design-system
+  (`tokens/colors.hex.json`) so the conversion has one owner.
+- **Q8 digest dark mode:** ship light-only; accept Gmail auto-darkening.
