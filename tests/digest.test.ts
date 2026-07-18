@@ -237,7 +237,7 @@ describe("renderEmailDigest", () => {
 
 function threadSession(over: Partial<ThreadSession>): ThreadSession {
   return {
-    sessionId: "aaaaaaaa-1111-2222-3333-444444444444", profile: "w (claude-code)",
+    sessionId: "aaaaaaaa-1111-2222-3333-444444444444", profile: "w (claude-code)", platform: "claude-code",
     startedAt: "2026-07-07T09:00:00.000Z", lastEventAt: "2026-07-07T09:30:00.000Z",
     files: 3, commits: 2, errors: 0,
     ...over,
@@ -252,7 +252,7 @@ function thread(over: Partial<TaskThread>): TaskThread {
     sessions: [
       threadSession({}),
       threadSession({
-        sessionId: "bbbbbbbb-1111-2222-3333-444444444444", profile: "infra (codex)",
+        sessionId: "bbbbbbbb-1111-2222-3333-444444444444", profile: "infra (codex)", platform: "codex",
         startedAt: "2026-07-08T06:00:00.000Z", lastEventAt: "2026-07-08T06:45:00.000Z",
         files: 0, commits: 1, errors: 0,
       }),

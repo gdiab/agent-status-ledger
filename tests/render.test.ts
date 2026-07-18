@@ -1001,12 +1001,12 @@ describe("task-thread rendering", () => {
     lastActivityAt: "2026-07-07T12:30:00.000Z",
     sessions: [
       {
-        sessionId: "bbbb0000-0000-4000-8000-00000000000b", profile: "two (claude-code)",
+        sessionId: "bbbb0000-0000-4000-8000-00000000000b", profile: "two (claude-code)", platform: "claude-code" as const,
         startedAt: "2026-07-07T09:00:00.000Z", lastEventAt: "2026-07-07T09:30:00.000Z",
         files: 2, commits: 0, errors: 1,
       },
       {
-        sessionId: "aaaa0000-0000-4000-8000-00000000000a", profile: "one (claude-code)",
+        sessionId: "aaaa0000-0000-4000-8000-00000000000a", profile: "one (claude-code)", platform: "claude-code" as const,
         startedAt: "2026-07-07T12:00:00.000Z", lastEventAt: "2026-07-07T12:30:00.000Z",
         files: 3, commits: 1, errors: 0,
       },

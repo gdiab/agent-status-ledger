@@ -51,6 +51,7 @@ function toThreadSession(m: Member, commits: number): ThreadSession {
   return {
     sessionId: m.session.sessionId,
     profile: m.agent.displayName,
+    platform: m.agent.platform,
     startedAt: m.session.startedAt,
     lastEventAt: m.session.lastEventAt,
     files: m.session.filesTouched.length,

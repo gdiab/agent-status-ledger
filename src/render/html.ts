@@ -5,10 +5,7 @@ import { STATUS_SEVERITY } from "../status";
 import { FILLER_BLOCKED, FILLER_COMPLETED, FILLER_IN_PROGRESS, FILLER_RECOMMENDATION } from "../narrative";
 import { COLORS_HEX, FONT_MONO, FONT_SANS, LEADING, RADIUS, SPACING, STATUS_COLORS, statusCssVars, TEXT_SCALE, TRACKING, WEIGHT } from "./theme";
 import { platformIcon } from "./icons";
-
-export function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
+import { esc } from "./esc";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -195,16 +192,6 @@ function cardBody(a: AgentReport): string {
   ${errors ? `<h4>Errors</h4><ul class="errors">${errors}</ul>` : ""}`;
 }
 
-// Thread members carry only the profile display name; its "(platform)"
-// suffix is deterministic (displayName is `${basename} (${platform})`,
-// src/report.ts), so parse it back for the run line's mark. No suffix →
-// no icon: a bare profile shouldn't get a "brand unknown" ring for what is
-// really a parsing miss.
-function profileSuffixIcon(profile: string): string {
-  const m = profile.match(/\(([^()]+)\)$/);
-  return m ? platformIcon(m[1]!) : "";
-}
-
 // One task thread (src/threads.ts): title, status badge (severity-colored
 // like card badges), evidence label, then one line per member run with its
 // evidence counts. Session refs reuse dispatchRefLabel so threads and
@@ -212,7 +199,7 @@ function profileSuffixIcon(profile: string): string {
 // fmtUtc convention with the full ISO in a title.
 function threadBlock(t: TaskThread): string {
   const runs = t.sessions.map((s) =>
-    `<li title="${esc(s.startedAt)}"><span class="ts">${esc(fmtUtc(s.startedAt))}</span> — ${profileSuffixIcon(s.profile)}${esc(dispatchRefLabel({ sessionId: s.sessionId, profile: s.profile }))}: ${esc(threadSessionSummary(s))}</li>`,
+    `<li title="${esc(s.startedAt)}"><span class="ts">${esc(fmtUtc(s.startedAt))}</span> — ${platformIcon(s.platform)}${esc(dispatchRefLabel({ sessionId: s.sessionId, profile: s.profile }))}: ${esc(threadSessionSummary(s))}</li>`,
   ).join("");
   return `<div class="thread ${sevClass(STATUS_SEVERITY[t.status])}">
   <h3>${esc(t.title)}${t.source === "files" ? ` <span class="thread-source">(file cluster)</span>` : ""}
@@ -241,26 +228,18 @@ function flatCard(a: AgentReport): string {
 </article>`;
 }
 
-// Per-platform agent counts for the rollup line (asl-9j3): icon + count
-// segments derived from report.agents[].platform, largest first (platform id
-// breaks ties, so equal-count order is deterministic). The status chip row
-// stays status-only — the platform split is provenance, not a status signal.
-function platformCounts(report: Report): string {
-  const counts = new Map<string, number>();
-  for (const a of report.agents) counts.set(a.platform, (counts.get(a.platform) ?? 0) + 1);
-  return [...counts.entries()]
-    .sort(([pa, ca], [pb, cb]) => cb - ca || (pa < pb ? -1 : 1))
-    .map(([platform, count]) => `${platformIcon(platform)} ${count}`)
-    .join(" · ");
-}
-
 // Counts-by-status as small badge-styled chips: always-visible legend, and
-// the eye can match chip color to card badges without reading.
+// the eye can match chip color to card badges without reading. The platform
+// split (asl-9j3) renders rollupCounts.byPlatform as icon + count segments,
+// labeled icons — here the mark alone names the platform, so it carries the
+// accessible name. The status chip row stays status-only — the platform
+// split is provenance, not a status signal.
 function rollupChips(report: Report): string {
   if (report.agents.length === 0) return `<p class="rollup">${esc(rollupLine(report))}</p>`;
   const c = rollupCounts(report);
+  const platforms = c.byPlatform.map(({ platform, count }) => `${platformIcon(platform, { labeled: true })} ${count}`).join(" · ");
   const chips = c.byStatus.map(({ status, count }) => statusBadge(status, `${count} ${status}`)).join(" ");
-  return `<p class="rollup">${plural(c.agents, "agent")}: <span class="platforms">${platformCounts(report)}</span> · ${chips} · ${plural(c.commits, "commit")}, ${plural(c.files, "file")} touched</p>`;
+  return `<p class="rollup">${plural(c.agents, "agent")}: <span class="platforms">${platforms}</span> · ${chips} · ${plural(c.commits, "commit")}, ${plural(c.files, "file")} touched</p>`;
 }
 
 function standupCard(a: AgentReport): string {

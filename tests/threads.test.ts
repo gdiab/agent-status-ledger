@@ -63,7 +63,7 @@ describe("deriveTaskThreads: bead keys", () => {
     expect(t.workdir).toBeUndefined();      // members span two workdirs
     // evidence counts only, never content
     expect(t.sessions[1]).toEqual({
-      sessionId: "a1", profile: "one (claude-code)",
+      sessionId: "a1", profile: "one (claude-code)", platform: "claude-code",
       startedAt: "2026-07-07T12:00:00.000Z", lastEventAt: "2026-07-07T12:30:00.000Z",
       files: 1, commits: 0, errors: 0,
     });
