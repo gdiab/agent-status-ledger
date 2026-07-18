@@ -123,7 +123,8 @@ describe("renderEmailDigest", () => {
       ...report,
       exceptions: [{ ...blocked, awaitingQuestion: overCap as SanitizedTapeText }],
     });
-    expect(htmlOver).toContain(`“${"q".repeat(AWAITING_QUESTION_MAX)}…”`);
+    // the cap bounds the OUTPUT, ellipsis included — never 141 chars on a 140 cap
+    expect(htmlOver).toContain(`“${"q".repeat(AWAITING_QUESTION_MAX - 1)}…”`);
     expect(htmlOver).not.toContain(overCap); // never more content than the cap
   });
 
@@ -144,15 +145,16 @@ describe("renderEmailDigest", () => {
   });
 
   test("truncation never leaves a lone surrogate when an astral char straddles the cap", () => {
-    // "😀" occupies UTF-16 units 138–139 (0-indexed): a naive
-    // slice(0, cap - 1) cut keeps a lone high surrogate that renders as
-    // U+FFFD; the safe cut keeps the pair whole.
+    // "😀" occupies UTF-16 units 138–139 (0-indexed): the cap-inclusive cut
+    // at unit 139 lands mid-pair, so a naive slice keeps a lone high
+    // surrogate that renders as U+FFFD; the safe cut backs off to before
+    // the pair.
     const q = `${"x".repeat(138)}😀 and then some — proceed?` as SanitizedTapeText;
     const html = renderEmailDigest({
       ...report,
       exceptions: [{ ...blocked, awaitingQuestion: q }],
     });
-    expect(html).toContain(`“${"x".repeat(138)}😀…”`);
+    expect(html).toContain(`“${"x".repeat(138)}…”`);
     expect(html).not.toContain("\ud83d"); // no lone high surrogate
     expect(html).not.toContain("�");
   });

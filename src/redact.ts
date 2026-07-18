@@ -187,12 +187,14 @@ export const REDACTION_MARKER = "[REDACTED]";
 // ellipsis: never through a surrogate pair (a split non-BMP char renders as
 // U+FFFD garbage) and never through a REDACTION_MARKER — in both cases the
 // cut backs off to before the atom. Marker characters are ASCII, so the
-// marker back-off can never re-create a surrogate split. The one truncator
-// for sanitized tape text; per-surface policy caps live at the call sites
-// (dialogue.ts's QUESTION_MAX_CHARS, digest.ts's AWAITING_QUESTION_MAX).
+// marker back-off can never re-create a surrogate split. The cap is a hard
+// bound on the OUTPUT, ellipsis included — a "140-char cap" surface never
+// emits 141. The one truncator for sanitized tape text; per-surface policy
+// caps live at the call sites (dialogue.ts's QUESTION_MAX_CHARS, digest.ts's
+// AWAITING_QUESTION_MAX).
 export function capSanitizedText(s: SanitizedTapeText, max: number): SanitizedTapeText {
   if (s.length <= max) return s;
-  let cut = max;
+  let cut = max - 1;
   const hi = s.charCodeAt(cut - 1);
   const lo = s.charCodeAt(cut);
   if (hi >= 0xd800 && hi <= 0xdbff && lo >= 0xdc00 && lo <= 0xdfff) cut--;
