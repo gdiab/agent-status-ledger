@@ -342,13 +342,14 @@ h4 { margin: .75rem 0 .25rem; font-size: var(--text-sm); color: var(--fg-1); }
    hairlines over boxes). */
 .masthead { margin: 0 0 var(--space-6); padding-bottom: var(--space-5); border-bottom: 1px solid var(--border-1); }
 .masthead .kicker { margin: 0 0 var(--space-2); color: var(--fg-3); }
+.kicker::before { content: "// "; }
 .masthead h1 { margin: 0; }
 .masthead .window { margin: var(--space-1) 0 0; }
 .masthead .rollup { margin: var(--space-4) 0 0; }
 .exceptions { background: var(--danger-subtle); border: 1px solid var(--border-1); border-radius: var(--radius-lg); padding: var(--card-pad); margin: 1rem 0; overflow-wrap: anywhere; }
 /* Mono eyebrow: the one caps-label idiom shared by the masthead kicker,
    footer wordmark, section labels, and dl terms. */
-.kicker, .foot-brand, .group, .exceptions h2, dt { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-caps); text-transform: uppercase; }
+.kicker, .foot-brand, .group, .exceptions h2, dt, .legend > summary { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-caps); text-transform: uppercase; }
 .exceptions h2 { margin: 0 0 .5rem; color: var(--danger-subtle-fg); }
 .exceptions h2::before { content: "// "; }
 .card { background: var(--bg-1); border: 1px solid var(--border-1); border-radius: var(--radius-lg); padding: var(--card-pad); margin: 1rem 0; overflow-wrap: anywhere; }
@@ -368,7 +369,7 @@ code { font-family: var(--font-mono); font-size: .92em; }
 .dir { color: var(--fg-4); }
 /* Legend: a quiet mono affordance inside the masthead, not a content block. */
 .legend { color: var(--fg-3); font-size: var(--text-xs); margin: var(--space-4) 0 0; }
-.legend > summary { cursor: pointer; width: fit-content; font-family: var(--font-mono); font-size: var(--text-2xs); letter-spacing: var(--tracking-caps); text-transform: uppercase; font-weight: var(--weight-medium); }
+.legend > summary { cursor: pointer; width: fit-content; }
 .legend h4 { font-size: var(--text-xs); }
 .ts { font-family: var(--font-mono); }
 .thread { background: var(--bg-1); border: 1px solid var(--border-1); border-radius: var(--radius-lg); padding: .75rem var(--card-pad); margin: 1rem 0; overflow-wrap: anywhere; }
@@ -389,7 +390,7 @@ code { font-family: var(--font-mono); font-size: .92em; }
 </head>
 <body>
 <header class="masthead">
-<p class="kicker">// Agent standup</p>
+<p class="kicker">Agent standup</p>
 <h1>${esc(fmtDay(report.windowEnd))}</h1>
 <p class="window" title="${esc(report.windowStart)} → ${esc(report.windowEnd)}">${esc(fmtUtc(report.windowStart))} → ${esc(fmtUtc(report.windowEnd))} UTC</p>
 ${rollupChips(report)}

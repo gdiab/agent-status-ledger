@@ -710,7 +710,7 @@ describe("renderers", () => {
   test("html: cards layout narrows dl labels to 6rem; dt is the mono eyebrow in both layouts", () => {
     const html = renderHtml(report);
     expect(cssRule(html, ".cards dl")).toContain("6rem minmax(0, 1fr)");
-    const dt = cssRule(html, ".kicker, .foot-brand, .group, .exceptions h2, dt");
+    const dt = cssRule(html, ".kicker, .foot-brand, .group, .exceptions h2, dt, .legend > summary");
     expect(dt).toContain("font-family: var(--font-mono)");
     expect(dt).toContain("font-size: var(--text-2xs)");
     expect(dt).toContain("text-transform: uppercase");
@@ -739,7 +739,9 @@ describe("renderers", () => {
     const masthead = html.slice(html.indexOf('<header class="masthead">'), html.indexOf("</header>"));
     // The date is the news: the constant product name drops to the mono
     // kicker and the window-end date takes the h1 slot.
-    expect(masthead).toContain('<p class="kicker">// Agent standup</p>');
+    // The "// " flourish is presentational (::before), out of the copy text.
+    expect(masthead).toContain('<p class="kicker">Agent standup</p>');
+    expect(cssRule(html, ".kicker::before")).toContain('content: "// "');
     expect(masthead).toContain("<h1>Jul 8, 2026</h1>");
     expect(masthead.indexOf('class="kicker"')).toBeLessThan(masthead.indexOf("<h1>"));
     expect(masthead.indexOf("<h1>")).toBeLessThan(masthead.indexOf('class="window"'));
@@ -761,7 +763,11 @@ describe("renderers", () => {
     // Meta row: mono wordmark, dotted leader, then counts + provenance.
     expect(foot).toContain('<span class="foot-brand">Agent standup</span>');
     expect(foot).toContain('<span class="foot-leader" aria-hidden="true"></span>');
-    expect(foot).toContain("2 agents · Generated Jul 8, 07:00 UTC · schema v1");
+    // Pin the content (count, provenance, schema), not fmtUtc's exact bytes —
+    // the timestamp format itself is covered by the timestamps test above.
+    expect(foot).toContain("2 agents");
+    expect(foot).toContain("schema v1");
+    expect(foot).toContain("Generated ");
     expect(cssRule(html, ".foot")).toContain("border-top: 1px solid var(--border-1)");
     expect(cssRule(html, ".foot-leader")).toContain("dotted");
     // Without trivial profiles the note is absent but the band remains.
