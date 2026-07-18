@@ -197,11 +197,11 @@ describe("html surfaces carry the platform mark", () => {
 
 describe("rollup per-platform counts", () => {
   const rollupOf = (html: string) => {
-    const start = html.indexOf('<p class="rollup">');
-    return html.slice(start, html.indexOf("</p>", start));
+    const start = html.indexOf('<div class="rollup-strip">');
+    return html.slice(start, html.indexOf("\n", start));
   };
 
-  test("mixed platforms render icon+count segments before the status chips", () => {
+  test("mixed platforms render icon+count segments inside the Platforms segment, before the status chips", () => {
     const mixed: Report = {
       ...report,
       agents: [
@@ -211,12 +211,13 @@ describe("rollup per-platform counts", () => {
       ],
     };
     const rollup = rollupOf(renderHtml(mixed));
-    expect(rollup).toContain('<span class="platforms">');
+    // The platforms span lives inside the "Platforms"-labeled segment value.
+    expect(rollup).toContain('<span class="seg-label">Platforms</span><span class="seg-value"><span class="platforms">');
     // Labeled icons here: the mark alone carries the platform name, so it
     // keeps role="img"/aria-label/title (unlike the decorative card icons).
     expect(rollup).toContain(`${platformIcon("claude-code", { labeled: true })} 2`);
     expect(rollup).toContain(`${platformIcon("codex", { labeled: true })} 1`);
-    // larger count first, and the segment precedes the status chips
+    // larger count first, and the Platforms segment precedes the Status chips
     expect(rollup.indexOf(PATH_SLICES["claude-code"])).toBeLessThan(rollup.indexOf(PATH_SLICES.codex));
     expect(rollup.indexOf('class="platforms"')).toBeLessThan(rollup.indexOf('class="badge'));
     // status chip row itself stays status-only
@@ -261,9 +262,12 @@ describe("rollup per-platform counts", () => {
 
   test("zero-agent report keeps the plain sentence, no platform markup", () => {
     const html = renderHtml({ ...report, agents: [], exceptions: [] });
-    expect(html).toContain("No agent activity in this window.");
-    expect(rollupOf(html)).not.toContain("platforms");
-    expect(rollupOf(html)).not.toContain("<svg");
+    expect(html).toContain('<p class="rollup">No agent activity in this window.</p>');
+    expect(html).not.toContain('<div class="rollup-strip">');
+    const start = html.indexOf('<p class="rollup">');
+    const rollup = html.slice(start, html.indexOf("</p>", start));
+    expect(rollup).not.toContain("platforms");
+    expect(rollup).not.toContain("<svg");
   });
 });
 

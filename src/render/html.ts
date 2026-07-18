@@ -1,5 +1,5 @@
 import type { AgentReport, Report, Severity, Status, TaskThread } from "../types";
-import { dispatchRefLabel, dispatchedBody, interactionLabel, plural, rollupCounts, rollupLine, threadSessionSummary } from "./rollup";
+import { dispatchRefLabel, dispatchedBody, interactionLabel, plural, pluralWord, rollupCounts, rollupLine, threadSessionSummary } from "./rollup";
 import { EVIDENCE_HELP, SEVERITY_HELP, STATUS_HELP } from "./legend";
 import { STATUS_SEVERITY } from "../status";
 import { FILLER_BLOCKED, FILLER_COMPLETED, FILLER_IN_PROGRESS, FILLER_RECOMMENDATION } from "../narrative";
@@ -69,6 +69,13 @@ const SCALAR_TOKEN_CSS = Object.entries({
 const DOT_SIZE = "5px";
 const HOLLOW_DOT_SIZE = "7px";
 const HOLLOW_DOT_RING = "1.5px";
+
+// Badge chip height, shared with the rollup strip: .seg-value reserves the
+// rendered chip height so text-only segments (Agents, Output) match the
+// Status segment's row height instead of jittering shorter. If .badge's
+// min-height or vertical metrics change, revisit SEG_VALUE_MIN_HEIGHT.
+const BADGE_MIN_HEIGHT = "18px";
+const SEG_VALUE_MIN_HEIGHT = "22px"; // BADGE_MIN_HEIGHT + 4px optical breathing
 
 // One .st-* rule per status, generated from STATUS_COLORS so the Record<Status, …>
 // exhaustiveness check covers the CSS too. Hollow dots (silent: absence of
@@ -228,18 +235,25 @@ function flatCard(a: AgentReport): string {
 </article>`;
 }
 
-// Counts-by-status as small badge-styled chips: always-visible legend, and
-// the eye can match chip color to card badges without reading. The platform
-// split (asl-9j3) renders rollupCounts.byPlatform as icon + count segments,
-// labeled icons — here the mark alone names the platform, so it carries the
-// accessible name. The status chip row stays status-only — the platform
-// split is provenance, not a status signal.
-function rollupChips(report: Report): string {
+// Masthead rollup as a labeled stat strip (asl-3zd): mono eyebrow label over
+// mono value (futurist Stat pattern), hairline dividers between segments
+// instead of mid-dot separators. The platform split (asl-9j3) renders
+// rollupCounts.byPlatform as icon + count segments with labeled icons — the
+// "Platforms" eyebrow names the group, but each mark still carries its own
+// accessible name to distinguish the platforms. The Status segment reuses
+// statusBadge chips unchanged so the eye can match chip color to card badges
+// without reading; it stays status-only — the platform split is provenance,
+// not a status signal. Zero-agent reports keep the plain prose sentence.
+function rollupStrip(report: Report): string {
   if (report.agents.length === 0) return `<p class="rollup">${esc(rollupLine(report))}</p>`;
   const c = rollupCounts(report);
+  const seg = (label: string, value: string) => `<div class="seg"><span class="seg-label">${label}</span><span class="seg-value">${value}</span></div>`;
+  // Bare mono number, unit word demoted to a muted span; pluralWord keeps the
+  // singular/plural rule single-sourced with plural().
+  const unit = (count: number, word: string) => `${count} <span class="unit">${pluralWord(count, word)}</span>`;
   const platforms = c.byPlatform.map(({ platform, count }) => `${platformIcon(platform, { labeled: true })} ${count}`).join(" · ");
   const chips = c.byStatus.map(({ status, count }) => statusBadge(status, `${count} ${status}`)).join(" ");
-  return `<p class="rollup">${plural(c.agents, "agent")}: <span class="platforms">${platforms}</span> · ${chips} · ${plural(c.commits, "commit")}, ${plural(c.files, "file")} touched</p>`;
+  return `<div class="rollup-strip">${seg("Agents", String(c.agents))}${seg("Platforms", `<span class="platforms">${platforms}</span>`)}${seg("Status", chips)}${seg("Output", `${unit(c.commits, "commit")} ${unit(c.files, "file")}`)}</div>`;
 }
 
 function standupCard(a: AgentReport): string {
@@ -315,7 +329,7 @@ h3 { margin: 0; font-size: 1.1rem; color: var(--fg-1); }
 h4 { margin: .75rem 0 .25rem; font-size: var(--text-sm); color: var(--fg-1); }
 :focus-visible { outline: 3px solid var(--accent-ring); outline-offset: 1px; border-radius: var(--radius-sm); }
 .window { color: var(--fg-3); font-size: var(--text-xs); font-family: var(--font-mono); }
-/* Masthead: kicker → date headline → mono window line → rollup chips, closed
+/* Masthead: kicker → date headline → mono window line → rollup strip, closed
    by a hairline rule that separates identity from content (DESIGN.md §6:
    hairlines over boxes). */
 .masthead { margin: 0 0 var(--space-6); padding-bottom: var(--space-5); border-bottom: 1px solid var(--border-1); }
@@ -323,17 +337,32 @@ h4 { margin: .75rem 0 .25rem; font-size: var(--text-sm); color: var(--fg-1); }
 .kicker::before { content: "// "; }
 .masthead h1 { margin: 0; }
 .masthead .window { margin: var(--space-1) 0 0; }
-.masthead .rollup { margin: var(--space-4) 0 0; }
+.masthead .rollup { margin: var(--space-4) 0 0; } /* zero-agent prose fallback */
+/* Rollup strip: labeled stat segments (futurist Stat pattern), hairline
+   dividers between segments (Hairline-First Rule). Wrap safety: dividers are
+   clipped ::before lines centered in the column-gap, not border-left — a
+   border-left divider dangles on whichever segment starts a wrapped row.
+   Here every seg draws one, and overflow:hidden clips the first child's AND
+   each wrapped-row leader's divider at the container edge uniformly. */
+.rollup-strip { display: flex; flex-wrap: wrap; column-gap: calc(2 * var(--space-5)); row-gap: var(--space-3); margin: var(--space-4) 0 0; overflow: hidden; }
+.rollup-strip .seg { position: relative; display: flex; flex-direction: column; gap: var(--space-2); }
+.rollup-strip .seg::before { content: ""; position: absolute; left: calc(-1 * var(--space-5)); top: 0; width: 1px; height: 100%; background: var(--border-1); }
+.rollup-strip .seg-label { color: var(--fg-3); }
+/* Values must wrap: overflow:hidden above would otherwise clip badges that
+   exceed a narrow viewport, since a non-wrapping flex row can't shrink below
+   its min-content width. */
+.rollup-strip .seg-value { font-family: var(--font-mono); font-size: var(--text-base); color: var(--fg-1); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-height: ${SEG_VALUE_MIN_HEIGHT}; }
+.rollup-strip .seg-value .unit { color: var(--fg-3); }
 .exceptions { background: var(--danger-subtle); border: 1px solid var(--border-1); border-radius: var(--radius-lg); padding: var(--card-pad); margin: 1rem 0; overflow-wrap: anywhere; }
 /* Mono eyebrow: the one caps-label idiom shared by the masthead kicker,
    footer wordmark, section labels, and dl terms. */
-.kicker, .foot-brand, .group, .exceptions h2, dt, .legend > summary { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-caps); text-transform: uppercase; }
+.kicker, .foot-brand, .group, .exceptions h2, dt, .legend > summary, .rollup-strip .seg-label { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-caps); text-transform: uppercase; }
 .exceptions h2 { margin: 0 0 .5rem; color: var(--danger-subtle-fg); }
 .exceptions h2::before { content: "// "; }
 .card { background: var(--bg-1); border: 1px solid var(--border-1); border-radius: var(--radius-lg); padding: var(--card-pad); margin: 1rem 0; overflow-wrap: anywhere; }
 .card.sev-urgent, .thread.sev-urgent { background: var(--danger-subtle); }
 .card header { display: flex; flex-wrap: wrap; gap: .6rem; row-gap: .25rem; align-items: center; margin-bottom: .5rem; }
-.badge { display: inline-flex; align-items: center; gap: .4em; min-height: 18px; padding: 0 7px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: 0.03em; line-height: 1; }
+.badge { display: inline-flex; align-items: center; gap: .4em; min-height: ${BADGE_MIN_HEIGHT}; padding: 0 7px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: 0.03em; line-height: 1; }
 .badge .dot { flex: none; width: ${DOT_SIZE}; height: ${DOT_SIZE}; border-radius: 50%; background: var(--dot); }
 ${STATUS_CSS}
 .evidence { color: var(--fg-3); font-family: var(--font-mono); font-size: var(--text-2xs); }
@@ -378,7 +407,7 @@ code { font-family: var(--font-mono); font-size: .92em; }
 <p class="kicker">Agent standup</p>
 <h1>${esc(fmtDay(report.windowEnd))}</h1>
 <p class="window" title="${esc(report.windowStart)} → ${esc(report.windowEnd)}">${esc(fmtUtc(report.windowStart))} → ${esc(fmtUtc(report.windowEnd))} UTC</p>
-${rollupChips(report)}
+${rollupStrip(report)}
 ${report.trends?.length ? `<p class="window">Trends: ${esc(report.trends.join("; "))}</p>\n` : ""}<details class="legend"><summary>Legend</summary>
 <h4>Statuses</h4><ul>${(Object.entries(STATUS_HELP)).map(([k, v]) => `<li><strong>${esc(k)}</strong> — ${esc(v)}</li>`).join("")}</ul>
 <h4>Severity</h4><ul>${(Object.entries(SEVERITY_HELP)).map(([k, v]) => `<li><strong>${esc(k)}</strong> — ${esc(v)}</li>`).join("")}</ul>
