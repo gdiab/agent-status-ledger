@@ -448,6 +448,9 @@ describe("renderers", () => {
     const value = cssRule(html, ".rollup-strip .seg-value");
     expect(value).toContain("font-family: var(--font-mono)");
     expect(value).toContain("color: var(--fg-1)");
+    // Values wrap: with overflow:hidden on the strip, a non-wrapping value row
+    // would clip badges outright on narrow viewports instead of reflowing.
+    expect(value).toContain("flex-wrap: wrap");
     expect(cssRule(html, ".rollup-strip .seg-value .unit")).toContain("color: var(--fg-3)");
     // Wrap-safe dividers: spacing via gap, every seg draws a ::before line
     // offset into the gap, and the strip clips row-leading dividers at its

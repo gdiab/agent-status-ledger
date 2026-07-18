@@ -348,7 +348,10 @@ h4 { margin: .75rem 0 .25rem; font-size: var(--text-sm); color: var(--fg-1); }
 .rollup-strip .seg { position: relative; display: flex; flex-direction: column; gap: var(--space-2); }
 .rollup-strip .seg::before { content: ""; position: absolute; left: calc(-1 * var(--space-5)); top: 0; width: 1px; height: 100%; background: var(--border-1); }
 .rollup-strip .seg-label { color: var(--fg-3); }
-.rollup-strip .seg-value { font-family: var(--font-mono); font-size: var(--text-base); color: var(--fg-1); display: flex; align-items: center; gap: var(--space-2); min-height: ${SEG_VALUE_MIN_HEIGHT}; }
+/* Values must wrap: overflow:hidden above would otherwise clip badges that
+   exceed a narrow viewport, since a non-wrapping flex row can't shrink below
+   its min-content width. */
+.rollup-strip .seg-value { font-family: var(--font-mono); font-size: var(--text-base); color: var(--fg-1); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-height: ${SEG_VALUE_MIN_HEIGHT}; }
 .rollup-strip .seg-value .unit { color: var(--fg-3); }
 .exceptions { background: var(--danger-subtle); border: 1px solid var(--border-1); border-radius: var(--radius-lg); padding: var(--card-pad); margin: 1rem 0; overflow-wrap: anywhere; }
 /* Mono eyebrow: the one caps-label idiom shared by the masthead kicker,
