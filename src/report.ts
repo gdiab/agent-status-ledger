@@ -5,7 +5,7 @@ import { scanCodex } from "./connectors/codex";
 import { resolveProfiles } from "./resolver";
 import { attributeCommits, listCommits } from "./git";
 import { EXCEPTION_STATUSES, inferStatus } from "./status";
-import { buildFactSheet, generateNarrative, templateNarrative } from "./narrative";
+import { buildFactSheet, buildNarrativeFacts, generateNarrative, templateNarrative } from "./narrative";
 import { redact, redactFacts } from "./redact";
 import { corroborateSessions, discoverDialogueFacts, discoverDispatchLinks, type DialogueFacts } from "./connectors/engram";
 import { deriveTaskThreads } from "./threads";
@@ -287,8 +287,12 @@ export async function buildReport(opts: BuildReportOptions): Promise<Report> {
         evidenceCitation = upgrade.citation;
       }
     }
+    // The LLM prompt gets the event-enriched superset (asl-yko: session
+    // outcomes + bounded event highlights); AgentReport.facts and the
+    // --no-llm template path keep the plain FactSheet, so report JSON and
+    // no-llm output are unchanged by the enrichment.
     const { narrative, source } = opts.useLlm
-      ? await generateNarrative(facts, status, { model: config.model, apiKey: opts.apiKey, fetchFn: opts.fetchFn })
+      ? await generateNarrative(buildNarrativeFacts(facts, profile, config.redactPatterns), status, { model: config.model, apiKey: opts.apiKey, fetchFn: opts.fetchFn })
       : { narrative: templateNarrative(facts, status), source: "template" as const };
     return {
       agent: {
