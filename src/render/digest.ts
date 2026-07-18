@@ -20,12 +20,25 @@ function h2(text: string): string {
   return `<h2 style="font-size:1rem; margin:0 0 .25rem;">${esc(text)}</h2>`;
 }
 
+// Cap for the awaiting-question line below. Truncation runs on the raw
+// string before esc(), so an HTML entity is never sliced mid-way; the
+// ellipsis replaces the last character, keeping the total at the cap.
+export const AWAITING_QUESTION_MAX = 140;
+
+const truncateQuestion = (q: string): string =>
+  q.length > AWAITING_QUESTION_MAX ? `${q.slice(0, AWAITING_QUESTION_MAX - 1)}…` : q;
+
+// Each exception row may add AT MOST one line: the awaiting question. This
+// is a deliberate narrow carve-out from PRD §13's "no transcript text in the
+// digest" rule (decided 2026-07-17, asl-94g) — the field is SanitizedTapeText
+// through the sanitizeTapeText choke point (which strips newlines, so the
+// line stays single), not raw transcript, and it is truncated to the cap.
 function exceptionsSection(report: Report): string {
   const items = report.exceptions.length
     ? report.exceptions
         .map(
           (a) =>
-            `<li style="margin:0 0 .4rem;"><strong>${esc(a.displayName)}</strong> — ${esc(a.status)}: ${esc(a.narrative.recommendation)}</li>`,
+            `<li style="margin:0 0 .4rem;"><strong>${esc(a.displayName)}</strong> — ${esc(a.status)}: ${esc(a.narrative.recommendation)}${a.awaitingQuestion ? `<div style="font-size:.85rem; opacity:.8; margin:.15rem 0 0;">Waiting on: “${esc(truncateQuestion(a.awaitingQuestion))}”</div>` : ""}</li>`,
         )
         .join("")
     : `<li style="margin:0;">No exceptions — nothing needs you.</li>`;

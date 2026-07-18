@@ -112,7 +112,10 @@ export function renderMarkdown(report: Report): string {
     parts.push("No exceptions — nothing needs you.");
   } else {
     for (const a of report.exceptions) {
-      parts.push(`- **${mdEscape(a.displayName)}** — ${a.status} (${a.severity}): ${mdText(a.narrative.recommendation)}`);
+      // Awaiting question quoted like the card row (line 42): the triage line
+      // names the decision being waited on, not just the recommendation.
+      const q = a.awaitingQuestion ? ` — Waiting on: “${mdEscape(a.awaitingQuestion)}”` : "";
+      parts.push(`- **${mdEscape(a.displayName)}** — ${a.status} (${a.severity}): ${mdText(a.narrative.recommendation)}${q}`);
     }
   }
   // Task threads sit between the exceptions triage and the per-agent cards:

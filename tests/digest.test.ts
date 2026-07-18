@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentReport, Report, TaskThread, ThreadSession } from "../src/types";
-import { leadSentence, renderEmailDigest } from "../src/render/digest";
+import type { SanitizedTapeText } from "../src/redact";
+import { AWAITING_QUESTION_MAX, leadSentence, renderEmailDigest } from "../src/render/digest";
 
 describe("leadSentence", () => {
   test("returns the first sentence of a multi-sentence standup", () => {
@@ -91,6 +92,48 @@ describe("renderEmailDigest", () => {
     const html = renderEmailDigest(report);
     expect(html).toContain("Needs a human call on retry semantics.");
     expect(html).not.toContain("Review the commit."); // non-exception agent's recommendation stays out of Exceptions
+  });
+
+  test("exception row carries the awaiting question on one line; absent field, absent line", () => {
+    const waiting: AgentReport = {
+      ...blocked,
+      awaitingQuestion: "retry with backoff, or fail the deploy?" as SanitizedTapeText,
+    };
+    const html = renderEmailDigest({ ...report, agents: [agent({}), waiting], exceptions: [waiting] });
+    const box = html.slice(html.indexOf("Exceptions"), html.indexOf("</div>"));
+    expect(box).toContain("Waiting on: “retry with backoff, or fail the deploy?”");
+    // absent question keeps the plain row (also pinned by NO_THREADS_GOLDEN)
+    const bare = renderEmailDigest(report);
+    expect(bare).not.toContain("Waiting on");
+  });
+
+  test("awaiting question is truncated at AWAITING_QUESTION_MAX with an ellipsis; the boundary survives intact", () => {
+    const atCap = "q".repeat(AWAITING_QUESTION_MAX);
+    const overCap = "q".repeat(AWAITING_QUESTION_MAX + 1);
+    const htmlAt = renderEmailDigest({
+      ...report,
+      exceptions: [{ ...blocked, awaitingQuestion: atCap as SanitizedTapeText }],
+    });
+    expect(htmlAt).toContain(`“${atCap}”`);
+    expect(htmlAt).not.toContain("…");
+    const htmlOver = renderEmailDigest({
+      ...report,
+      exceptions: [{ ...blocked, awaitingQuestion: overCap as SanitizedTapeText }],
+    });
+    expect(htmlOver).toContain(`“${"q".repeat(AWAITING_QUESTION_MAX - 1)}…”`);
+    expect(htmlOver).not.toContain(atCap); // never more than the cap
+  });
+
+  test("hostile content in the awaiting question is escaped, and truncation happens before escaping", () => {
+    const hostile = `<img src=x onerror=alert(1)>${"a".repeat(AWAITING_QUESTION_MAX)}`;
+    const html = renderEmailDigest({
+      ...report,
+      exceptions: [{ ...blocked, awaitingQuestion: hostile as SanitizedTapeText }],
+    });
+    expect(html).not.toContain("<img src=x onerror=alert(1)>");
+    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    // truncated on raw chars, then escaped — the entity is not sliced mid-way
+    expect(html).toContain("…");
   });
 
   test("no exceptions renders the reassurance line", () => {
