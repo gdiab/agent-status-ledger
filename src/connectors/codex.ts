@@ -272,16 +272,25 @@ export function loadCodexTitles(rootDir: string): Map<string, string> {
   return titles;
 }
 
-function* dateDirsInWindow(sessionsDir: string, since: Date, now: Date): Generator<string> {
-  const day = new Date(Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate()));
-  while (day.getTime() <= now.getTime()) {
-    const y = String(day.getUTCFullYear());
-    const m = String(day.getUTCMonth() + 1).padStart(2, "0");
-    const d = String(day.getUTCDate()).padStart(2, "0");
-    const dir = join(sessionsDir, y, m, d);
-    if (existsSync(dir)) yield dir;
-    day.setUTCDate(day.getUTCDate() + 1);
-  }
+// Rollout files are binned under their session START date (YYYY/MM/DD), but a
+// long-lived session (Codex Desktop, real case: started days before, still
+// appending an 11MB rollout) keeps its file in the old date dir while active
+// today. Walking only [since, now] date dirs made such sessions invisible to
+// every 24h report (asl-axa) — so walk ALL date dirs and let the per-file
+// mtime gate in scanSessionFile (stat BEFORE read) decide. Perf: directory
+// enumeration is a readdir per day-dir (cheap, bounded by history length),
+// while file reads/parses scale with files ACTIVE in the window, not with
+// history size — an untouched 11MB rollout is stat'd, never read.
+function* allDateDirs(sessionsDir: string): Generator<string> {
+  const numeric = (dir: string) =>
+    readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && /^\d+$/.test(e.name))
+      .map((e) => e.name)
+      .sort();
+  for (const y of numeric(sessionsDir))
+    for (const m of numeric(join(sessionsDir, y)))
+      for (const d of numeric(join(sessionsDir, y, m)))
+        yield join(sessionsDir, y, m, d);
 }
 
 export async function scanCodex(opts: ScanOptions): Promise<RawSession[]> {
@@ -290,7 +299,7 @@ export async function scanCodex(opts: ScanOptions): Promise<RawSession[]> {
   if (!existsSync(sessionsDir)) return out;
   const titles = loadCodexTitles(opts.rootDir);
   const clip = makeClip(opts.redactPatterns);
-  for (const dir of dateDirsInWindow(sessionsDir, opts.since, opts.now)) {
+  for (const dir of allDateDirs(sessionsDir)) {
     for (const file of readdirSync(dir)) {
       if (!file.endsWith(".jsonl")) continue;
       const path = join(dir, file);

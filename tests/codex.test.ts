@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, utimesSync } from "node:fs";
+import { describe, expect, spyOn, test } from "bun:test";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseCodexSession, scanCodex } from "../src/connectors/codex";
@@ -398,6 +398,52 @@ describe("scanCodex", () => {
     const sessions = await scanCodex({ since: new Date(now.getTime() - 86_400_000), now, rootDir: root , redactPatterns: [] });
     expect(sessions.length).toBe(1);
     expect(sessions[0]!.title).toBe("Write launch blog post");
+  });
+
+  describe("scan window vs session start date (asl-axa)", () => {
+    const plant = (root: string, day: string, name: string, fixture: string, mtime: Date) => {
+      const dir = join(root, "sessions", ...day.split("/"));
+      mkdirSync(dir, { recursive: true });
+      const p = join(dir, name);
+      cpSync(join("fixtures/codex", fixture), p);
+      utimesSync(p, mtime, mtime);
+      return p;
+    };
+    const now = new Date("2026-07-17T09:00:00.000Z");
+    const since = new Date(now.getTime() - 86_400_000); // 24h window
+
+    test("a session started before the window but active inside it is ingested", async () => {
+      const root = mkdtempSync(join(tmpdir(), "asl-cx-long-"));
+      // Binned under its START date (2026/07/01) — far outside the 24h window —
+      // but the file was appended to inside the window (mtime).
+      plant(root, "2026/07/01", "rollout-2026-07-01T09-00-00-cx-modern-1.jsonl", "rollout-modern.jsonl", new Date("2026-07-17T08:30:00.000Z"));
+      const sessions = await scanCodex({ since, now, rootDir: root, redactPatterns: [] });
+      expect(sessions.map((s) => s.sessionId)).toEqual(["cx-modern-1"]);
+    });
+
+    test("a file untouched since the window start is skipped without being read", async () => {
+      const root = mkdtempSync(join(tmpdir(), "asl-cx-stale-"));
+      // Unreadable file: if the scan ever tried to READ it, scanSessionFile
+      // would catch EACCES and log a "skipping" warning. The mtime gate must
+      // reject it on stat alone — no read, no warning, no session.
+      const p = plant(root, "2026/07/01", "rollout-2026-07-01T09-00-00-cx-stale-1.jsonl", "rollout-modern.jsonl", new Date("2026-07-10T08:00:00.000Z"));
+      chmodSync(p, 0o000);
+      const warn = spyOn(console, "error");
+      try {
+        const sessions = await scanCodex({ since, now, rootDir: root, redactPatterns: [] });
+        expect(sessions).toEqual([]);
+        expect(warn.mock.calls.filter((c) => String(c[0]).includes(p)).length).toBe(0);
+      } finally {
+        warn.mockRestore();
+        chmodSync(p, 0o644);
+      }
+    });
+
+    test("guardian exclusion holds for out-of-window-started guardian files", async () => {
+      const root = mkdtempSync(join(tmpdir(), "asl-cx-oldguard-"));
+      plant(root, "2026/07/01", "rollout-2026-07-01T10-00-00-cx-guardian-1.jsonl", "rollout-guardian.jsonl", new Date("2026-07-17T08:30:00.000Z"));
+      expect(await scanCodex({ since, now, rootDir: root, redactPatterns: [] })).toEqual([]);
+    });
   });
 
   test("missing rootDir returns empty", async () => {
