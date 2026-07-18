@@ -26,6 +26,13 @@ function fmtUtc(iso: string): string {
   return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
 }
 
+// Masthead headline: the date is the news (the product name is the constant,
+// demoted to the kicker), so it gets the display slot as "Jul 8, 2026".
+function fmtDay(iso: string): string {
+  const d = new Date(iso);
+  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
+}
+
 export const HTML_LAYOUTS = ["cards", "flat"] as const;
 export type HtmlLayout = (typeof HTML_LAYOUTS)[number];
 export function isHtmlLayout(x: string): x is HtmlLayout {
@@ -330,9 +337,18 @@ h3 { margin: 0; font-size: 1.1rem; color: var(--fg-1); }
 h4 { margin: .75rem 0 .25rem; font-size: var(--text-sm); color: var(--fg-1); }
 :focus-visible { outline: 3px solid var(--accent-ring); outline-offset: 1px; border-radius: var(--radius-sm); }
 .window { color: var(--fg-3); font-size: var(--text-xs); font-family: var(--font-mono); }
+/* Masthead: kicker → date headline → mono window line → rollup chips, closed
+   by a hairline rule that separates identity from content (DESIGN.md §6:
+   hairlines over boxes). */
+.masthead { margin: 0 0 var(--space-6); padding-bottom: var(--space-5); border-bottom: 1px solid var(--border-1); }
+.masthead .kicker { margin: 0 0 var(--space-2); color: var(--fg-3); }
+.masthead h1 { margin: 0; }
+.masthead .window { margin: var(--space-1) 0 0; }
+.masthead .rollup { margin: var(--space-4) 0 0; }
 .exceptions { background: var(--danger-subtle); border: 1px solid var(--border-1); border-radius: var(--radius-lg); padding: var(--card-pad); margin: 1rem 0; overflow-wrap: anywhere; }
-/* Mono eyebrow: the one caps-label idiom shared by section labels and dl terms. */
-.group, .exceptions h2, dt { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-caps); text-transform: uppercase; }
+/* Mono eyebrow: the one caps-label idiom shared by the masthead kicker,
+   footer wordmark, section labels, and dl terms. */
+.kicker, .foot-brand, .group, .exceptions h2, dt { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-caps); text-transform: uppercase; }
 .exceptions h2 { margin: 0 0 .5rem; color: var(--danger-subtle-fg); }
 .exceptions h2::before { content: "// "; }
 .card { background: var(--bg-1); border: 1px solid var(--border-1); border-radius: var(--radius-lg); padding: var(--card-pad); margin: 1rem 0; overflow-wrap: anywhere; }
@@ -350,17 +366,31 @@ dt { color: var(--fg-3); padding-top: .2em; } dd { margin: 0; }
 .errors li > code { display: block; color: var(--fg-3); overflow-x: auto; white-space: pre-wrap; font-size: var(--text-xs); }
 code { font-family: var(--font-mono); font-size: .92em; }
 .dir { color: var(--fg-4); }
-.legend { color: var(--fg-3); font-size: var(--text-sm); margin: 1.5rem 0; }
+/* Legend: a quiet mono affordance inside the masthead, not a content block. */
+.legend { color: var(--fg-3); font-size: var(--text-xs); margin: var(--space-4) 0 0; }
+.legend > summary { cursor: pointer; width: fit-content; font-family: var(--font-mono); font-size: var(--text-2xs); letter-spacing: var(--tracking-caps); text-transform: uppercase; font-weight: var(--weight-medium); }
+.legend h4 { font-size: var(--text-xs); }
 .ts { font-family: var(--font-mono); }
 .thread { background: var(--bg-1); border: 1px solid var(--border-1); border-radius: var(--radius-lg); padding: .75rem var(--card-pad); margin: 1rem 0; overflow-wrap: anywhere; }
 .thread.sev-urgent { background: var(--danger-subtle); }
 .thread h3 { display: flex; flex-wrap: wrap; gap: .6rem; row-gap: .25rem; align-items: center; }
 .thread ul { margin: .5rem 0 0; }
-.thread-source { color: var(--fg-3); font-size: var(--text-xs); font-weight: var(--weight-regular); }${cardCss}
+.thread-source { color: var(--fg-3); font-size: var(--text-xs); font-weight: var(--weight-regular); }
+/* Footer band: hairline top rule mirroring the masthead's bottom rule; the
+   trivial-profiles note folds in above the meta row. The dotted leader
+   between wordmark and provenance echoes the system's dotted-leader status
+   lines — the footer's one flourish. */
+.foot { margin: var(--space-8) 0 var(--space-6); padding-top: var(--space-4); border-top: 1px solid var(--border-1); color: var(--fg-3); font-family: var(--font-mono); font-size: var(--text-xs); }
+.foot .ignored { margin: 0 0 var(--space-3); }
+.foot-meta { display: flex; align-items: center; gap: var(--space-3); margin: 0; }
+.foot-leader { flex: 1; min-width: var(--space-6); border-bottom: 1px dotted var(--border-3); }
+@media print { .legend { display: none; } }${cardCss}
 </style>
 </head>
 <body>
-<h1>Agent Standup — ${esc(day)}</h1>
+<header class="masthead">
+<p class="kicker">// Agent standup</p>
+<h1>${esc(fmtDay(report.windowEnd))}</h1>
 <p class="window" title="${esc(report.windowStart)} → ${esc(report.windowEnd)}">${esc(fmtUtc(report.windowStart))} → ${esc(fmtUtc(report.windowEnd))} UTC</p>
 ${rollupChips(report)}
 ${report.trends?.length ? `<p class="window">Trends: ${esc(report.trends.join("; "))}</p>\n` : ""}<details class="legend"><summary>Legend</summary>
@@ -368,10 +398,12 @@ ${report.trends?.length ? `<p class="window">Trends: ${esc(report.trends.join(";
 <h4>Severity</h4><ul>${(Object.entries(SEVERITY_HELP)).map(([k, v]) => `<li><strong>${esc(k)}</strong> — ${esc(v)}</li>`).join("")}</ul>
 <h4>Evidence</h4><ul>${(Object.entries(EVIDENCE_HELP)).map(([k, v]) => `<li><strong>${esc(k.replace("_", " "))}</strong> — ${esc(v)}</li>`).join("")}</ul>
 </details>
+</header>
 <section class="exceptions"><h2>Exceptions</h2><ul>${exceptions}</ul></section>
 ${threadsSection(report)}${agentsSection}
-${report.trivialProfiles?.length ? `<p class="window">Ignored ${report.trivialProfiles.length} trivial profile${report.trivialProfiles.length === 1 ? "" : "s"} (minimal activity, nothing produced): ${esc(report.trivialProfiles.join(", "))}</p>` : ""}
-<footer class="window" title="${esc(report.generatedAt)}">Generated ${esc(fmtUtc(report.generatedAt))} UTC · schema v${report.schemaVersion}</footer>
+<footer class="foot">
+${report.trivialProfiles?.length ? `<p class="ignored">Ignored ${report.trivialProfiles.length} trivial profile${report.trivialProfiles.length === 1 ? "" : "s"} (minimal activity, nothing produced): ${esc(report.trivialProfiles.join(", "))}</p>\n` : ""}<p class="foot-meta"><span class="foot-brand">Agent standup</span><span class="foot-leader" aria-hidden="true"></span><span title="${esc(report.generatedAt)}">${plural(report.agents.length, "agent")} · Generated ${esc(fmtUtc(report.generatedAt))} UTC · schema v${report.schemaVersion}</span></p>
+</footer>
 </body>
 </html>
 `;

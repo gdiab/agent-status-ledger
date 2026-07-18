@@ -710,7 +710,7 @@ describe("renderers", () => {
   test("html: cards layout narrows dl labels to 6rem; dt is the mono eyebrow in both layouts", () => {
     const html = renderHtml(report);
     expect(cssRule(html, ".cards dl")).toContain("6rem minmax(0, 1fr)");
-    const dt = cssRule(html, ".group, .exceptions h2, dt");
+    const dt = cssRule(html, ".kicker, .foot-brand, .group, .exceptions h2, dt");
     expect(dt).toContain("font-family: var(--font-mono)");
     expect(dt).toContain("font-size: var(--text-2xs)");
     expect(dt).toContain("text-transform: uppercase");
@@ -732,6 +732,42 @@ describe("renderers", () => {
     expect(html).toContain('title="2026-07-08T07:00:00.000Z"');
     // raw ISO strings live only in title attributes, never as visible text
     expect(html).not.toContain(">2026-07-07T07:00:00.000Z");
+  });
+
+  test("html: masthead is kicker → date headline → window → chips, closed by a hairline", () => {
+    const html = renderHtml(report);
+    const masthead = html.slice(html.indexOf('<header class="masthead">'), html.indexOf("</header>"));
+    // The date is the news: the constant product name drops to the mono
+    // kicker and the window-end date takes the h1 slot.
+    expect(masthead).toContain('<p class="kicker">// Agent standup</p>');
+    expect(masthead).toContain("<h1>Jul 8, 2026</h1>");
+    expect(masthead.indexOf('class="kicker"')).toBeLessThan(masthead.indexOf("<h1>"));
+    expect(masthead.indexOf("<h1>")).toBeLessThan(masthead.indexOf('class="window"'));
+    expect(masthead.indexOf('class="window"')).toBeLessThan(masthead.indexOf('class="rollup"'));
+    // Legend lives inside the masthead as a quiet affordance.
+    expect(masthead).toContain('<details class="legend">');
+    // Hairline rule separates the masthead from content; kicker shares the
+    // mono-eyebrow idiom (covered by the shared rule test).
+    expect(cssRule(html, ".masthead")).toContain("border-bottom: 1px solid var(--border-1)");
+    // The document title keeps the product name.
+    expect(html).toContain("<title>Agent Standup — 2026-07-08</title>");
+  });
+
+  test("html: footer band folds provenance and trivial profiles under a top hairline", () => {
+    const html = renderHtml({ ...report, trivialProfiles: ["tmp (codex)"] });
+    const foot = html.slice(html.indexOf('<footer class="foot">'), html.indexOf("</footer>"));
+    // Trivial-profiles note lives inside the footer band, not floating above it.
+    expect(foot).toContain('<p class="ignored">Ignored 1 trivial profile');
+    // Meta row: mono wordmark, dotted leader, then counts + provenance.
+    expect(foot).toContain('<span class="foot-brand">Agent standup</span>');
+    expect(foot).toContain('<span class="foot-leader" aria-hidden="true"></span>');
+    expect(foot).toContain("2 agents · Generated Jul 8, 07:00 UTC · schema v1");
+    expect(cssRule(html, ".foot")).toContain("border-top: 1px solid var(--border-1)");
+    expect(cssRule(html, ".foot-leader")).toContain("dotted");
+    // Without trivial profiles the note is absent but the band remains.
+    const bare = renderHtml(report);
+    expect(bare).not.toContain('class="ignored"');
+    expect(bare).toContain('<footer class="foot">');
   });
 
   test("html: standup blurb is an upright inset tint, no quote-bar", () => {
