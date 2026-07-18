@@ -7,6 +7,8 @@ import { makeClip } from "../src/connectors/jsonl";
 
 const completed = readFileSync("fixtures/codex/rollout-completed.jsonl", "utf8");
 const approval = readFileSync("fixtures/codex/rollout-approval.jsonl", "utf8");
+const modern = readFileSync("fixtures/codex/rollout-modern.jsonl", "utf8");
+const guardian = readFileSync("fixtures/codex/rollout-guardian.jsonl", "utf8");
 const titles = new Map([
   ["cx-blog-1", "Write launch blog post"],
   ["cx-deploy-1", "Terraform deploy"],
@@ -202,7 +204,186 @@ describe("parseCodexSession", () => {
   });
 });
 
+describe("modern rollout schema (codex-cli 0.144+)", () => {
+  const line = (o: unknown) => JSON.stringify(o);
+  const meta = line({ type: "session_meta", timestamp: "2026-07-16T09:00:00Z", payload: { id: "cm1", cwd: "/w", originator: "codex_cli_rs", source: "cli" } });
+  const parse = (rest: string[], titles = new Map<string, string>()) => parseCodexSession([meta, ...rest].join("\n"), titles)!;
+  const s = parseCodexSession(modern, new Map())!;
+
+  test("title derives from the first task-bearing user_message, ambient block stripped", () => {
+    expect(s.title).toBe("Review the connector branch for redaction gaps");
+  });
+
+  test("derived title wins over a stale session_index title", () => {
+    const withIndex = parseCodexSession(modern, new Map([["cx-modern-1", "stale index name"]]))!;
+    expect(withIndex.title).toBe("Review the connector branch for redaction gaps");
+  });
+
+  test("session_index title remains the fallback when no user_message bears a task", () => {
+    const t = parse(
+      [line({ type: "event_msg", timestamp: "2026-07-16T09:00:03Z", payload: { type: "task_started" } })],
+      new Map([["cm1", "from the index"]]),
+    );
+    expect(t.title).toBe("from the index");
+  });
+
+  test("user_message emits a task event with ambient UI blocks stripped", () => {
+    const task = s.events.find((e) => e.summary.startsWith("task:"))!;
+    expect(task.summary).toContain("Review the connector branch for redaction gaps");
+    expect(task.summary).not.toContain("in-app-browser-context");
+    expect(task.summary).not.toContain("ambient");
+  });
+
+  test("ambient-only user_message is not task-bearing: no title, no task event", () => {
+    const t = parse([
+      line({ type: "event_msg", timestamp: "2026-07-16T09:00:02Z", payload: { type: "user_message", message: '<in-app-browser-context source="ambient-ui-state">\ntab state\n</in-app-browser-context>' } }),
+    ]);
+    expect(t.title).toBeUndefined();
+    expect(t.events.some((e) => e.summary.startsWith("task:"))).toBe(false);
+  });
+
+  test("agent_message summary is the clipped message text, not the literal type", () => {
+    const agent = s.events.filter((e) => e.type === "run_progressed" && e.summary.includes("diff looks clean"));
+    expect(agent.length).toBe(1);
+    expect(s.events.some((e) => e.summary === "agent_message")).toBe(false);
+  });
+
+  test("custom_tool_call exec extracts the cmd string as a command event", () => {
+    expect(s.events.some((e) => e.summary === "exec: git diff --stat main...feature")).toBe(true);
+    expect(s.events.some((e) => e.summary === "exec: bun test tests/missing.test.ts")).toBe(true);
+  });
+
+  test("function_call records a generic tool event", () => {
+    expect(s.events.some((e) => e.summary === "tool: wait")).toBe(true);
+  });
+
+  test("Script failed output infers an error carrying the triggering command", () => {
+    expect(s.errors.length).toBe(1);
+    expect(s.errors[0]).toContain("ModuleNotFoundError");
+    expect(s.errors[0]).toContain("— while exec: bun test tests/missing.test.ts");
+    expect(s.events.some((e) => e.type === "failed")).toBe(true);
+  });
+
+  test("successful array-form output infers nothing", () => {
+    // the first exec in the fixture succeeds; only the second contributes an error
+    expect(s.errors.length).toBe(1);
+  });
+
+  test("task_complete captures last_agent_message and duration_ms", () => {
+    const done = s.events.find((e) => e.type === "completed")!;
+    expect(done.summary).toContain("Review finished: no redaction gaps found.");
+    expect(done.summary).toContain("53s");
+  });
+
+  test("session ends awaiting the user, not mid-work", () => {
+    expect(s.awaitingUser).toBe(true);
+    expect(s.midWork).toBe(false);
+  });
+
+  test("read-only MCP session is tagged as a review", () => {
+    expect(s.sessionKind).toBe("review");
+  });
+
+  test("workspace-write MCP session carries no review tag", () => {
+    const t = parseCodexSession([
+      line({ type: "session_meta", timestamp: "2026-07-16T09:00:00Z", payload: { id: "cm2", cwd: "/w", source: "mcp" } }),
+      line({ type: "turn_context", timestamp: "2026-07-16T09:00:01Z", payload: { model: "gpt-5.6-sol", sandbox_policy: { type: "workspace-write", network_access: false } } }),
+      line({ type: "event_msg", timestamp: "2026-07-16T09:00:03Z", payload: { type: "task_started" } }),
+    ].join("\n"), new Map())!;
+    expect(t.sessionKind).toBeUndefined();
+  });
+
+  test("nonzero-exit first line infers an error; buried error text does not", () => {
+    const t = parse([
+      line({ type: "response_item", timestamp: "2026-07-16T09:01:00Z", payload: { type: "custom_tool_call", call_id: "c1", name: "exec", input: 'tools.exec_command({cmd:"make build"})' } }),
+      line({ type: "response_item", timestamp: "2026-07-16T09:01:05Z", payload: { type: "custom_tool_call_output", call_id: "c1", output: "Command exited with code 127\nmake: not found" } }),
+      line({ type: "response_item", timestamp: "2026-07-16T09:01:10Z", payload: { type: "custom_tool_call", call_id: "c2", name: "exec", input: 'tools.exec_command({cmd:"ls dirs"})' } }),
+      line({ type: "response_item", timestamp: "2026-07-16T09:01:15Z", payload: { type: "custom_tool_call_output", call_id: "c2", output: "Script completed\nWall time 0.1 seconds\nOutput:\nls: /nope: No such file or directory\nok" } }),
+    ]);
+    expect(t.errors.length).toBe(1);
+    expect(t.errors[0]).toContain("exited with code 127");
+    expect(t.errors[0]).toContain("— while exec: make build");
+  });
+
+  test("a finished exec output is not blamed for a later legacy error", () => {
+    const t = parse([
+      line({ type: "response_item", timestamp: "2026-07-16T09:01:00Z", payload: { type: "custom_tool_call", call_id: "c1", name: "exec", input: 'tools.exec_command({cmd:"ls"})' } }),
+      line({ type: "response_item", timestamp: "2026-07-16T09:01:05Z", payload: { type: "custom_tool_call_output", call_id: "c1", output: "Script completed\nfine" } }),
+      line({ type: "event_msg", timestamp: "2026-07-16T09:02:00Z", payload: { type: "stream_error", message: "connection reset" } }),
+    ]);
+    expect(t.errors).toEqual(["connection reset"]);
+  });
+
+  test("trailing custom_tool_call leaves the session mid-work", () => {
+    const t = parse([
+      line({ type: "event_msg", timestamp: "2026-07-16T09:00:50Z", payload: { type: "agent_message", message: "checking" } }),
+      line({ type: "response_item", timestamp: "2026-07-16T09:01:00Z", payload: { type: "custom_tool_call", call_id: "c1", name: "exec", input: 'tools.exec_command({cmd:"sleep 5"})' } }),
+    ]);
+    expect(t.midWork).toBe(true);
+    expect(t.awaitingUser).toBe(false);
+  });
+
+  test("trailing tool output still owes agent processing: mid-work, not awaiting", () => {
+    const t = parse([
+      line({ type: "response_item", timestamp: "2026-07-16T09:01:00Z", payload: { type: "custom_tool_call", call_id: "c1", name: "exec", input: 'tools.exec_command({cmd:"ls"})' } }),
+      line({ type: "response_item", timestamp: "2026-07-16T09:01:05Z", payload: { type: "custom_tool_call_output", call_id: "c1", output: "Script completed\nok" } }),
+    ]);
+    expect(t.midWork).toBe(true);
+    expect(t.awaitingUser).toBe(false);
+  });
+
+  test("patch_apply_end changes keys populate filesTouched", () => {
+    const t = parse([
+      line({ type: "event_msg", timestamp: "2026-07-16T09:01:00Z", payload: { type: "patch_apply_end", success: true, changes: { "/w/src/b.ts": { type: "update" }, "/w/src/a.ts": { type: "add" } } } }),
+    ]);
+    expect(t.filesTouched).toEqual(["/w/src/a.ts", "/w/src/b.ts"]);
+  });
+
+  test("guardian session (subagent source + codex-auto-review) is tagged guardian and its dump never becomes a title", () => {
+    const g = parseCodexSession(guardian, new Map())!;
+    expect(g.sessionKind).toBe("guardian");
+    expect(g.title).toBeUndefined();
+  });
+
+  test("codex-auto-review model alone marks a session guardian", () => {
+    const t = parse([
+      line({ type: "turn_context", timestamp: "2026-07-16T09:00:01Z", payload: { model: "codex-auto-review", sandbox_policy: { type: "read-only" } } }),
+      line({ type: "event_msg", timestamp: "2026-07-16T09:00:03Z", payload: { type: "task_started" } }),
+    ]);
+    expect(t.sessionKind).toBe("guardian");
+  });
+
+  test("user redactPatterns still run before truncation on task and exec text", () => {
+    const clip = makeClip(["CORPSECRET_[A-Z_]+"]);
+    const secret = "CORPSECRET_" + "Z".repeat(60);
+    const text = [
+      meta,
+      line({ type: "event_msg", timestamp: "2026-07-16T09:00:02Z", payload: { type: "user_message", message: `fix ${secret} now` } }),
+      line({ type: "response_item", timestamp: "2026-07-16T09:00:12Z", payload: { type: "custom_tool_call", call_id: "c1", name: "exec", input: `tools.exec_command({cmd:"echo ${secret}"})` } }),
+    ].join("\n");
+    const t = parseCodexSession(text, new Map(), undefined, clip)!;
+    const all = [t.title, ...t.events.map((e) => e.summary)].join("\n");
+    expect(all).toContain("[REDACTED]");
+    expect(all).not.toContain("CORPSECRET");
+  });
+});
+
 describe("scanCodex", () => {
+  test("guardian sessions are excluded from scan output", async () => {
+    const root = mkdtempSync(join(tmpdir(), "asl-cx-guard-"));
+    const day = join(root, "sessions", "2026", "07", "16");
+    mkdirSync(day, { recursive: true });
+    for (const [src, name] of [["rollout-modern.jsonl", "rollout-2026-07-16T09-00-00-cx-modern-1.jsonl"], ["rollout-guardian.jsonl", "rollout-2026-07-16T10-00-00-cx-guardian-1.jsonl"]] as const) {
+      const p = join(day, name);
+      cpSync(join("fixtures/codex", src), p);
+      const d = new Date("2026-07-16T12:00:00.000Z");
+      utimesSync(p, d, d);
+    }
+    const now = new Date("2026-07-17T09:00:00.000Z");
+    const sessions = await scanCodex({ since: new Date(now.getTime() - 86_400_000 * 2), now, rootDir: root, redactPatterns: [] });
+    expect(sessions.map((x) => x.sessionId)).toEqual(["cx-modern-1"]);
+  });
+
   test("walks date dirs inside window and applies index titles", async () => {
     const root = mkdtempSync(join(tmpdir(), "asl-cx-"));
     const day = join(root, "sessions", "2026", "07", "07");

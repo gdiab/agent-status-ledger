@@ -53,6 +53,15 @@ export interface RawSession {
   // tool call, unprocessed tool result, task or approval pending). A mid-work
   // session must never be filtered as trivial noise.
   midWork?: boolean;
+  // Session classification (asl-n7l, codex connector). "review": a read-only
+  // MCP session — an agent invoked to inspect, not build (sandbox_policy
+  // read-only + source "mcp"), so downstream can label it a review agent
+  // rather than a working agent with no files written. "guardian": an
+  // auto-review approval meta-session (subagent source or codex-auto-review
+  // model) — never included in scan output; the tag exists so the connector's
+  // exclusion is testable at the parse layer. Absent = a normal working
+  // session; additive + optional, existing consumers unaffected.
+  sessionKind?: "review" | "guardian";
 }
 
 export interface ScanOptions {
