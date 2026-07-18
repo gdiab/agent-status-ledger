@@ -78,11 +78,11 @@ describe("renderEmailDigest", () => {
   test("one row per agent with name, status, counts, and lead sentence", () => {
     const html = renderEmailDigest(report);
     expect(html).toContain("w (claude-code)");
-    expect(html).toContain("— completed");
+    expect(html).toContain("●</span> completed"); // dot+word status, not a stripe
     expect(html).toContain("1 commit, 1 file touched");
     expect(html).toContain("I fixed the login bug and committed the fix.");
     expect(html).toContain("infra (codex)");
-    expect(html).toContain("— needs_human");
+    expect(html).toContain("●</span> needs_human");
     // esc() does not escape apostrophes (see src/render/html.ts's esc()), so
     // this appears verbatim.
     expect(html).toContain("I'm blocked on the retry policy decision.");
@@ -190,6 +190,41 @@ describe("renderEmailDigest", () => {
     expect(html).not.toContain("display:grid");
     expect(html).not.toContain("light-dark(");
     expect(html).not.toContain("<style");
+    expect(html).not.toContain("var(--"); // tokens resolve to hex at render time
+    expect(html).not.toContain("oklch(");
+  });
+
+  test("never emits the banned Futurist idioms: severity stripes, alpha hexes, opacity muting", () => {
+    const html = renderEmailDigest({ ...report, threads: [thread({})] });
+    // Side-stripe ban (DESIGN.md §6 via §8 Q5): dot+word replaced the stripes.
+    expect(html).not.toContain("border-top:3px");
+    expect(html).not.toContain("border-top: 3px");
+    // 8-digit alpha hexes have patchy email support; only opaque token hexes ship.
+    expect(html).not.toMatch(/#[0-9a-f]{4}(?![0-9a-f])/i);
+    expect(html).not.toMatch(/#[0-9a-f]{8}/i);
+    // Muting is literal ink (--fg-3 hex), never opacity.
+    expect(html).not.toContain("opacity:");
+  });
+
+  test("status dots: silent is a hollow amber ring, failed a filled danger dot (§8 Q2)", () => {
+    const silent = agent({ profileId: "claude-code:/s", displayName: "s (claude-code)", status: "silent", severity: "urgent" });
+    const failed = agent({ profileId: "claude-code:/f", displayName: "f (claude-code)", status: "failed", severity: "urgent" });
+    const html = renderEmailDigest({ ...report, agents: [silent, failed], exceptions: [] });
+    expect(html).toContain('<span style="color:#da950b;">○</span> silent'); // hollow = absence of signal, warning amber
+    expect(html).toContain('<span style="color:#d23934;">●</span> failed'); // filled danger
+    expect(html.match(/○/g)?.length).toBe(1); // silent is the only hollow glyph
+  });
+
+  test("digest hexes come from theme.ts light tokens, not hand-rolled colors", () => {
+    const html = renderEmailDigest(report);
+    expect(html).toContain("color:#1b1e24"); // --fg-1 body ink
+    expect(html).toContain("color:#6d7075"); // --fg-3 muted/meta
+    expect(html).toContain("border-bottom:1px solid #e2e4e7"); // --border-1 hairlines
+    expect(html).toContain("background:#ffeae6"); // --danger-subtle exceptions tint
+    // legacy palette is gone
+    for (const legacy of ["#c0392b", "#8a6d00", "#2d7a46", "#1a1a1a", "#8884"]) {
+      expect(html).not.toContain(legacy);
+    }
   });
 
   test("escapes HTML in agent-controlled fields", () => {
@@ -235,30 +270,35 @@ describe("renderEmailDigest with task threads (PRD §7)", () => {
   // heading), so any drift in the legacy path fails loudly instead of
   // sliding past an absent-vs-undefined comparison that exercises the same
   // code on both sides.
+  // Re-pinned for the Futurist restyle (asl-ec7 slice C): fg/border/tint
+  // hexes resolved from theme.ts (light theme, §8 Q8), dot+word status in
+  // place of the banned border-top severity stripes, literal ink colors in
+  // place of opacity muting, mono stacks on numeric lines. Captured from real
+  // renderEmailDigest output, not hand-written.
   const NO_THREADS_GOLDEN = `<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Agent Standup — 2026-07-08</title></head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width:40rem; margin:0 auto; padding:1rem; color:#1a1a1a; line-height:1.4;">
-<h1 style="font-size:1.2rem; margin:0 0 .3rem;">Agent Standup — 2026-07-08</h1>
-<p style="margin:0 0 1rem; font-size:.9rem; opacity:.75;">2 agents: 1 needs_human, 1 completed — 1 commit, 1 file touched</p>
-<div style="border:1px solid #c0392b55; border-radius:8px; padding:.75rem 1rem; margin:0 0 1rem;">
-  <h2 style="font-size:1rem; margin:0 0 .5rem;">Exceptions</h2>
-  <ul style="margin:0; padding-left:1.1rem;"><li style="margin:0 0 .4rem;"><strong>infra (codex)</strong> — needs_human: Needs a human call on retry semantics.</li></ul>
+<body style="font-family:'Atkinson Hyperlegible Next', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width:40rem; margin:0 auto; padding:16px; color:#1b1e24; font-size:14px; line-height:1.5;">
+<h1 style="font-size:17px; font-weight:600; letter-spacing:-0.011em; margin:0 0 4px; color:#1b1e24;">Agent Standup — 2026-07-08</h1>
+<p style="margin:0 0 16px; font-size:12px; color:#6d7075; font-family:ui-monospace, 'SF Mono', Menlo, monospace;">2 agents: 1 needs_human, 1 completed — 1 commit, 1 file touched</p>
+<div style="background:#ffeae6; border:1px solid #e2e4e7; border-radius:8px; padding:12px 16px; margin:0 0 16px;">
+  <h2 style="font-size:14px; margin:0 0 8px; color:#1b1e24;">Exceptions</h2>
+  <ul style="margin:0; padding-left:16px;"><li style="margin:0 0 8px;"><strong>infra (codex)</strong> — needs_human: Needs a human call on retry semantics.</li></ul>
 </div>
-<table role="presentation" style="width:100%; border-collapse:collapse; margin:0 0 1rem;"><tr>
-  <td style="padding:.6rem 0; border-top:3px solid #2d7a46; border-bottom:1px solid #8884;">
-    <div style="font-weight:600;">w (claude-code) <span style="font-weight:400; opacity:.7;">— completed</span></div>
-    <div style="font-size:.85rem; opacity:.7; margin:.15rem 0;">1 commit, 1 file touched</div>
-    <div style="font-size:.9rem; margin-top:.2rem;">I fixed the login bug and committed the fix.</div>
+<table role="presentation" style="width:100%; border-collapse:collapse; margin:0 0 16px;"><tr>
+  <td style="padding:8px 0; border-bottom:1px solid #e2e4e7;">
+    <div style="font-weight:600; color:#1b1e24;">w (claude-code) <span style="font-weight:400; color:#6d7075;">— <span style="color:#00805a;">●</span> completed</span></div>
+    <div style="font-size:12px; color:#6d7075; font-family:ui-monospace, 'SF Mono', Menlo, monospace; margin:2px 0;">1 commit, 1 file touched</div>
+    <div style="margin-top:4px;">I fixed the login bug and committed the fix.</div>
   </td>
 </tr><tr>
-  <td style="padding:.6rem 0; border-top:3px solid #8a6d00; border-bottom:1px solid #8884;">
-    <div style="font-weight:600;">infra (codex) <span style="font-weight:400; opacity:.7;">— needs_human</span></div>
-    <div style="font-size:.85rem; opacity:.7; margin:.15rem 0;">0 commits, 0 files touched</div>
-    <div style="font-size:.9rem; margin-top:.2rem;">I'm blocked on the retry policy decision.</div>
+  <td style="padding:8px 0; border-bottom:1px solid #e2e4e7;">
+    <div style="font-weight:600; color:#1b1e24;">infra (codex) <span style="font-weight:400; color:#6d7075;">— <span style="color:#da950b;">●</span> needs_human</span></div>
+    <div style="font-size:12px; color:#6d7075; font-family:ui-monospace, 'SF Mono', Menlo, monospace; margin:2px 0;">0 commits, 0 files touched</div>
+    <div style="margin-top:4px;">I'm blocked on the retry policy decision.</div>
   </td>
 </tr></table>
-<p style="font-size:.8rem; opacity:.6; margin-top:1rem;">Full interactive report attached.</p>
+<p style="font-size:12px; color:#6d7075; margin-top:16px;">Full interactive report attached.</p>
 </body>
 </html>
 `;
@@ -276,7 +316,7 @@ describe("renderEmailDigest with task threads (PRD §7)", () => {
     const html = renderEmailDigest(threaded);
     expect(html).toContain("Task threads");
     expect(html).toContain("asl-abc");
-    expect(html).toContain("— blocked");
+    expect(html).toContain("●</span> blocked");
     expect(html).toContain("2 sessions, 3 commits"); // per-member commits summed (exclusive by construction)
   });
 
@@ -325,7 +365,7 @@ describe("renderEmailDigest with task threads (PRD §7)", () => {
     expect(html).toContain("Needs a human call on retry semantics.");
     // The thread rollup still renders, worst status and all.
     expect(html).toContain("asl-abc");
-    expect(html).toContain("— failed");
+    expect(html).toContain("●</span> failed");
   });
 
   test("threads render in report order — deriveTaskThreads' worst-status-first is canonical", () => {

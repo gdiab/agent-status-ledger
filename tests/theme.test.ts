@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { STATUS_RANK, STATUS_SEVERITY } from "../src/status";
-import type { Severity, Status } from "../src/types";
+import { STATUS_SEVERITY } from "../src/status";
+import type { Status } from "../src/types";
 import {
   COLORS_HEX,
   LEADING,
   RADIUS,
-  SEVERITY_COLORS,
   SPACING,
   STATUS_COLORS,
+  statusCssVars,
+  statusHex,
   TEXT_SCALE,
   WEIGHT,
 } from "../src/render/theme";
@@ -72,14 +73,46 @@ describe("STATUS_COLORS", () => {
     expect(Object.keys(STATUS_COLORS).sort()).toEqual([...STATUSES].sort());
   });
 
-  test("every status has opaque solid and subtle pairs in both themes", () => {
+  test("every status carries palette token names (bg may opt out as transparent)", () => {
+    const tokens = Object.keys(COLORS_HEX);
     for (const status of STATUSES) {
       const c = STATUS_COLORS[status];
-      expect(c.solid.light).toMatch(HEX6);
-      expect(c.solid.dark).toMatch(HEX6);
+      expect(c.bgToken === "transparent" || tokens.includes(c.bgToken)).toBe(true);
+      expect(tokens).toContain(c.fgToken);
+      expect(tokens).toContain(c.dotToken);
+    }
+  });
+
+  test("statusHex resolves every status to opaque hex (or transparent bg) in both themes", () => {
+    for (const status of STATUSES) {
+      const c = STATUS_COLORS[status];
       for (const theme of ["light", "dark"] as const) {
-        expect(c.subtle[theme].bg).toMatch(HEX6);
-        expect(c.subtle[theme].fg).toMatch(HEX6);
+        const r = statusHex(c, theme);
+        if (c.bgToken !== "transparent") expect(r.bg).toMatch(HEX6);
+        else expect(r.bg).toBe("transparent");
+        expect(r.fg).toMatch(HEX6);
+        expect(r.dot).toMatch(HEX6);
+      }
+    }
+  });
+
+  test("statusHex defaults to the light theme (the digest's, §8 Q8)", () => {
+    expect(statusHex(STATUS_COLORS.failed)).toEqual(statusHex(STATUS_COLORS.failed, "light"));
+    expect(statusHex(STATUS_COLORS.failed).dot).toBe(COLORS_HEX["--danger"].light);
+  });
+
+  test("statusCssVars emits var() of the SAME token names statusHex resolves — one mapping, two surfaces", () => {
+    for (const status of STATUSES) {
+      const c = STATUS_COLORS[status];
+      const v = statusCssVars(c);
+      expect(v.bg).toBe(c.bgToken === "transparent" ? "transparent" : `var(${c.bgToken})`);
+      expect(v.fg).toBe(`var(${c.fgToken})`);
+      expect(v.dot).toBe(`var(${c.dotToken})`);
+      for (const theme of ["light", "dark"] as const) {
+        const h = statusHex(c, theme);
+        if (c.bgToken !== "transparent") expect(h.bg).toBe(COLORS_HEX[c.bgToken][theme]);
+        expect(h.fg).toBe(COLORS_HEX[c.fgToken][theme]);
+        expect(h.dot).toBe(COLORS_HEX[c.dotToken][theme]);
       }
     }
   });
@@ -109,46 +142,33 @@ describe("STATUS_COLORS", () => {
     expect(hollow).toEqual(["silent"]);
   });
 
-  test("semantic roles resolve from the token table, not private hexes", () => {
+  test("semantic roles name their token trio, not private hexes", () => {
     for (const status of STATUSES) {
       const c = STATUS_COLORS[status];
-      if (c.role === "neutral" || c.role === "accent") continue; // composed pairs, checked below
-      expect(c.solid).toEqual(COLORS_HEX[`--${c.role}`]);
-      for (const theme of ["light", "dark"] as const) {
-        expect(c.subtle[theme].bg).toBe(COLORS_HEX[`--${c.role}-subtle`][theme]);
-        expect(c.subtle[theme].fg).toBe(COLORS_HEX[`--${c.role}-subtle-fg`][theme]);
-      }
+      if (c.role === "neutral" || c.role === "accent") continue; // composed trios, checked below
+      expect(c.bgToken).toBe(`--${c.role}-subtle`);
+      expect(c.fgToken).toBe(`--${c.role}-subtle-fg`);
+      expect(c.dotToken).toBe(`--${c.role}`);
     }
   });
 
   test("active keeps Signal Green to the dot only (One Signal Rule)", () => {
-    expect(STATUS_COLORS.active.solid).toEqual(COLORS_HEX["--accent"]);
-    for (const theme of ["light", "dark"] as const) {
-      // The word is body ink on the card surface — never a filled green badge.
-      expect(STATUS_COLORS.active.subtle[theme].bg).toBe(COLORS_HEX["--bg-1"][theme]);
-      expect(STATUS_COLORS.active.subtle[theme].fg).toBe(COLORS_HEX["--fg-2"][theme]);
-    }
+    // The word is body ink on a transparent bg — never a filled green badge,
+    // "a small colored dot plus a word, not a filled pill" (DESIGN.md §5).
+    expect(STATUS_COLORS.active).toMatchObject({
+      bgToken: "transparent",
+      fgToken: "--fg-2",
+      dotToken: "--accent",
+    });
   });
 
   test("idle composes from the neutral ladder", () => {
-    expect(STATUS_COLORS.idle.solid).toEqual(COLORS_HEX["--fg-3"]);
-    for (const theme of ["light", "dark"] as const) {
-      expect(STATUS_COLORS.idle.subtle[theme].bg).toBe(COLORS_HEX["--bg-3"][theme]);
-      expect(STATUS_COLORS.idle.subtle[theme].fg).toBe(COLORS_HEX["--fg-2"][theme]);
-    }
+    expect(STATUS_COLORS.idle).toMatchObject({ bgToken: "--bg-3", fgToken: "--fg-2", dotToken: "--fg-3" });
   });
-});
 
-describe("SEVERITY_COLORS alias", () => {
-  test("derives from STATUS_SEVERITY: each severity shows its worst-ranked status", () => {
-    const severities = [...new Set(Object.values(STATUS_SEVERITY))] as Severity[];
-    expect(Object.keys(SEVERITY_COLORS).sort()).toEqual([...severities].sort());
-    for (const sev of severities) {
-      const worst = STATUSES.filter((s) => STATUS_SEVERITY[s] === sev).sort(
-        (a, b) => STATUS_RANK[a] - STATUS_RANK[b],
-      )[0]!;
-      expect(SEVERITY_COLORS[sev]).toBe(STATUS_COLORS[worst]);
-    }
+  test("active is the only transparent badge background", () => {
+    const transparent = STATUSES.filter((s) => STATUS_COLORS[s].bgToken === "transparent");
+    expect(transparent).toEqual(["active"]);
   });
 });
 

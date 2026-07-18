@@ -11,8 +11,7 @@
 // tests/theme.test.ts asserts every hex here equals its oklch→sRGB conversion.
 // One proposal typo corrected in place: dark --bg-3 is #272a30, not #26292f.
 
-import type { Severity, Status } from "../types";
-import { STATUS_RANK, STATUS_SEVERITY } from "../status";
+import type { Status } from "../types";
 
 export interface HexPair {
   readonly light: string;
@@ -127,42 +126,34 @@ export const RADIUS = {
 } as const satisfies Record<string, string>;
 
 // ── Per-status color mapping (proposal §3 as amended by §8) ──
+//
+// Statuses map to token NAMES, not colors: html.ts emits `var(--token)` from
+// the same names the digest resolves to hex (statusCssVars / statusHex below),
+// so the two surfaces cannot diverge — the drift the upstream Token Contract
+// Rule (DESIGN.md §2) names.
 
 export type ColorRole = "danger" | "warning" | "success" | "info" | "neutral" | "accent";
 export type DotStyle = "filled" | "hollow";
-
-export interface ThemedPair {
-  readonly bg: string;
-  readonly fg: string;
-}
+export type ColorToken = keyof typeof COLORS_HEX;
+/** Badge background: a palette token, or none at all. */
+export type BgToken = ColorToken | "transparent";
 
 export interface StatusColor {
   readonly role: ColorRole;
   readonly dot: DotStyle;
-  /** Dot / non-text graphic color. Not for text: solid hues fail AA as ink. */
-  readonly solid: HexPair;
-  /** Badge tint pair (`-subtle` bg + `-subtle-fg` text) — AA in both themes. */
-  readonly subtle: { readonly light: ThemedPair; readonly dark: ThemedPair };
+  readonly bgToken: BgToken;
+  readonly fgToken: ColorToken;
+  /** Dot / non-text graphic token. Not for text: solid hues fail AA as ink. */
+  readonly dotToken: ColorToken;
 }
 
-// Roles resolve through COLORS_HEX so the palette has one source; a drifted
-// hex here would be the "hardcoded values are drift" failure the upstream
-// Token Contract Rule (DESIGN.md §2) names.
+// Semantic roles use their `-subtle` pair with the solid hue as dot.
 function fromRole(role: "danger" | "warning" | "success" | "info") {
   return {
-    solid: COLORS_HEX[`--${role}`],
-    subtle: composed(`--${role}-subtle`, `--${role}-subtle-fg`),
-  };
-}
-
-// A theme-aware bg/fg pairing of two palette tokens.
-function composed(bgToken: keyof typeof COLORS_HEX, fgToken: keyof typeof COLORS_HEX) {
-  const bg = COLORS_HEX[bgToken];
-  const fg = COLORS_HEX[fgToken];
-  return {
-    light: { bg: bg.light, fg: fg.light },
-    dark: { bg: bg.dark, fg: fg.dark },
-  };
+    bgToken: `--${role}-subtle`,
+    fgToken: `--${role}-subtle-fg`,
+    dotToken: `--${role}`,
+  } as const;
 }
 
 export const STATUS_COLORS: Record<Status, StatusColor> = {
@@ -176,34 +167,27 @@ export const STATUS_COLORS: Record<Status, StatusColor> = {
   // §8 Q3: warning amber, no semantic drift toward info blue.
   needs_human: { role: "warning", dot: "filled", ...fromRole("warning") },
   // One Signal Rule (DESIGN.md §2): Signal Green marks live state via the dot
-  // only, never a filled badge — the word is body ink on the card surface.
-  active: {
-    role: "accent",
-    dot: "filled",
-    solid: COLORS_HEX["--accent"],
-    subtle: composed("--bg-1", "--fg-2"),
-  },
-  idle: {
-    role: "neutral",
-    dot: "filled",
-    solid: COLORS_HEX["--fg-3"],
-    subtle: composed("--bg-3", "--fg-2"),
-  },
+  // only, never a filled badge — the word is body ink on a TRANSPARENT bg
+  // ("a small colored dot plus a word, not a filled pill", DESIGN.md §5).
+  active: { role: "accent", dot: "filled", bgToken: "transparent", fgToken: "--fg-2", dotToken: "--accent" },
+  idle: { role: "neutral", dot: "filled", bgToken: "--bg-3", fgToken: "--fg-2", dotToken: "--fg-3" },
   completed: { role: "success", dot: "filled", ...fromRole("success") },
 };
 
-// Severity fallback for surfaces that only know severity: each severity shows
-// its worst-ranked status's colors. Derived from STATUS_SEVERITY + STATUS_RANK
-// (the EXCEPTION_STATUSES idiom in src/status.ts) — iterating best-first so
-// the worst rank writes last; a new Status folds in without edits here.
-export const SEVERITY_COLORS: Record<Severity, StatusColor> = (
-  Object.keys(STATUS_SEVERITY) as Status[]
-)
-  .sort((a, b) => STATUS_RANK[b] - STATUS_RANK[a])
-  .reduce(
-    (acc, s) => {
-      acc[STATUS_SEVERITY[s]] = STATUS_COLORS[s];
-      return acc;
-    },
-    {} as Record<Severity, StatusColor>,
-  );
+export interface ResolvedStatusColor {
+  readonly bg: string;
+  readonly fg: string;
+  readonly dot: string;
+}
+
+/** `var(--token)` emission for surfaces with a stylesheet (src/render/html.ts). */
+export function statusCssVars(c: StatusColor): ResolvedStatusColor {
+  const bg = c.bgToken === "transparent" ? "transparent" : `var(${c.bgToken})`;
+  return { bg, fg: `var(${c.fgToken})`, dot: `var(${c.dotToken})` };
+}
+
+/** Concrete hex for inline-style surfaces — the email digest ships light only (§8 Q8). */
+export function statusHex(c: StatusColor, theme: "light" | "dark" = "light"): ResolvedStatusColor {
+  const bg = c.bgToken === "transparent" ? "transparent" : COLORS_HEX[c.bgToken][theme];
+  return { bg, fg: COLORS_HEX[c.fgToken][theme], dot: COLORS_HEX[c.dotToken][theme] };
+}

@@ -1,8 +1,35 @@
-import type { AgentReport, Report, TaskThread } from "../types";
+import type { AgentReport, Report, Status, TaskThread } from "../types";
 import { capSanitizedText } from "../redact";
 import { rollupLine, threadRollupSummary } from "./rollup";
-import { esc, SEVERITY_COLOR } from "./html";
-import { STATUS_SEVERITY } from "../status";
+import { esc } from "./html";
+import { COLORS_HEX, STATUS_COLORS, statusHex } from "./theme";
+
+// ── Futurist tokens resolved to light-theme hex literals (asl-ec7 slice C) ──
+// Gmail strips <style>, so no CSS custom properties: theme.ts tokens are
+// resolved to hex at render time. Light only (§8 Q8) — Gmail's auto-darkening
+// is accepted; the inks below sit mid-lightness and survive it.
+const FG_1 = COLORS_HEX["--fg-1"].light; // body ink
+const FG_3 = COLORS_HEX["--fg-3"].light; // muted/meta — replaces opacity-based muting
+const BORDER_1 = COLORS_HEX["--border-1"].light; // hairline
+const DANGER_SUBTLE = COLORS_HEX["--danger-subtle"].light; // exceptions tint
+
+// Web fonts need a stylesheet, so the email declares installed-font stacks
+// only: Atkinson Hyperlegible Next leads and degrades to system (§4).
+const FONT_BODY = "'Atkinson Hyperlegible Next', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+// Mono Numbers Rule (DESIGN.md §3): numeric spans in mono.
+const FONT_MONO = "ui-monospace, 'SF Mono', Menlo, monospace";
+
+// Status as a leading dot + word (DESIGN.md §5: "a small colored dot plus a
+// word, not a filled pill") — the inline replacement for the banned
+// border-top severity stripes (§4/§8 Q5). No CSS circles in email: the dot is
+// a text glyph, colored by the status's dot token. silent's hollow ring (§8
+// Q2, absence of signal) approximates as ○ — a glyph renders where a
+// border-radius span might not.
+function statusWord(status: Status): string {
+  const c = STATUS_COLORS[status];
+  const glyph = c.dot === "hollow" ? "○" : "●";
+  return `<span style="font-weight:400; color:${FG_3};">— <span style="color:${statusHex(c).dot};">${glyph}</span> ${esc(status)}</span>`;
+}
 
 // First sentence of a standup narrative (standup always opens with "I " —
 // see src/narrative.ts's Narrative.standup doc). The digest has room for a
@@ -15,10 +42,10 @@ export function leadSentence(standup: string): string {
 
 // Section heading shared by the Task threads and Agents headings.
 // exceptionsSection keeps its own inline <h2> — its bottom margin differs
-// (.5rem inside the triage box) and that section's bytes are pinned by the
+// (8px inside the triage box) and that section's bytes are pinned by the
 // no-threads golden in tests/digest.test.ts.
 function h2(text: string): string {
-  return `<h2 style="font-size:1rem; margin:0 0 .25rem;">${esc(text)}</h2>`;
+  return `<h2 style="font-size:14px; margin:0 0 4px; color:${FG_1};">${esc(text)}</h2>`;
 }
 
 // Cap for the awaiting-question line below (the digest's policy constant;
@@ -34,28 +61,30 @@ export const AWAITING_QUESTION_MAX = 140;
 // digest" rule (decided 2026-07-17, asl-94g) — the field is SanitizedTapeText
 // through the sanitizeTapeText choke point (which strips newlines, so the
 // line stays single), not raw transcript, and it is truncated to the cap.
+// The box carries the danger-subtle background tint (system precedent for
+// alerts) instead of the old translucent red border.
 function exceptionsSection(report: Report): string {
   const items = report.exceptions.length
     ? report.exceptions
         .map(
           (a) =>
-            `<li style="margin:0 0 .4rem;"><strong>${esc(a.displayName)}</strong> — ${esc(a.status)}: ${esc(a.narrative.recommendation)}${a.awaitingQuestion ? `<div style="font-size:.85rem; opacity:.8; margin:.15rem 0 0;">Waiting on: “${esc(capSanitizedText(a.awaitingQuestion, AWAITING_QUESTION_MAX))}”</div>` : ""}</li>`,
+            `<li style="margin:0 0 8px;"><strong>${esc(a.displayName)}</strong> — ${esc(a.status)}: ${esc(a.narrative.recommendation)}${a.awaitingQuestion ? `<div style="font-size:12px; color:${FG_3}; margin:2px 0 0;">Waiting on: “${esc(capSanitizedText(a.awaitingQuestion, AWAITING_QUESTION_MAX))}”</div>` : ""}</li>`,
         )
         .join("")
     : `<li style="margin:0;">No exceptions — nothing needs you.</li>`;
-  return `<div style="border:1px solid #c0392b55; border-radius:8px; padding:.75rem 1rem; margin:0 0 1rem;">
-  <h2 style="font-size:1rem; margin:0 0 .5rem;">Exceptions</h2>
-  <ul style="margin:0; padding-left:1.1rem;">${items}</ul>
+  return `<div style="background:${DANGER_SUBTLE}; border:1px solid ${BORDER_1}; border-radius:8px; padding:12px 16px; margin:0 0 16px;">
+  <h2 style="font-size:14px; margin:0 0 8px; color:${FG_1};">Exceptions</h2>
+  <ul style="margin:0; padding-left:16px;">${items}</ul>
 </div>`;
 }
 
-// One task-level row: title/key, aggregated status (border severity-colored
-// like agent rows), and the shared threadRollupSummary phrase.
+// One task-level row: title/key, aggregated status as dot+word, and the
+// shared threadRollupSummary phrase (numeric, so mono).
 function threadRow(t: TaskThread): string {
   return `<tr>
-  <td style="padding:.6rem 0; border-top:3px solid ${SEVERITY_COLOR[STATUS_SEVERITY[t.status]]}; border-bottom:1px solid #8884;">
-    <div style="font-weight:600;">${esc(t.title)}${t.source === "files" ? ` <span style="font-weight:400; opacity:.7;">(file cluster)</span>` : ""} <span style="font-weight:400; opacity:.7;">— ${esc(t.status)}</span></div>
-    <div style="font-size:.85rem; opacity:.7; margin:.15rem 0;">${esc(threadRollupSummary(t))}</div>
+  <td style="padding:8px 0; border-bottom:1px solid ${BORDER_1};">
+    <div style="font-weight:600; color:${FG_1};">${esc(t.title)}${t.source === "files" ? ` <span style="font-weight:400; color:${FG_3};">(file cluster)</span>` : ""} ${statusWord(t.status)}</div>
+    <div style="font-size:12px; color:${FG_3}; font-family:${FONT_MONO}; margin:2px 0;">${esc(threadRollupSummary(t))}</div>
   </td>
 </tr>`;
 }
@@ -72,7 +101,7 @@ function threadRow(t: TaskThread): string {
 function threadsSection(report: Report): string {
   if (!report.threads?.length) return "";
   return `${h2("Task threads")}
-<table role="presentation" style="width:100%; border-collapse:collapse; margin:0 0 1rem;">${report.threads.map(threadRow).join("")}</table>
+<table role="presentation" style="width:100%; border-collapse:collapse; margin:0 0 16px;">${report.threads.map(threadRow).join("")}</table>
 `;
 }
 
@@ -80,10 +109,10 @@ function agentRow(a: AgentReport): string {
   const commits = a.commits.filter((c) => c.attributed).length;
   const files = a.facts.filesTouched.length;
   return `<tr>
-  <td style="padding:.6rem 0; border-top:3px solid ${SEVERITY_COLOR[a.severity]}; border-bottom:1px solid #8884;">
-    <div style="font-weight:600;">${esc(a.displayName)} <span style="font-weight:400; opacity:.7;">— ${esc(a.status)}</span></div>
-    <div style="font-size:.85rem; opacity:.7; margin:.15rem 0;">${commits} commit${commits === 1 ? "" : "s"}, ${files} file${files === 1 ? "" : "s"} touched</div>
-    <div style="font-size:.9rem; margin-top:.2rem;">${esc(leadSentence(a.narrative.standup))}</div>
+  <td style="padding:8px 0; border-bottom:1px solid ${BORDER_1};">
+    <div style="font-weight:600; color:${FG_1};">${esc(a.displayName)} ${statusWord(a.status)}</div>
+    <div style="font-size:12px; color:${FG_3}; font-family:${FONT_MONO}; margin:2px 0;">${commits} commit${commits === 1 ? "" : "s"}, ${files} file${files === 1 ? "" : "s"} touched</div>
+    <div style="margin-top:4px;">${esc(leadSentence(a.narrative.standup))}</div>
   </td>
 </tr>`;
 }
@@ -96,8 +125,8 @@ export function renderEmailDigest(report: Report): string {
   const day = report.windowEnd.slice(0, 10);
   const threads = threadsSection(report);
   const rows = report.agents.length
-    ? `<table role="presentation" style="width:100%; border-collapse:collapse; margin:0 0 1rem;">${report.agents.map(agentRow).join("")}</table>`
-    : `<p style="opacity:.7;">No agent activity in this window.</p>`;
+    ? `<table role="presentation" style="width:100%; border-collapse:collapse; margin:0 0 16px;">${report.agents.map(agentRow).join("")}</table>`
+    : `<p style="color:${FG_3};">No agent activity in this window.</p>`;
   // The Agents heading exists only to separate the two tables when a thread
   // rollup precedes the agent rows; without threads the digest keeps its
   // original heading-free shape.
@@ -105,12 +134,12 @@ export function renderEmailDigest(report: Report): string {
   return `<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Agent Standup — ${esc(day)}</title></head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width:40rem; margin:0 auto; padding:1rem; color:#1a1a1a; line-height:1.4;">
-<h1 style="font-size:1.2rem; margin:0 0 .3rem;">Agent Standup — ${esc(day)}</h1>
-<p style="margin:0 0 1rem; font-size:.9rem; opacity:.75;">${esc(rollupLine(report))}</p>
+<body style="font-family:${FONT_BODY}; max-width:40rem; margin:0 auto; padding:16px; color:${FG_1}; font-size:14px; line-height:1.5;">
+<h1 style="font-size:17px; font-weight:600; letter-spacing:-0.011em; margin:0 0 4px; color:${FG_1};">Agent Standup — ${esc(day)}</h1>
+<p style="margin:0 0 16px; font-size:12px; color:${FG_3}; font-family:${FONT_MONO};">${esc(rollupLine(report))}</p>
 ${exceptionsSection(report)}
 ${body}
-<p style="font-size:.8rem; opacity:.6; margin-top:1rem;">Full interactive report attached.</p>
+<p style="font-size:12px; color:${FG_3}; margin-top:16px;">Full interactive report attached.</p>
 </body>
 </html>
 `;
