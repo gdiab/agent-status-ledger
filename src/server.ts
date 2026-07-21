@@ -4,6 +4,7 @@
 // process.
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import type { Exec } from "./exec";
 import { esc } from "./render/esc";
 import { COLORS_HEX, FONT_MONO, RADIUS, SPACING, TEXT_SCALE, TRACKING } from "./render/theme";
 
@@ -117,4 +118,54 @@ export function emptyPage(): string {
 
 export function notFoundPage(date: string): string {
   return basePage("asl — not found", `<h1>No report for ${esc(date)}</h1><p><a href="/archive">Browse the archive</a></p>`);
+}
+
+export interface RunState {
+  running: boolean;
+  startedAt: string | null;
+  lastExit: { ok: boolean; finishedAt: string } | null;
+}
+
+export interface ServerDeps {
+  reportsDir: string;
+  port: number;
+  exec: Exec;
+  reportArgv: string[];
+  now?: () => Date;
+}
+
+const htmlResponse = (body: string, status = 200) =>
+  new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8" } });
+
+export function startServer(deps: ServerDeps) {
+  const now = deps.now ?? (() => new Date());
+  const state: RunState = { running: false, startedAt: null, lastExit: null };
+
+  const serveDate = (date: string): Response => {
+    const file = join(deps.reportsDir, `${date}.html`); // date pre-validated; never from the raw path
+    if (!existsSync(file)) return htmlResponse(notFoundPage(date), 404);
+    return htmlResponse(wrapReport(readFileSync(file, "utf8"), { date, dates: listReportDates(deps.reportsDir) }));
+  };
+
+  return Bun.serve({
+    hostname: "127.0.0.1",
+    port: deps.port,
+    routes: {
+      "/": () => {
+        const dates = listReportDates(deps.reportsDir);
+        if (dates.length === 0) return htmlResponse(emptyPage());
+        const today = now().toISOString().slice(0, 10); // same day key cli.ts writes
+        return serveDate(dates.includes(today) ? today : dates[0]!);
+      },
+      "/r/:date": (req) => {
+        const date = req.params.date;
+        if (!isReportDate(date)) return new Response("bad date — expected YYYY-MM-DD", { status: 400 });
+        return serveDate(date);
+      },
+      "/archive": () => htmlResponse(archivePage(listReportDates(deps.reportsDir))),
+      "/api/reports": () => Response.json(listReportDates(deps.reportsDir)),
+      "/api/status": () => Response.json(state),
+    },
+    fetch: () => new Response("not found", { status: 404 }),
+  });
 }

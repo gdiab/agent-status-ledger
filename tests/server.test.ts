@@ -2,7 +2,20 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { archivePage, emptyPage, isReportDate, listReportDates, notFoundPage, wrapReport } from "../src/server";
+import type { Exec } from "../src/exec";
+import {
+  archivePage, emptyPage, isReportDate, listReportDates, notFoundPage,
+  startServer, wrapReport, type ServerDeps,
+} from "../src/server";
+
+const execNever: Exec = async () => ({ ok: true, stdout: "", stderr: "" });
+
+function makeServer(dir: string, over: Partial<ServerDeps> = {}) {
+  return startServer({
+    reportsDir: dir, port: 0, exec: execNever,
+    reportArgv: ["true"], now: () => new Date("2026-07-20T12:00:00Z"), ...over,
+  });
+}
 
 function tempReports(files: string[]): string {
   const dir = mkdtempSync(join(tmpdir(), "asl-server-"));
@@ -80,5 +93,64 @@ describe("dashboard pages", () => {
   test("empty and not-found pages point at recovery paths", () => {
     expect(emptyPage()).toContain("asl report");
     expect(notFoundPage("2026-01-01")).toContain('href="/archive"');
+  });
+});
+
+describe("startServer report routes", () => {
+  test("/ serves today's report when present, wrapped", async () => {
+    const dir = tempReports(["2026-07-19.html", "2026-07-20.html"]);
+    const srv = makeServer(dir);
+    try {
+      const html = await (await fetch(`${srv.url}`)).text();
+      expect(html).toContain('id="asl-dash-bar"');
+      expect(html).toContain("2026-07-20");
+    } finally { srv.stop(true); }
+  });
+
+  test("/ falls back to the most recent report when today's is absent", async () => {
+    const dir = tempReports(["2026-07-18.html", "2026-07-19.html"]);
+    const srv = makeServer(dir);
+    try {
+      const html = await (await fetch(`${srv.url}`)).text();
+      expect(html).toContain("2026-07-19");
+    } finally { srv.stop(true); }
+  });
+
+  test("/ with no reports shows the empty page", async () => {
+    const srv = makeServer(tempReports([]));
+    try {
+      const r = await fetch(`${srv.url}`);
+      expect(r.status).toBe(200);
+      expect(await r.text()).toContain("No reports yet");
+    } finally { srv.stop(true); }
+  });
+
+  test("/r/:date serves that day; unknown day 404s with archive link; junk 400s", async () => {
+    const dir = tempReports(["2026-07-19.html"]);
+    const srv = makeServer(dir);
+    try {
+      expect((await fetch(`${srv.url}r/2026-07-19`)).status).toBe(200);
+      const missing = await fetch(`${srv.url}r/2026-01-01`);
+      expect(missing.status).toBe(404);
+      expect(await missing.text()).toContain('href="/archive"');
+      expect((await fetch(`${srv.url}r/..%2f..%2fetc`)).status).toBe(400);
+      expect((await fetch(`${srv.url}r/2026-7-1`)).status).toBe(400);
+    } finally { srv.stop(true); }
+  });
+
+  test("/archive and /api/reports list dates newest first", async () => {
+    const dir = tempReports(["2026-07-18.html", "2026-07-19.html"]);
+    const srv = makeServer(dir);
+    try {
+      expect(await (await fetch(`${srv.url}api/reports`)).json()).toEqual(["2026-07-19", "2026-07-18"]);
+      expect(await (await fetch(`${srv.url}archive`)).text()).toContain('href="/r/2026-07-19"');
+    } finally { srv.stop(true); }
+  });
+
+  test("unknown routes 404", async () => {
+    const srv = makeServer(tempReports([]));
+    try {
+      expect((await fetch(`${srv.url}nope`)).status).toBe(404);
+    } finally { srv.stop(true); }
   });
 });
