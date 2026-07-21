@@ -15,6 +15,10 @@
 		<string>/Users/gd/github/agent-status-ledger/src/cli.ts</string>
 		<string>serve</string>
 	</array>
+	<!-- reportsDir defaults to <cwd>/reports; launchd's cwd is / without this
+	     (the report job gets the same guarantee from morning-report.sh's cd). -->
+	<key>WorkingDirectory</key>
+	<string>/Users/gd/github/agent-status-ledger</string>
 	<key>KeepAlive</key>
 	<true/>
 	<key>RunAtLoad</key>
