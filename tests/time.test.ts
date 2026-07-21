@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { toUtcIso } from "../src/time";
+import { dayKey, toUtcIso } from "../src/time";
 import { parseClaudeSession } from "../src/connectors/claude-code";
 import { parseCodexSession } from "../src/connectors/codex";
 
@@ -21,6 +21,13 @@ describe("toUtcIso", () => {
   test("returns undefined for unparseable input", () => {
     expect(toUtcIso("not a date")).toBeUndefined();
     expect(toUtcIso("")).toBeUndefined();
+  });
+});
+
+describe("dayKey", () => {
+  test("returns the UTC YYYY-MM-DD day", () => {
+    expect(dayKey(new Date("2026-07-20T12:00:00Z"))).toBe("2026-07-20");
+    expect(dayKey(new Date("2026-07-20T23:30:00-05:00"))).toBe("2026-07-21"); // UTC day, not local
   });
 });
 

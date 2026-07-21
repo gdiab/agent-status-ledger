@@ -5,6 +5,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Exec } from "./exec";
+import { dayKey } from "./time";
 import { esc } from "./render/esc";
 import { COLORS_HEX, FONT_MONO, RADIUS, SPACING, TEXT_SCALE, TRACKING } from "./render/theme";
 
@@ -167,7 +168,7 @@ export function startServer(deps: ServerDeps) {
       "/": () => {
         const dates = listReportDates(deps.reportsDir);
         if (dates.length === 0) return htmlResponse(emptyPage());
-        const today = now().toISOString().slice(0, 10); // same day key cli.ts writes
+        const today = dayKey(now()); // same day key cli.ts writes
         return serveDate(dates.includes(today) ? today : dates[0]!);
       },
       "/r/:date": (req) => {
