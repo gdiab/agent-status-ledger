@@ -179,6 +179,12 @@ describe("checkDashboard", () => {
     expect(r.detail).toContain("not responding");
     expect(r.detail).toContain(DASHBOARD_LAUNCHD_LABEL);
   });
+
+  test("a rejecting probe reads as not responding, never a throw", async () => {
+    const r = await checkDashboard(4680, async () => { throw new Error("ECONNREFUSED"); });
+    expect(r.ok).toBe(true);
+    expect(r.detail).toContain("not responding");
+  });
 });
 
 // Hermetic by construction: the injected config's connector roots live under

@@ -208,7 +208,10 @@ export async function checkEngram(conn: EngramConfig, exec: Exec): Promise<Check
 export async function checkDashboard(port: number, probe: HttpProbe): Promise<CheckResult> {
   const name = "dashboard server";
   const url = `http://127.0.0.1:${port}/api/status`;
-  return (await probe(url))
+  // A rejecting probe (connection refused surfaced as a throw) is the same
+  // advisory "not responding", never a crash of the whole doctor run.
+  const up = await probe(url).catch(() => false);
+  return up
     ? { name, ok: true, detail: `responding at ${url}` }
     : { name, ok: true, detail: `not responding at ${url} — optional; launchctl load -w ~/Library/LaunchAgents/${DASHBOARD_LAUNCHD_LABEL}.plist to enable` };
 }
