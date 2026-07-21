@@ -57,7 +57,7 @@ launchd run, email delivery) is untouched.
   own longer-bounded exec).
 - Because it's the real CLI subprocess, trends, redaction, and file writes
   behave identically to the scheduled run — no second pipeline.
-- Non-zero exit surfaces in `/api/status` (`lastExit.code`) so the UI shows
+- A failed run surfaces in `/api/status` (`lastExit.ok: false`) so the UI shows
   "last refresh failed" rather than silently serving stale HTML.
 - Header-bar refresh button polls `/api/status` until `running` flips false,
   then reloads.
