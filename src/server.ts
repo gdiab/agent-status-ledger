@@ -187,9 +187,11 @@ export function startServer(deps: ServerDeps) {
           state.running = true;
           state.startedAt = now().toISOString();
           // Fire-and-forget: the response returns immediately and the header
-          // bar polls /api/status. makeSpawnExec never rejects, but the
-          // catch keeps a surprise from wedging the mutex shut forever.
-          deps.exec(deps.reportArgv)
+          // bar polls /api/status. Promise.resolve().then() routes even a
+          // synchronously-throwing Exec into the catch — otherwise a throw
+          // here would wedge running=true forever.
+          Promise.resolve()
+            .then(() => deps.exec(deps.reportArgv))
             .catch(() => ({ ok: false, stdout: "", stderr: "" }))
             .then((r) => {
               state.running = false;

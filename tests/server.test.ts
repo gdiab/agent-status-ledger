@@ -190,6 +190,32 @@ describe("refresh", () => {
     } finally { srv.stop(true); }
   });
 
+  test("synchronously-throwing exec records a failed exit and releases the mutex", async () => {
+    const boom: Exec = () => { throw new Error("spawn failed"); };
+    const srv = makeServer(tempReports([]), { exec: boom });
+    try {
+      expect((await fetch(`${srv.url}api/refresh`, { method: "POST" })).status).toBe(202);
+      await Bun.sleep(10);
+      const s = await (await fetch(`${srv.url}api/status`)).json();
+      expect(s.running).toBe(false);
+      expect(s.lastExit.ok).toBe(false);
+      expect((await fetch(`${srv.url}api/refresh`, { method: "POST" })).status).toBe(202);
+    } finally { srv.stop(true); }
+  });
+
+  test("rejecting exec records a failed exit and releases the mutex", async () => {
+    const reject: Exec = () => Promise.reject(new Error("no"));
+    const srv = makeServer(tempReports([]), { exec: reject });
+    try {
+      expect((await fetch(`${srv.url}api/refresh`, { method: "POST" })).status).toBe(202);
+      await Bun.sleep(10);
+      const s = await (await fetch(`${srv.url}api/status`)).json();
+      expect(s.running).toBe(false);
+      expect(s.lastExit.ok).toBe(false);
+      expect((await fetch(`${srv.url}api/refresh`, { method: "POST" })).status).toBe(202);
+    } finally { srv.stop(true); }
+  });
+
   test("cross-origin POST is rejected 403 and spawns nothing", async () => {
     const g = gate();
     const srv = makeServer(tempReports([]), { exec: g.exec });
