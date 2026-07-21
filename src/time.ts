@@ -9,3 +9,9 @@ export function toUtcIso(ts: string): string | undefined {
   const ms = Date.parse(zoneless ? `${ts}Z` : ts);
   return Number.isNaN(ms) ? undefined : new Date(ms).toISOString();
 }
+
+// The UTC day key report filenames are keyed by — cli.ts writes it, the
+// dashboard's "/" route reads it back; one definition keeps them agreeing.
+export function dayKey(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}

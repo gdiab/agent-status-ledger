@@ -186,6 +186,15 @@ export function statusCssVars(c: StatusColor): ResolvedStatusColor {
   return { bg, fg: `var(${c.fgToken})`, dot: `var(${c.dotToken})` };
 }
 
+/**
+ * `light-dark()` emission for chrome without a stylesheet of tokens — the
+ * third emission mode alongside statusCssVars (var() references) and
+ * statusHex (concrete single-theme hex).
+ */
+export function hexLightDark(token: ColorToken): string {
+  return `light-dark(${COLORS_HEX[token].light}, ${COLORS_HEX[token].dark})`;
+}
+
 /** Concrete hex for inline-style surfaces — the email digest ships light only (§8 Q8). */
 export function statusHex(c: StatusColor, theme: "light" | "dark" = "light"): ResolvedStatusColor {
   const bg = c.bgToken === "transparent" ? "transparent" : COLORS_HEX[c.bgToken][theme];

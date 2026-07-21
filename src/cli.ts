@@ -14,10 +14,14 @@ import { resolveApiKey, macKeychainLookup } from "./apikey";
 import { formatDoctorReport, runDoctor, type Exec } from "./doctor";
 import { makeSpawnExec } from "./exec";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { startServer } from "./server";
 import { sendReportEmail, emailSubject } from "./email";
 import { statusSummary } from "./render/rollup";
+import { dayKey } from "./time";
 
 const USAGE = `usage: asl report [--since 24h] [--open] [--no-llm] [--no-email] [--out DIR] [--layout ${HTML_LAYOUTS.join("|")}]
+       asl serve
        asl doctor`;
 
 // One timeout-bounded exec seam (src/exec.ts) for doctor's checks and the
@@ -38,6 +42,13 @@ async function runDoctorCli(): Promise<never> {
     home: homedir(),
     configPath: cfgPath,
     config: loadConfig(cfgPath),
+    httpProbe: async (url) => {
+      try {
+        return (await fetch(url, { signal: AbortSignal.timeout(1500) })).ok;
+      } catch {
+        return false;
+      }
+    },
   });
   console.log(formatDoctorReport(results));
   process.exit(results.every((r) => r.ok) ? 0 : 1);
@@ -74,6 +85,20 @@ function parseCliArgs() {
 async function main() {
   const { values, positionals } = parseCliArgs();
   if (positionals[0] === "doctor") await runDoctorCli();
+  if (positionals[0] === "serve") {
+    const config = loadConfig();
+    // The refresh subprocess is the real CLI so trends/redaction/file writes
+    // match the scheduled run exactly; 10min bound because LLM narrative +
+    // connectors exceed the 60s CLI seam.
+    const server = startServer({
+      reportsDir: config.reportsDir,
+      port: config.dashboardPort,
+      exec: makeSpawnExec(600_000),
+      reportArgv: [process.execPath, fileURLToPath(new URL("./cli.ts", import.meta.url)), "report", "--no-email"],
+    });
+    console.log(`asl dashboard: ${server.url}`);
+    return; // Bun.serve keeps the process alive
+  }
   if (positionals[0] !== "report") {
     console.error(USAGE);
     process.exit(2);
@@ -111,7 +136,7 @@ async function main() {
   // Cross-day trends: diff against the most recent prior report JSON in the
   // reports dir (the loader's strictly-older filter excludes today's file).
   // No usable history → annotateTrends is a no-op and output is unchanged.
-  const day = now.toISOString().slice(0, 10);
+  const day = dayKey(now);
   const previous = await loadPreviousReport(config.reportsDir, day);
   // The engram evidence-upgrade connector activates purely off
   // config.connectors.engram.enabled — it brings its own timeout-bounded

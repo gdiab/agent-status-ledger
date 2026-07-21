@@ -9,7 +9,9 @@ import {
   checkConnectorDir,
   checkEmailConfig,
   checkEmailPassword,
+  checkDashboard,
   checkEngram,
+  DASHBOARD_LAUNCHD_LABEL,
   checkLaunchdBunPath,
   checkPlistInstalled,
   checkPlistLoaded,
@@ -164,6 +166,27 @@ describe("checkConfigFile", () => {
   });
 });
 
+describe("checkDashboard", () => {
+  test("reports a responding server", async () => {
+    const r = await checkDashboard(4680, async () => true);
+    expect(r.ok).toBe(true);
+    expect(r.detail).toContain("http://127.0.0.1:4680/api/status");
+  });
+
+  test("a down server is advisory, never a failure", async () => {
+    const r = await checkDashboard(4680, async () => false);
+    expect(r.ok).toBe(true);
+    expect(r.detail).toContain("not responding");
+    expect(r.detail).toContain(DASHBOARD_LAUNCHD_LABEL);
+  });
+
+  test("a rejecting probe reads as not responding, never a throw", async () => {
+    const r = await checkDashboard(4680, async () => { throw new Error("ECONNREFUSED"); });
+    expect(r.ok).toBe(true);
+    expect(r.detail).toContain("not responding");
+  });
+});
+
 // Hermetic by construction: the injected config's connector roots live under
 // the fake home, so no check ever touches the developer's real machine.
 function fakeDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
@@ -179,6 +202,7 @@ function fakeDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
     home,
     configPath: join(home, "config.toml"),
     config,
+    httpProbe: async () => false,
     ...overrides,
   };
 }
@@ -186,7 +210,7 @@ function fakeDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
 describe("runDoctor", () => {
   test("never throws even when everything is missing, and reports all checks", async () => {
     const results = await runDoctor(fakeDeps());
-    expect(results.length).toBe(11);
+    expect(results.length).toBe(12);
     for (const r of results) {
       expect(typeof r.name).toBe("string");
       expect(typeof r.detail).toBe("string");

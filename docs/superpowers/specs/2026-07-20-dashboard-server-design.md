@@ -46,7 +46,7 @@ launchd run, email delivery) is untouched.
 | `GET /archive` | Index of available dates, newest first, from `readdir(reportsDir)` |
 | `GET /api/reports` | JSON list of dates (feeds `/archive`; future asl-jcm surface) |
 | `POST /api/refresh` | Spawn report run; 202 on start, 409 if already running |
-| `GET /api/status` | `{running, startedAt, lastExit}` — `lastExit` is `{code, finishedAt}` or null |
+| `GET /api/status` | `{running, startedAt, lastExit}` — `lastExit` is `{ok, finishedAt}` or null (`ok` from the Exec seam, which collapses exit codes) |
 
 ## Refresh mechanics
 
@@ -57,7 +57,7 @@ launchd run, email delivery) is untouched.
   own longer-bounded exec).
 - Because it's the real CLI subprocess, trends, redaction, and file writes
   behave identically to the scheduled run — no second pipeline.
-- Non-zero exit surfaces in `/api/status` (`lastExit.code`) so the UI shows
+- A failed run surfaces in `/api/status` (`lastExit.ok: false`) so the UI shows
   "last refresh failed" rather than silently serving stale HTML.
 - Header-bar refresh button polls `/api/status` until `running` flips false,
   then reloads.
