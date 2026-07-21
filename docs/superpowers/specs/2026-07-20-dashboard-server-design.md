@@ -90,8 +90,11 @@ launchd run, email delivery) is untouched.
 - Unknown date → 404 with a link to `/archive`.
 - Empty `reportsDir` → friendly "no reports yet" page.
 - Malformed date param → 400.
-- Refresh spawn failure → recorded in `lastExit`; 500 only if spawn throws
-  synchronously.
+- Refresh spawn failure → recorded in `lastExit` and the mutex released,
+  including synchronous exec throws (routed through `Promise.resolve()`), so
+  no failure mode can wedge refresh shut.
+- `POST /api/refresh` with a present non-local `Origin` → 403 (localhost CSRF
+  guard; absent Origin stays allowed for CLI clients).
 
 ## Testing
 
