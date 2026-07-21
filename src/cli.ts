@@ -14,10 +14,13 @@ import { resolveApiKey, macKeychainLookup } from "./apikey";
 import { formatDoctorReport, runDoctor, type Exec } from "./doctor";
 import { makeSpawnExec } from "./exec";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { startServer } from "./server";
 import { sendReportEmail, emailSubject } from "./email";
 import { statusSummary } from "./render/rollup";
 
 const USAGE = `usage: asl report [--since 24h] [--open] [--no-llm] [--no-email] [--out DIR] [--layout ${HTML_LAYOUTS.join("|")}]
+       asl serve
        asl doctor`;
 
 // One timeout-bounded exec seam (src/exec.ts) for doctor's checks and the
@@ -74,6 +77,20 @@ function parseCliArgs() {
 async function main() {
   const { values, positionals } = parseCliArgs();
   if (positionals[0] === "doctor") await runDoctorCli();
+  if (positionals[0] === "serve") {
+    const config = loadConfig();
+    // The refresh subprocess is the real CLI so trends/redaction/file writes
+    // match the scheduled run exactly; 10min bound because LLM narrative +
+    // connectors exceed the 60s CLI seam.
+    const server = startServer({
+      reportsDir: config.reportsDir,
+      port: config.dashboardPort,
+      exec: makeSpawnExec(600_000),
+      reportArgv: [process.execPath, fileURLToPath(new URL("./cli.ts", import.meta.url)), "report", "--no-email"],
+    });
+    console.log(`asl dashboard: ${server.url}`);
+    return; // Bun.serve keeps the process alive
+  }
   if (positionals[0] !== "report") {
     console.error(USAGE);
     process.exit(2);
