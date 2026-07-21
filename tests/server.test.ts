@@ -154,3 +154,55 @@ describe("startServer report routes", () => {
     } finally { srv.stop(true); }
   });
 });
+
+describe("refresh", () => {
+  function gate() {
+    let release!: (r: { ok: boolean }) => void;
+    const done = new Promise<{ ok: boolean }>((res) => { release = res; });
+    const calls: string[][] = [];
+    const exec: Exec = async (argv) => {
+      calls.push(argv);
+      const r = await done;
+      return { ok: r.ok, stdout: "", stderr: "" };
+    };
+    return { exec, release, calls };
+  }
+
+  test("202 starts the report argv; concurrent POST 409s; status tracks exit", async () => {
+    const g = gate();
+    const srv = makeServer(tempReports([]), { exec: g.exec, reportArgv: ["bun", "cli", "report", "--no-email"] });
+    try {
+      const first = await fetch(`${srv.url}api/refresh`, { method: "POST" });
+      expect(first.status).toBe(202);
+      expect(g.calls).toEqual([["bun", "cli", "report", "--no-email"]]);
+
+      expect((await fetch(`${srv.url}api/refresh`, { method: "POST" })).status).toBe(409);
+      let s = await (await fetch(`${srv.url}api/status`)).json();
+      expect(s.running).toBe(true);
+      expect(s.startedAt).not.toBeNull();
+
+      g.release({ ok: true });
+      await Bun.sleep(10);
+      s = await (await fetch(`${srv.url}api/status`)).json();
+      expect(s.running).toBe(false);
+      expect(s.lastExit).toEqual({ ok: true, finishedAt: expect.any(String) });
+      expect(g.calls.length).toBe(1); // 409'd POST spawned nothing
+    } finally { srv.stop(true); }
+  });
+
+  test("failed run surfaces lastExit.ok=false and releases the mutex", async () => {
+    const g = gate();
+    const srv = makeServer(tempReports([]), { exec: g.exec });
+    try {
+      await fetch(`${srv.url}api/refresh`, { method: "POST" });
+      g.release({ ok: false });
+      await Bun.sleep(10);
+      const s = await (await fetch(`${srv.url}api/status`)).json();
+      expect(s.running).toBe(false);
+      expect(s.lastExit.ok).toBe(false);
+      // mutex released: a new refresh is accepted
+      expect((await fetch(`${srv.url}api/refresh`, { method: "POST" })).status).toBe(202);
+      g.release({ ok: true });
+    } finally { srv.stop(true); }
+  });
+});

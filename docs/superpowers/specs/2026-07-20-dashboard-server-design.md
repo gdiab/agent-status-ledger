@@ -46,7 +46,7 @@ launchd run, email delivery) is untouched.
 | `GET /archive` | Index of available dates, newest first, from `readdir(reportsDir)` |
 | `GET /api/reports` | JSON list of dates (feeds `/archive`; future asl-jcm surface) |
 | `POST /api/refresh` | Spawn report run; 202 on start, 409 if already running |
-| `GET /api/status` | `{running, startedAt, lastExit}` — `lastExit` is `{code, finishedAt}` or null |
+| `GET /api/status` | `{running, startedAt, lastExit}` — `lastExit` is `{ok, finishedAt}` or null (`ok` from the Exec seam, which collapses exit codes) |
 
 ## Refresh mechanics
 

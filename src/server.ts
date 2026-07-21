@@ -165,6 +165,23 @@ export function startServer(deps: ServerDeps) {
       "/archive": () => htmlResponse(archivePage(listReportDates(deps.reportsDir))),
       "/api/reports": () => Response.json(listReportDates(deps.reportsDir)),
       "/api/status": () => Response.json(state),
+      "/api/refresh": {
+        POST: () => {
+          if (state.running) return Response.json({ error: "a refresh is already running" }, { status: 409 });
+          state.running = true;
+          state.startedAt = now().toISOString();
+          // Fire-and-forget: the response returns immediately and the header
+          // bar polls /api/status. makeSpawnExec never rejects, but the
+          // catch keeps a surprise from wedging the mutex shut forever.
+          deps.exec(deps.reportArgv)
+            .catch(() => ({ ok: false, stdout: "", stderr: "" }))
+            .then((r) => {
+              state.running = false;
+              state.lastExit = { ok: r.ok, finishedAt: now().toISOString() };
+            });
+          return Response.json({ started: true }, { status: 202 });
+        },
+      },
     },
     fetch: () => new Response("not found", { status: 404 }),
   });
