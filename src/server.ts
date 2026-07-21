@@ -134,6 +134,19 @@ export interface ServerDeps {
   now?: () => Date;
 }
 
+// CSRF guard: a hostile web page can fire a cross-origin form POST at
+// 127.0.0.1. Browsers always attach Origin to POSTs, so a non-local Origin is
+// rejected; an absent one (curl/CLI) is allowed.
+function isAllowedOrigin(origin: string | null): boolean {
+  if (origin === null) return true;
+  try {
+    const host = new URL(origin).hostname;
+    return host === "127.0.0.1" || host === "localhost";
+  } catch {
+    return false;
+  }
+}
+
 const htmlResponse = (body: string, status = 200) =>
   new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8" } });
 
@@ -166,7 +179,10 @@ export function startServer(deps: ServerDeps) {
       "/api/reports": () => Response.json(listReportDates(deps.reportsDir)),
       "/api/status": () => Response.json(state),
       "/api/refresh": {
-        POST: () => {
+        POST: (req) => {
+          if (!isAllowedOrigin(req.headers.get("origin"))) {
+            return Response.json({ error: "cross-origin refresh rejected" }, { status: 403 });
+          }
           if (state.running) return Response.json({ error: "a refresh is already running" }, { status: 409 });
           state.running = true;
           state.startedAt = now().toISOString();

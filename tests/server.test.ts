@@ -190,6 +190,37 @@ describe("refresh", () => {
     } finally { srv.stop(true); }
   });
 
+  test("cross-origin POST is rejected 403 and spawns nothing", async () => {
+    const g = gate();
+    const srv = makeServer(tempReports([]), { exec: g.exec });
+    try {
+      const r = await fetch(`${srv.url}api/refresh`, {
+        method: "POST",
+        headers: { origin: "https://evil.example" },
+      });
+      expect(r.status).toBe(403);
+      expect((await r.json()).error).toBeString();
+      expect(g.calls.length).toBe(0);
+    } finally { srv.stop(true); }
+  });
+
+  test("local Origin and absent Origin are both accepted", async () => {
+    const g = gate();
+    const srv = makeServer(tempReports([]), { exec: g.exec });
+    try {
+      const local = await fetch(`${srv.url}api/refresh`, {
+        method: "POST",
+        headers: { origin: `http://127.0.0.1:${srv.port}` },
+      });
+      expect(local.status).toBe(202);
+      g.release({ ok: true });
+      await Bun.sleep(10);
+      // no Origin header (curl/CLI shape)
+      expect((await fetch(`${srv.url}api/refresh`, { method: "POST" })).status).toBe(202);
+      g.release({ ok: true });
+    } finally { srv.stop(true); }
+  });
+
   test("failed run surfaces lastExit.ok=false and releases the mutex", async () => {
     const g = gate();
     const srv = makeServer(tempReports([]), { exec: g.exec });
