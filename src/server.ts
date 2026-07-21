@@ -2,7 +2,7 @@
 // stateless per request (readdir/readFile every time) so the 7:30 launchd
 // run's writes appear without coordination; only the refresh mutex lives in
 // process.
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Exec } from "./exec";
 import { archivePage, emptyPage, notFoundPage, wrapReport } from "./render/dashboard";
@@ -67,8 +67,13 @@ export function startServer(deps: ServerDeps) {
 
   const serveDate = (date: string): Response => {
     const file = join(deps.reportsDir, `${date}.html`); // date pre-validated; never from the raw path
-    if (!existsSync(file)) return htmlResponse(notFoundPage(date), 404);
-    return htmlResponse(wrapReport(readFileSync(file, "utf8"), { date, dates: listReportDates(deps.reportsDir) }));
+    let html: string;
+    try {
+      html = readFileSync(file, "utf8"); // read directly: an exists-then-read pair races deletion
+    } catch {
+      return htmlResponse(notFoundPage(date), 404);
+    }
+    return htmlResponse(wrapReport(html, { date, dates: listReportDates(deps.reportsDir) }));
   };
 
   return Bun.serve({
