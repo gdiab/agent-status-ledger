@@ -40,6 +40,7 @@ export interface Config {
   thresholds: Thresholds;
   connectors: { claudeCode: ConnectorConfig; codex: ConnectorConfig; engram: EngramConfig };
   email?: EmailConfig;   // absent = email delivery off
+  dashboardPort: number;   // asl serve bind port (localhost only)
   redactPatterns: string[];   // extra user regexes (source strings)
 }
 
@@ -54,6 +55,7 @@ export function defaultConfig(): Config {
       engram: { enabled: false, binaryPath: "engram", beadPrefixes: [] },
     },
     redactPatterns: [],
+    dashboardPort: 4680,
   };
 }
 
@@ -73,6 +75,7 @@ export function loadConfig(path: string = configPath()): Config {
   }
   if (typeof raw.reports_dir === "string") c.reportsDir = raw.reports_dir;
   if (typeof raw.model === "string") c.model = raw.model;
+  if (typeof raw.dashboard_port === "number") c.dashboardPort = raw.dashboard_port;
   const t = raw.thresholds as Record<string, unknown> | undefined;
   if (typeof t?.active_window_hours === "number") c.thresholds.activeWindowHours = t.active_window_hours;
   if (typeof t?.silent_threshold_hours === "number") c.thresholds.silentThresholdHours = t.silent_threshold_hours;

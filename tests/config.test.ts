@@ -93,6 +93,26 @@ describe("config", () => {
   });
 });
 
+describe("dashboard_port", () => {
+  test("defaults to 4680", () => {
+    expect(defaultConfig().dashboardPort).toBe(4680);
+  });
+
+  test("reads dashboard_port from TOML", () => {
+    const dir = mkdtempSync(join(tmpdir(), "asl-config-"));
+    const p = join(dir, "config.toml");
+    writeFileSync(p, "dashboard_port = 5123\n");
+    expect(loadConfig(p).dashboardPort).toBe(5123);
+  });
+
+  test("ignores non-numeric dashboard_port", () => {
+    const dir = mkdtempSync(join(tmpdir(), "asl-config-"));
+    const p = join(dir, "config.toml");
+    writeFileSync(p, 'dashboard_port = "nope"\n');
+    expect(loadConfig(p).dashboardPort).toBe(4680);
+  });
+});
+
 function writeToml(content: string): string {
   const dir = mkdtempSync(join(tmpdir(), "asl-config-"));
   const p = join(dir, "config.toml");
