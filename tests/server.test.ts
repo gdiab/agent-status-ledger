@@ -3,10 +3,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec } from "../src/exec";
-import {
-  archivePage, emptyPage, isReportDate, listReportDates, notFoundPage,
-  startServer, wrapReport, type ServerDeps,
-} from "../src/server";
+import { archivePage, emptyPage, notFoundPage, wrapReport } from "../src/render/dashboard";
+import { isReportDate, listReportDates, startServer, type ServerDeps } from "../src/server";
 
 const execNever: Exec = async () => ({ ok: true, stdout: "", stderr: "" });
 
