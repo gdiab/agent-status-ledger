@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- asl dashboard (asl-eia): KeepAlive server for reports + history.
+     Install: cp scripts/com.gd.asl-dashboard.plist ~/Library/LaunchAgents/
+              launchctl load -w ~/Library/LaunchAgents/com.gd.asl-dashboard.plist
+     bun is addressed absolutely because launchd provides no PATH
+     (same as com.gd.asl-report). -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.gd.asl-dashboard</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/gd/.bun/bin/bun</string>
+		<string>/Users/gd/github/agent-status-ledger/src/cli.ts</string>
+		<string>serve</string>
+	</array>
+	<key>KeepAlive</key>
+	<true/>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/Users/gd/Library/Logs/asl-dashboard.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/gd/Library/Logs/asl-dashboard.log</string>
+</dict>
+</plist>

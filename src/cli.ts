@@ -41,6 +41,13 @@ async function runDoctorCli(): Promise<never> {
     home: homedir(),
     configPath: cfgPath,
     config: loadConfig(cfgPath),
+    httpProbe: async (url) => {
+      try {
+        return (await fetch(url, { signal: AbortSignal.timeout(1500) })).ok;
+      } catch {
+        return false;
+      }
+    },
   });
   console.log(formatDoctorReport(results));
   process.exit(results.every((r) => r.ok) ? 0 : 1);

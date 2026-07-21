@@ -15,6 +15,11 @@ import { resolveSmtpPassword, SMTP_PASSWORD_FIX } from "./email";
 import type { Exec } from "./exec";
 
 export const LAUNCHD_LABEL = "com.gd.asl-report";
+export const DASHBOARD_LAUNCHD_LABEL = "com.gd.asl-dashboard";
+
+// Injected instead of exec-with-curl: one fetch with a short bound, no
+// subprocess needed. Doctor stays pure over its deps.
+export type HttpProbe = (url: string) => Promise<boolean>;
 
 export interface CheckResult {
   name: string;
@@ -35,6 +40,7 @@ export interface DoctorDeps {
   home: string;
   configPath: string;
   config: Config;
+  httpProbe: HttpProbe;
 }
 
 export async function checkBun(exec: Exec): Promise<CheckResult> {
@@ -196,6 +202,17 @@ export async function checkEngram(conn: EngramConfig, exec: Exec): Promise<Check
       };
 }
 
+// The dashboard is optional (plist loaded = enabled), so a down server is
+// advisory detail on an ok check — never a red X in an otherwise-healthy
+// setup.
+export async function checkDashboard(port: number, probe: HttpProbe): Promise<CheckResult> {
+  const name = "dashboard server";
+  const url = `http://127.0.0.1:${port}/api/status`;
+  return (await probe(url))
+    ? { name, ok: true, detail: `responding at ${url}` }
+    : { name, ok: true, detail: `not responding at ${url} — optional; launchctl load -w ~/Library/LaunchAgents/${DASHBOARD_LAUNCHD_LABEL}.plist to enable` };
+}
+
 const skipped = (name: string): CheckResult => ({ name, ok: true, detail: "skipped — not macOS" });
 
 // Async because the exec-backed checks are; they run sequentially — doctor
@@ -217,6 +234,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<CheckResult[]> {
     checkConnectorDir("claude-code", "claude_code", connectors.claudeCode),
     checkConnectorDir("codex", "codex", connectors.codex, join(connectors.codex.rootDir, "sessions")),
     await checkEngram(connectors.engram, deps.exec),
+    await checkDashboard(deps.config.dashboardPort, deps.httpProbe),
   ];
 }
 
