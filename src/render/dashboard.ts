@@ -24,12 +24,15 @@ const DASHBOARD_CSS = `
 `;
 
 // Poll /api/status after a refresh; reload on success so the rewritten
-// report file is what's on screen.
+// report file is what's on screen. A failed poll fetch retries on the same
+// cadence instead of killing the loop.
 const DASHBOARD_JS = `
 const btn = document.getElementById("asl-dash-refresh");
 const st = document.getElementById("asl-dash-status");
 async function aslPoll() {
-  const s = await (await fetch("/api/status")).json();
+  let s;
+  try { s = await (await fetch("/api/status")).json(); }
+  catch { setTimeout(aslPoll, 2000); return; }
   if (s.running) { setTimeout(aslPoll, 2000); return; }
   if (s.lastExit && !s.lastExit.ok) { st.textContent = "last refresh failed"; st.className = "err"; btn.disabled = false; return; }
   location.reload();
@@ -62,10 +65,12 @@ export function wrapReport(reportHtml: string, ctx: { date: string; dates: strin
   const style = `<style>${DASHBOARD_CSS}</style>`;
   const script = `<script>${DASHBOARD_JS}</script>`;
   if (/<body[^>]*>/i.test(reportHtml)) {
+    // Replacer functions, not replacement strings: injected chrome may carry
+    // `$` sequences that String.replace would otherwise interpret.
     return reportHtml
-      .replace(/<\/head>/i, `${style}</head>`)
-      .replace(/(<body[^>]*>)/i, `$1${dashBar(ctx)}`)
-      .replace(/<\/body>/i, `${script}</body>`);
+      .replace(/<\/head>/i, (m) => style + m)
+      .replace(/<body[^>]*>/i, (m) => m + dashBar(ctx))
+      .replace(/<\/body>/i, (m) => script + m);
   }
   return `${style}${dashBar(ctx)}${reportHtml}${script}`;
 }
