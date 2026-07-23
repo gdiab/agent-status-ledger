@@ -27,9 +27,11 @@ connector (task threads, provenance) rather than a log source.
 
 Serves the latest report plus the archive on `127.0.0.1:<dashboard_port>` (default
 4680). `POST /api/refresh` re-runs the report (`--no-email`) behind a single-run
-mutex and a CSRF origin guard; `/api/status` reports the last run. `asl doctor`
-includes an advisory probe that the dashboard is responding. A KeepAlive launchd
-plist template is included to run it as a background service.
+mutex and a CSRF origin guard; `/api/status` reports the last dashboard-initiated
+refresh (not scheduled/external report runs). `asl doctor` includes an advisory
+probe that the dashboard is responding. An example KeepAlive launchd plist lives
+at `scripts/com.gd.asl-dashboard.plist` — edit its hardcoded paths for your
+machine before loading it.
 
 ### Configuration
 
@@ -48,15 +50,17 @@ smtp_port = 465                # default
 [thresholds]
 active_window_hours = 2        # default
 silent_threshold_hours = 6     # default
-min_session_seconds = 60       # default: drop sessions shorter than this
+min_session_seconds = 60       # default: hide a profile only if ALL its sessions
+                               # are shorter than this AND touched no files, hit no
+                               # errors, produced no attributed commit, and weren't mid-work
 
 [connectors.claude_code]
 enabled = true                 # default
-root_dir = "~/.claude/projects"
+# root_dir defaults to <home>/.claude/projects; override with an absolute path
 
 [connectors.codex]
 enabled = true                 # default
-root_dir = "~/.codex"
+# root_dir defaults to <home>/.codex; override with an absolute path
 
 [connectors.engram]
 enabled = false                # default: opt-in enrichment connector
@@ -64,8 +68,8 @@ binary_path = "engram"         # default
 bead_prefixes = []             # issue-tracker prefixes to correlate task threads
 ```
 
-`root_dir` values are stored verbatim — use an absolute path, not `~` (the
-built-in defaults already resolve your home directory).
+`root_dir` is stored verbatim — a literal `~` is not expanded, so overrides must
+be absolute paths.
 
 **Email delivery setup:** Emails the finished report via SMTP (Gmail by default).
 The mailer uses implicit TLS (`smtps://`), so `smtp_port` must be an implicit-TLS port — Gmail's default port **465** works; port **587** (STARTTLS) is not supported and will fail with opaque curl errors.
@@ -87,7 +91,7 @@ Send failures print a warning but never fail the report run.
 - `--open`: Open the HTML report in the default browser
 - `--since 24h`: Hours or days of logs to scan (default: 24h)
 - `--layout cards|flat`: HTML report layout (default: cards)
-- `--out DIR`: Write reports to DIR instead of `./reports`
+- `--out DIR`: Write reports to DIR instead of the configured `reports_dir` (default `./reports`)
 
 - [PRD.md](PRD.md) — product spec (amended by docs/adr/)
 - [docs/superpowers/specs/2026-07-07-asl-v0-design.md](docs/superpowers/specs/2026-07-07-asl-v0-design.md) — v0 design
