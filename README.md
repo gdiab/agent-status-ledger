@@ -4,32 +4,68 @@ A daily standup for every AI agent you run.
 
 Local-first activity ledger and daily reporting system for AI agents. Every meaningful agent workstream gets a durable identity, every claim gets an evidence level, and the operator gets one morning answer: what did my agents do yesterday, what finished, what failed, and what needs me?
 
-The full product spec is in [PRD.md](PRD.md) (draft v2, 2026-06-27). Nothing is built yet; this repo exists to iterate on the spec and then hold the implementation.
+The full product spec is in [PRD.md](PRD.md) (draft v2, 2026-06-27).
 
 ## Current state
 
-Working v0 CLI. Run the morning report:
+Working CLI with a morning report, email delivery, and a localhost dashboard.
+Run the morning report:
 
     bun install
     bun run src/cli.ts report --open          # LLM narratives if ANTHROPIC_API_KEY is set
     bun run src/cli.ts report --no-llm        # fully local, template narratives
-    bun run src/cli.ts doctor                 # verify setup (Anthropic key, email, connectors)
+    bun run src/cli.ts doctor                 # verify setup (Anthropic key, email, connectors, dashboard)
 
 Writes `reports/YYYY-MM-DD.{md,json,html}`. Sources scanned: Claude Code
 (`~/.claude/projects`) and Codex (`~/.codex/sessions`), plus git commit
-correlation per workdir.
+correlation per workdir. Engram is an optional, disabled-by-default enrichment
+connector (task threads, provenance) rather than a log source.
+
+### Dashboard
+
+    bun run src/cli.ts serve                  # localhost dashboard on 127.0.0.1:4680
+
+Serves the latest report plus the archive on `127.0.0.1:<dashboard_port>` (default
+4680). `POST /api/refresh` re-runs the report (`--no-email`) behind a single-run
+mutex and a CSRF origin guard; `/api/status` reports the last run. `asl doctor`
+includes an advisory probe that the dashboard is responding. A KeepAlive launchd
+plist template is included to run it as a background service.
 
 ### Configuration
 
 Config file: `~/.config/asl/config.toml` (all optional). Example:
 
 ```toml
+reports_dir = "reports"        # default: ./reports
+dashboard_port = 4680          # default: asl serve bind port (localhost only)
+
 [email]
 to = "you@example.com"         # required to enable email delivery
 from = "you@example.com"       # default: same as `to`
 smtp_host = "smtp.gmail.com"   # default
 smtp_port = 465                # default
+
+[thresholds]
+active_window_hours = 2        # default
+silent_threshold_hours = 6     # default
+min_session_seconds = 60       # default: drop sessions shorter than this
+
+[connectors.claude_code]
+enabled = true                 # default
+root_dir = "~/.claude/projects"
+
+[connectors.codex]
+enabled = true                 # default
+root_dir = "~/.codex"
+
+[connectors.engram]
+enabled = false                # default: opt-in enrichment connector
+binary_path = "engram"         # default
+bead_prefixes = []             # issue-tracker prefixes to correlate task threads
 ```
+
+`root_dir` values are stored verbatim — use an absolute path, not `~` (the
+built-in defaults already resolve your home directory).
 
 **Email delivery setup:** Emails the finished report via SMTP (Gmail by default).
 The mailer uses implicit TLS (`smtps://`), so `smtp_port` must be an implicit-TLS port — Gmail's default port **465** works; port **587** (STARTTLS) is not supported and will fail with opaque curl errors.
@@ -50,7 +86,7 @@ Send failures print a warning but never fail the report run.
 - `--no-email`: Skip email delivery even if configured
 - `--open`: Open the HTML report in the default browser
 - `--since 24h`: Hours or days of logs to scan (default: 24h)
-- `--layout cards|list`: HTML report layout (default: cards)
+- `--layout cards|flat`: HTML report layout (default: cards)
 - `--out DIR`: Write reports to DIR instead of `./reports`
 
 - [PRD.md](PRD.md) — product spec (amended by docs/adr/)
